@@ -11,7 +11,7 @@ try {
   const gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
 
   // Get latest version tag and calculate next minor version
-  let baseVersion = '1.0.0';
+  let baseVersion = '0.1.0';
   try {
     const lastTag = execSync('git tag -l "v*.*.0" --sort=-version:refname', {
       encoding: 'utf8',
