@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   SectionList,
@@ -9,8 +8,8 @@ import {
   RefreshControl,
   StatusBar,
   Alert,
-  Platform,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
@@ -458,16 +457,17 @@ const MainScreen: React.FC = () => {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <MainScreen />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <MainScreen />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
   responsiveContainer: {
     flex: 1,
