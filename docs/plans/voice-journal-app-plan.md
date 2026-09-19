@@ -5,7 +5,7 @@ Build the `voice-journal-app` (branded as **DaySpoken** / **Voice Journal**) acc
 
 The application is an Android-targeted zero-subscription voice diary combining:
 1. Native audio capture (pause, resume, stop, audio metering) with prominent circular hit targets, and multi-file SAF audio import (e.g. Google Recorder).
-2. Direct audio-to-structured JSON extraction using Gemini Flash multimodal AI (title, transcript, tags without `#` prefix like `School`, `Science`, summary).
+2. Direct audio-to-structured JSON extraction using Gemini Flash multimodal AI (title, transcript, tags in all-lowercase without `#` prefix like `school`, `science`, `poster`, summary).
 3. Local relational database with FTS5 full-text search (`expo-sqlite`).
 4. **Multiple Clips Per Day Support**:
    - Each voice note is an independent clip with its own UUID, exact timestamp (`HH:mm`), audio file, transcript, and AI summary.
