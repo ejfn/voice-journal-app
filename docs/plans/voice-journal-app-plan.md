@@ -187,7 +187,7 @@ Triggered via `workflow_dispatch`. Injects version, overrides `app.json` name (`
 Triggered on GitHub release (`prereleased`, `released`) or manual dispatch. Runs `qualitycheck`, detects version via `git-version`, triggers `eas build --platform android --profile <branch>`, downloads built APK (`voice-journal-app-<version>.apk`), and uploads it to GitHub Release assets via `softprops/action-gh-release@v2`.
 
 #### [NEW] `.github/workflows/ota-update.yml`
-Triggered on push to `main` and manual dispatch. Runs `qualitycheck`, detects version via `git-version`, and publishes update via `eas update --branch ...`. (Dynamic test badge Gist publishing step is kept optional until `GIST_SECRET` and `GIST_ID` are configured).
+Triggered on push to `main` and manual dispatch. Runs `qualitycheck`, detects version via `git-version`, and publishes update via `eas update --branch ...`. (Dynamic test badge step from Tractor is omitted as badges are not needed for this project).
 
 ---
 
