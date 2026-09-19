@@ -18,6 +18,7 @@ import {
 } from "../services/audio/AudioPlaybackService";
 import { useTheme } from "../theme/ThemeContext";
 import { formatDuration, formatTimer } from "../utils/paths";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -156,9 +157,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel="Close"
           >
-            <Text style={[styles.closeIcon, { color: colors.textMuted }]}>
-              ✕
-            </Text>
+            <MaterialIcons name="close" size={22} color={colors.textMuted} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Review Entry
@@ -196,10 +195,15 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 ]}
                 onPress={handlePlayPause}
                 activeOpacity={0.8}
+                accessibilityLabel={
+                  playbackState.isPlaying ? "Pause Audio" : "Play Audio"
+                }
               >
-                <Text style={styles.playerPlayIcon}>
-                  {playbackState.isPlaying ? "⏸" : "▶"}
-                </Text>
+                <MaterialIcons
+                  name={playbackState.isPlaying ? "pause" : "play-arrow"}
+                  size={24}
+                  color="#FFFFFF"
+                />
               </TouchableOpacity>
 
               <View style={styles.playerTimeInfo}>
@@ -302,15 +306,13 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     onPress={() => handleRemoveTag(tag)}
                     style={styles.removeTagBtn}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel={`Remove tag ${tag}`}
                   >
-                    <Text
-                      style={[
-                        styles.removeTagText,
-                        { color: colors.textMuted },
-                      ]}
-                    >
-                      ✕
-                    </Text>
+                    <MaterialIcons
+                      name="close"
+                      size={14}
+                      color={colors.textMuted}
+                    />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -397,6 +399,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               activeOpacity={0.7}
               accessibilityLabel="Delete entry"
             >
+              <MaterialIcons
+                name="delete-outline"
+                size={18}
+                color={colors.danger}
+                style={{ marginRight: 6 }}
+              />
               <Text style={[styles.deleteText, { color: colors.danger }]}>
                 Delete Entry
               </Text>
@@ -589,6 +597,7 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     flex: 1,
+    flexDirection: "row",
     borderWidth: 1,
     paddingVertical: 12,
     borderRadius: 10,

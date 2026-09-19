@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 // Prevent expo-sqlite from trying to load native module directly in Jest
 jest.mock("expo-sqlite", () => ({
@@ -79,3 +80,14 @@ jest.mock("@react-native-google-signin/google-signin", () => ({
     signOut: jest.fn(async () => {}),
   },
 }));
+
+jest.mock("@react-native-vector-icons/material-icons", () => {
+  const React = require("react");
+  const { Text } = require("react-native");
+  const MockIcon = (props) => React.createElement(Text, props, props.name);
+  return {
+    __esModule: true,
+    default: MockIcon,
+    MaterialIcons: MockIcon,
+  };
+});

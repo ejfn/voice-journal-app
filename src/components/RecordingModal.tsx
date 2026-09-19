@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 import { formatTimer } from "../utils/paths";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
 
 interface RecordingModalProps {
   visible: boolean;
@@ -103,6 +104,25 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                     {isPaused ? "PAUSED" : "RECORDING"}
                   </Text>
                 </View>
+
+                <TouchableOpacity
+                  onPress={onCancel}
+                  style={[
+                    styles.cancelHeaderButton,
+                    {
+                      backgroundColor: colors.surfaceAlt,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityLabel="Discard recording"
+                >
+                  <MaterialIcons
+                    name="close"
+                    size={20}
+                    color={colors.textMuted}
+                  />
+                </TouchableOpacity>
               </View>
 
               {/* Centered Timer */}
@@ -133,10 +153,10 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                 {isPaused
                   ? durationSec < 3
                     ? "Recording paused (< 3s). Tap resume to continue, or discard."
-                    : "Recording paused. Tap resume to continue, or done to save."
+                    : "Recording paused. Tap resume to continue, or stop to save."
                   : durationSec < 3
                     ? "Speak naturally. Minimum 3 seconds to save."
-                    : "Speak naturally. Tap pause to take a break, or done when finished."}
+                    : "Speak naturally. Tap pause to take a break, or stop when finished."}
               </Text>
 
               {/* Action Buttons */}
@@ -166,27 +186,13 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       }
                     >
                       {isPaused ? (
-                        <View
-                          style={[
-                            styles.resumeTriangle,
-                            { borderLeftColor: "#FFFFFF" },
-                          ]}
-                        />
+                        <MaterialIcons name="mic" size={24} color="#FFFFFF" />
                       ) : (
-                        <View style={styles.pauseBarsContainer}>
-                          <View
-                            style={[
-                              styles.pauseBar,
-                              { backgroundColor: colors.text },
-                            ]}
-                          />
-                          <View
-                            style={[
-                              styles.pauseBar,
-                              { backgroundColor: colors.text },
-                            ]}
-                          />
-                        </View>
+                        <MaterialIcons
+                          name="pause"
+                          size={24}
+                          color={colors.text}
+                        />
                       )}
                     </TouchableOpacity>
                   </View>
@@ -218,7 +224,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       activeOpacity={0.8}
                       accessibilityLabel="Stop and save recording"
                     >
-                      <Text style={styles.doneCheckmark}>✓</Text>
+                      <MaterialIcons name="stop" size={28} color="#FFFFFF" />
                     </TouchableOpacity>
                   </View>
                   <Text
@@ -278,7 +284,19 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   header: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: 16,
+  },
+  cancelHeaderButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   recordingPill: {
     flexDirection: "row",
