@@ -186,7 +186,12 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       }
                     >
                       {isPaused ? (
-                        <MaterialIcons name="mic" size={32} color="#FFFFFF" />
+                        <MaterialIcons
+                          name="play-arrow"
+                          size={36}
+                          color="#FFFFFF"
+                          style={{ marginLeft: 2 }}
+                        />
                       ) : (
                         <MaterialIcons
                           name="pause"
