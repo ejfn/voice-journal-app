@@ -4,7 +4,6 @@ import {
   Text,
   Modal,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -12,7 +11,6 @@ import {
   Platform,
 } from "react-native";
 import { entriesDao } from "../db/dao/entriesDao";
-import { geminiService } from "../services/ai/GeminiService";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
 import { useTheme } from "../theme/ThemeContext";
 
@@ -34,17 +32,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     email: string;
     name: string | null;
   } | null>(null);
-  const [googleClientId, setGoogleClientId] = useState<string>(
-    process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || "",
-  );
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-
-  // Gemini API Key state
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(
-    geminiService.getApiKey(),
-  );
-  const [showApiKey, setShowApiKey] = useState<boolean>(false);
 
   // Cache stats
   const [cachedClipsCount, setCachedClipsCount] = useState<number>(0);
@@ -65,16 +54,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (visible) {
       refreshStatus();
-      setGeminiApiKey(geminiService.getApiKey());
     }
   }, [visible, refreshStatus]);
 
   const handleGoogleSignIn = async () => {
     setIsSigningIn(true);
     try {
-      if (googleClientId) {
-        googleDriveService.reconfigure(googleClientId);
-      }
       await googleDriveService.signIn();
       const user = googleDriveService.getCurrentUser();
       setGoogleUser(user);
@@ -100,19 +85,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch (err) {
       Alert.alert("Sign Out Notice", (err as Error).message);
     }
-  };
-
-  const handleSaveConfig = () => {
-    if (geminiApiKey.trim()) {
-      geminiService.setApiKey(geminiApiKey.trim());
-    }
-    if (googleClientId.trim()) {
-      googleDriveService.reconfigure(googleClientId.trim());
-    }
-    Alert.alert(
-      "Settings Saved",
-      "API keys and client configuration updated successfully.",
-    );
   };
 
   const handleManualSync = async () => {
@@ -277,25 +249,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                GOOGLE WEB CLIENT ID
+            <View
+              style={[
+                styles.statusBox,
+                { backgroundColor: colors.surfaceAlt, marginTop: 8 },
+              ]}
+            >
+              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
+                CONFIGURATION SOURCE
               </Text>
-              <TextInput
+              <Text
                 style={[
-                  styles.input,
+                  styles.statusValue,
                   {
-                    backgroundColor: colors.surfaceAlt,
-                    borderColor: colors.border,
-                    color: colors.text,
+                    color: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+                      ? colors.text
+                      : colors.danger,
                   },
                 ]}
-                value={googleClientId}
-                onChangeText={setGoogleClientId}
-                placeholder="xxx.apps.googleusercontent.com"
-                placeholderTextColor={colors.textMuted}
-                autoCapitalize="none"
-              />
+              >
+                {process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+                  ? "✓ EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID configured"
+                  : "✕ Missing EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (.env / EAS)"}
+              </Text>
             </View>
           </View>
 
@@ -320,41 +296,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </View>
             </View>
 
-            <View style={styles.inputGroup}>
-              <View style={styles.labelRow}>
-                <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                  GEMINI API KEY
-                </Text>
-                <TouchableOpacity onPress={() => setShowApiKey(!showApiKey)}>
-                  <Text style={[styles.toggleText, { color: colors.primary }]}>
-                    {showApiKey ? "Hide" : "Show"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <TextInput
+            <View
+              style={[styles.statusBox, { backgroundColor: colors.surfaceAlt }]}
+            >
+              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
+                API KEY STATUS
+              </Text>
+              <Text
                 style={[
-                  styles.input,
+                  styles.statusValue,
                   {
-                    backgroundColor: colors.surfaceAlt,
-                    borderColor: colors.border,
-                    color: colors.text,
+                    color: process.env.EXPO_PUBLIC_GEMINI_API_KEY
+                      ? colors.success
+                      : colors.danger,
                   },
                 ]}
-                value={geminiApiKey}
-                onChangeText={setGeminiApiKey}
-                placeholder="AIzaSy..."
-                placeholderTextColor={colors.textMuted}
-                secureTextEntry={!showApiKey}
-                autoCapitalize="none"
-              />
+              >
+                {process.env.EXPO_PUBLIC_GEMINI_API_KEY
+                  ? "✓ EXPO_PUBLIC_GEMINI_API_KEY configured (Gemini 2.5 Flash)"
+                  : "✕ Missing EXPO_PUBLIC_GEMINI_API_KEY (.env / EAS)"}
+              </Text>
             </View>
-
-            <TouchableOpacity
-              style={[styles.saveBtn, { backgroundColor: colors.primary }]}
-              onPress={handleSaveConfig}
-            >
-              <Text style={styles.saveBtnText}>Save API Keys</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Section: Storage & LRU Cache */}
@@ -578,43 +540,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   outlineButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  inputGroup: {
-    marginTop: 6,
-  },
-  labelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 6,
-  },
-  toggleText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
-  },
-  saveBtn: {
-    marginTop: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  saveBtnText: {
-    color: "#FFF",
     fontSize: 13,
     fontWeight: "600",
   },
