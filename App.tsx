@@ -498,8 +498,8 @@ const MainScreen: React.FC = () => {
             style={[
               styles.primaryFab,
               {
-                backgroundColor: colors.primary,
-                shadowColor: colors.primary,
+                backgroundColor: colors.danger,
+                shadowColor: colors.danger,
               },
             ]}
             onPress={handleStartRecording}
