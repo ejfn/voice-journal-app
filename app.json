@@ -2,8 +2,8 @@
   "expo": {
     "name": "VoiceJournal",
     "slug": "voice-journal-app",
-    "version": "1.0.0",
-    "runtimeVersion": "v1.0.0",
+    "version": "0.1.0",
+    "runtimeVersion": "v0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -54,7 +54,7 @@
       "expo-updates"
     ],
     "extra": {
-      "version": "v1.0.0",
+      "version": "v0.1.0",
       "eas": {
         "projectId": "903009e4-3681-40db-af23-5f8fa043dc75"
       }

@@ -35,7 +35,7 @@ runs:
           PATCH=$(echo $LAST_VERSION | cut -d. -f3)
           COMMIT_COUNT=$(git rev-list --count ${LAST_TAG}..HEAD)
         else
-          MAJOR="1"
+          MAJOR="0"
           MINOR="0"
           PATCH="0"
           COMMIT_COUNT=$(git rev-list --count HEAD)
