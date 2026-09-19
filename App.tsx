@@ -35,9 +35,13 @@ import { audioRecordingService } from "./src/services/audio/AudioRecordingServic
 import { googleDriveService } from "./src/services/drive/GoogleDriveService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
+import { ToastProvider, useToast } from "./src/components/common/Toast";
+import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
 
 const MainScreen: React.FC = () => {
   const { colors, isDark } = useTheme();
+  const { showToast } = useToast();
 
   const [sections, setSections] = useState<MonthSection[]>([]);
   const [tags, setTags] = useState<string[]>([]);
@@ -45,6 +49,7 @@ const MainScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   // Recording Modal State
   const [isRecordingVisible, setIsRecordingVisible] = useState<boolean>(false);
@@ -177,10 +182,11 @@ const MainScreen: React.FC = () => {
         setIsRecordingVisible(false);
         setCurrentRecordingId(null);
         setIsProcessingAI(false);
-        Alert.alert(
-          "Recording Too Short",
-          "Voice entries shorter than 3 seconds will not be saved.",
-        );
+        showToast({
+          message: "Recording under 3 seconds was not saved",
+          icon: "info-outline",
+          type: "warning",
+        });
         return;
       }
 
@@ -340,36 +346,35 @@ const MainScreen: React.FC = () => {
     }
   };
 
-  const handleDeleteEntry = async (id: string) => {
-    Alert.alert(
-      "Delete Entry",
-      "Are you sure you want to delete this voice journal entry?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            const deleted = await entriesDao.deleteEntry(id);
-            setIsReviewVisible(false);
-            setReviewEntry(null);
-            await loadData();
+  const handleDeleteEntry = (id: string) => {
+    setDeleteTargetId(id);
+  };
 
-            // If user is connected to Google Drive, delete from cloud immediately
-            if (deleted && googleDriveService.getCurrentUser()) {
-              googleDriveService
-                .deleteEntryFromDrive(deleted)
-                .then(async () => {
-                  await deletedEntriesDao.removeDeletion(deleted.id);
-                })
-                .catch((err) => {
-                  console.warn("Deferred cloud deletion:", err);
-                });
-            }
-          },
-        },
-      ],
-    );
+  const handleConfirmDelete = async () => {
+    if (!deleteTargetId) return;
+    const id = deleteTargetId;
+    setDeleteTargetId(null);
+    const deleted = await entriesDao.deleteEntry(id);
+    setIsReviewVisible(false);
+    setReviewEntry(null);
+    await loadData();
+    showToast({
+      message: "Entry permanently deleted",
+      icon: "delete-outline",
+      type: "info",
+    });
+
+    // If user is connected to Google Drive, delete from cloud immediately
+    if (deleted && googleDriveService.getCurrentUser()) {
+      googleDriveService
+        .deleteEntryFromDrive(deleted)
+        .then(async () => {
+          await deletedEntriesDao.removeDeletion(deleted.id);
+        })
+        .catch((err) => {
+          console.warn("Deferred cloud deletion:", err);
+        });
+    }
   };
 
   // Transform MonthSection into SectionList data structure
@@ -481,7 +486,11 @@ const MainScreen: React.FC = () => {
             activeOpacity={0.8}
             accessibilityLabel="Import Audio Files"
           >
-            <Text style={styles.secondaryFabIcon}>📥</Text>
+            <MaterialIcons
+              name="file-download"
+              size={22}
+              color={colors.text}
+            />
           </TouchableOpacity>
 
           {/* Bottom: Record Voice */}
@@ -489,15 +498,15 @@ const MainScreen: React.FC = () => {
             style={[
               styles.primaryFab,
               {
-                backgroundColor: colors.primary,
-                shadowColor: colors.primary,
+                backgroundColor: colors.danger,
+                shadowColor: colors.danger,
               },
             ]}
             onPress={handleStartRecording}
             activeOpacity={0.85}
             accessibilityLabel="New Voice Recording"
           >
-            <Text style={styles.primaryFabIcon}>🎙️</Text>
+            <MaterialIcons name="mic" size={28} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
 
@@ -529,6 +538,18 @@ const MainScreen: React.FC = () => {
           onClose={() => setIsSettingsVisible(false)}
           onSyncCompleted={loadData}
         />
+
+        {/* Delete Confirmation Dialog */}
+        <ConfirmDialog
+          visible={deleteTargetId !== null}
+          title="Delete Entry"
+          message="Are you sure you want to permanently delete this voice journal entry? This action cannot be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          isDestructive
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeleteTargetId(null)}
+        />
       </View>
     </SafeAreaView>
   );
@@ -538,7 +559,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <MainScreen />
+        <ToastProvider>
+          <MainScreen />
+        </ToastProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { JournalEntry } from "../db/schema";
 import { useTheme } from "../theme/ThemeContext";
 import { formatDuration, formatTime } from "../utils/paths";
@@ -57,14 +58,11 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           accessibilityLabel={isPlaying ? "Pause Audio" : "Play Audio"}
         >
-          {isPlaying ? (
-            <View style={styles.pauseIcon}>
-              <View style={[styles.pauseBar, { backgroundColor: "#FFFFFF" }]} />
-              <View style={[styles.pauseBar, { backgroundColor: "#FFFFFF" }]} />
-            </View>
-          ) : (
-            <Text style={[styles.playIcon, { color: colors.primary }]}>▶</Text>
-          )}
+          <MaterialIcons
+            name={isPlaying ? "pause" : "play-arrow"}
+            size={20}
+            color={isPlaying ? "#FFFFFF" : colors.primary}
+          />
         </TouchableOpacity>
       </View>
 

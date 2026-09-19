@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from "react-native";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useTheme } from "../theme/ThemeContext";
 
 interface TimelineHeaderProps {
@@ -49,7 +50,7 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Settings"
           >
-            <Text style={styles.settingsIconText}>⚙️</Text>
+            <MaterialIcons name="settings" size={20} color={colors.text} />
           </TouchableOpacity>
         )}
       </View>
@@ -60,7 +61,12 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
         ]}
       >
-        <Text style={[styles.searchIcon, { color: colors.textMuted }]}>🔍</Text>
+        <MaterialIcons
+          name="search"
+          size={20}
+          color={colors.textMuted}
+          style={styles.searchIcon}
+        />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
           placeholder="Search transcripts, titles, tags..."
@@ -76,9 +82,7 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
             style={styles.clearButton}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Text style={[styles.clearText, { color: colors.textMuted }]}>
-              ✕
-            </Text>
+            <MaterialIcons name="close" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         )}
       </View>

@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   Platform,
   StatusBar,
@@ -14,6 +13,10 @@ import {
 import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
 import { useTheme } from "../theme/ThemeContext";
+import MaterialIcons from "@react-native-vector-icons/material-icons";
+import { useToast } from "./common/Toast";
+import { ConfirmDialog } from "./common/ConfirmDialog";
+import { getAppVersion } from "../utils/versioning";
 
 interface SettingsModalProps {
   visible: boolean;
@@ -27,6 +30,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSyncCompleted,
 }) => {
   const { colors, mode, setMode } = useTheme();
+  const { showToast } = useToast();
+
+  // Confirmation Dialog States
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [confirmClearCache, setConfirmClearCache] = useState(false);
 
   // Google Sign-In state
   const [googleUser, setGoogleUser] = useState<{
@@ -72,24 +80,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       await googleDriveService.signIn();
       const user = googleDriveService.getCurrentUser();
       setGoogleUser(user);
-      Alert.alert(
-        "Signed In",
-        `Connected to Google Drive as ${user?.email || "user"}`,
-      );
+      showToast({
+        message: `Connected to Google Drive as ${user?.email || "user"}`,
+        icon: "cloud-done",
+        type: "success",
+      });
     } catch (err) {
-      Alert.alert("Google Sign-In", (err as Error).message || "Sign in failed");
+      showToast({
+        message: (err as Error).message || "Google Sign-In failed",
+        icon: "error-outline",
+        type: "error",
+      });
     } finally {
       setIsSigningIn(false);
     }
   };
 
-  const handleGoogleSignOut = async () => {
+  const handleConfirmSignOut = async () => {
+    setConfirmSignOut(false);
     try {
       await googleDriveService.signOut();
       setGoogleUser(null);
-      Alert.alert("Signed Out", "Disconnected from Google Drive.");
+      showToast({
+        message: "Disconnected from Google Drive",
+        icon: "cloud-off",
+        type: "info",
+      });
     } catch (err) {
-      Alert.alert("Sign Out", (err as Error).message);
+      showToast({
+        message: (err as Error).message || "Sign out failed",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
@@ -102,15 +124,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (onSyncCompleted) {
         onSyncCompleted();
       }
-      Alert.alert(
-        "Sync Complete",
-        `Synchronized timeline.\n• ${result.uploadedCount} clip(s) uploaded to Drive\n• ${result.downloadedCount} clip(s) downloaded`,
-      );
+      showToast({
+        message: `Sync complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
+        icon: "cloud-done",
+        type: "success",
+      });
     } catch (err) {
-      Alert.alert(
-        "Sync Failed",
-        (err as Error).message || "Failed to sync with Google Drive.",
-      );
+      showToast({
+        message: (err as Error).message || "Failed to sync with Google Drive",
+        icon: "error-outline",
+        type: "error",
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -126,19 +150,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
       if (evictionResult.evictedCount > 0) {
         const freedMb = (evictionResult.freedBytes / (1024 * 1024)).toFixed(1);
-        Alert.alert(
-          "Storage Limit Applied",
-          `Evicted ${evictionResult.evictedCount} least recently accessed audio file(s) to adhere to the ${
-            mb === 0 ? "Unlimited" : `${mb} MB`
-          } threshold (${freedMb} MB freed). Cloud copies in Google Drive remain intact.`,
-        );
+        showToast({
+          message: `Storage limit applied • ${evictionResult.evictedCount} files (${freedMb} MB) freed`,
+          icon: "check-circle",
+          type: "info",
+        });
       }
     } catch (err) {
-      Alert.alert("Storage Settings", (err as Error).message);
+      showToast({
+        message: (err as Error).message || "Failed to update storage settings",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
-  const handleClearCache = async () => {
+  const handleConfirmClearCache = async () => {
+    setConfirmClearCache(false);
     setIsCleaningCache(true);
     try {
       const result = await googleDriveService.runLruEviction({
@@ -149,12 +177,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         onSyncCompleted();
       }
       const freedMb = (result.freedBytes / (1024 * 1024)).toFixed(1);
-      Alert.alert(
-        "Cache Cleared",
-        `Removed ${result.evictedCount} audio file(s) (${freedMb} MB freed). Cloud backups remain safe in Google Drive and can be re-downloaded on tap.`,
-      );
+      showToast({
+        message: `Cache cleared • ${result.evictedCount} file(s) (${freedMb} MB freed)`,
+        icon: "check-circle",
+        type: "success",
+      });
     } catch (err) {
-      Alert.alert("Clear Cache", (err as Error).message);
+      showToast({
+        message: (err as Error).message || "Failed to clear cache",
+        icon: "error-outline",
+        type: "error",
+      });
     } finally {
       setIsCleaningCache(false);
     }
@@ -224,9 +257,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               {(
                 [
-                  { key: "auto", label: "System" },
-                  { key: "light", label: "Light" },
-                  { key: "dark", label: "Dark" },
+                  { key: "auto", label: "System", icon: "brightness-auto" },
+                  { key: "light", label: "Light", icon: "light-mode" },
+                  { key: "dark", label: "Dark", icon: "dark-mode" },
                 ] as const
               ).map((item) => {
                 const isSelected = mode === item.key;
@@ -246,6 +279,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onPress={() => setMode(item.key)}
                     activeOpacity={0.7}
                   >
+                    <MaterialIcons
+                      name={item.icon}
+                      size={15}
+                      color={isSelected ? colors.primary : colors.textMuted}
+                      style={{ marginRight: 5 }}
+                    />
                     <Text
                       style={[
                         styles.segmentOptionText,
@@ -332,11 +371,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {isSyncing ? (
                       <ActivityIndicator size="small" color="#FFF" />
                     ) : (
-                      <Text
-                        style={[styles.secondaryButtonText, { color: "#FFF" }]}
-                      >
-                        Sync Now
-                      </Text>
+                      <View style={styles.buttonContent}>
+                        <MaterialIcons
+                          name="sync"
+                          size={18}
+                          color="#FFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text
+                          style={[
+                            styles.secondaryButtonText,
+                            { color: "#FFF" },
+                          ]}
+                        >
+                          Sync Now
+                        </Text>
+                      </View>
                     )}
                   </TouchableOpacity>
 
@@ -349,16 +399,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         paddingHorizontal: 16,
                       },
                     ]}
-                    onPress={handleGoogleSignOut}
+                    onPress={() => setConfirmSignOut(true)}
                   >
-                    <Text
-                      style={[
-                        styles.outlineButtonText,
-                        { color: colors.danger },
-                      ]}
-                    >
-                      Sign Out
-                    </Text>
+                    <View style={styles.buttonContent}>
+                      <MaterialIcons
+                        name="logout"
+                        size={16}
+                        color={colors.danger}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.outlineButtonText,
+                          { color: colors.danger },
+                        ]}
+                      >
+                        Sign Out
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 </>
               ) : (
@@ -375,9 +433,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {isSigningIn ? (
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
-                    <Text style={styles.primaryButtonText}>
-                      Connect Google Account
-                    </Text>
+                    <View style={styles.buttonContent}>
+                      <MaterialIcons
+                        name="cloud-upload"
+                        size={18}
+                        color="#FFF"
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text style={styles.primaryButtonText}>
+                        Connect Google Account
+                      </Text>
+                    </View>
                   )}
                 </TouchableOpacity>
               )}
@@ -497,31 +563,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 styles.outlineButton,
                 { borderColor: colors.border, marginTop: 16 },
               ]}
-              onPress={handleClearCache}
+              onPress={() => setConfirmClearCache(true)}
               disabled={isCleaningCache || storageStats.cachedCount === 0}
               activeOpacity={0.7}
             >
               {isCleaningCache ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <Text
-                  style={[
-                    styles.outlineButtonText,
-                    {
-                      color:
-                        storageStats.cachedCount === 0
-                          ? colors.textMuted
-                          : colors.text,
-                    },
-                  ]}
-                >
-                  {storageStats.cachedCount === 0
-                    ? "Cache is Clean"
-                    : `Clear Local Cache (${(
-                        storageStats.totalBytes /
-                        (1024 * 1024)
-                      ).toFixed(1)} MB)`}
-                </Text>
+                <View style={styles.buttonContent}>
+                  <MaterialIcons
+                    name="delete-sweep"
+                    size={18}
+                    color={
+                      storageStats.cachedCount === 0
+                        ? colors.textMuted
+                        : colors.text
+                    }
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.outlineButtonText,
+                      {
+                        color:
+                          storageStats.cachedCount === 0
+                            ? colors.textMuted
+                            : colors.text,
+                      },
+                    ]}
+                  >
+                    {storageStats.cachedCount === 0
+                      ? "Cache is Clean"
+                      : `Clear Local Cache (${(
+                          storageStats.totalBytes /
+                          (1024 * 1024)
+                        ).toFixed(1)} MB)`}
+                  </Text>
+                </View>
               )}
             </TouchableOpacity>
           </View>
@@ -532,13 +610,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               VoiceJournal
             </Text>
             <Text style={[styles.aboutVersion, { color: colors.textMuted }]}>
-              Version 0.1.0
+              Version {getAppVersion()}
             </Text>
             <Text style={[styles.aboutSubtitle, { color: colors.textMuted }]}>
               Offline-first multimodal voice journal
             </Text>
           </View>
         </ScrollView>
+
+        {/* Sign Out Confirmation Dialog */}
+        <ConfirmDialog
+          visible={confirmSignOut}
+          title="Sign Out from Google Drive"
+          message="Disconnect your Google Drive account? Local recordings will remain safe on this device, but automatic cloud backup will be paused."
+          confirmLabel="Sign Out"
+          cancelLabel="Cancel"
+          isDestructive
+          onConfirm={handleConfirmSignOut}
+          onCancel={() => setConfirmSignOut(false)}
+        />
+
+        {/* Clear Cache Confirmation Dialog */}
+        <ConfirmDialog
+          visible={confirmClearCache}
+          title="Clear Local Audio Cache"
+          message={`Remove ${storageStats.cachedCount} cached audio file(s) (${(
+            storageStats.totalBytes /
+            (1024 * 1024)
+          ).toFixed(
+            1,
+          )} MB)? All cloud backups remain safe in Google Drive and can be streamed or re-downloaded at any time.`}
+          confirmLabel="Clear Cache"
+          cancelLabel="Cancel"
+          icon="cleaning-services"
+          onConfirm={handleConfirmClearCache}
+          onCancel={() => setConfirmClearCache(false)}
+        />
       </View>
     </Modal>
   );
@@ -689,10 +796,16 @@ const styles = StyleSheet.create({
   },
   segmentOption: {
     flex: 1,
+    flexDirection: "row",
     paddingVertical: 8,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 9,
+  },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
   segmentOptionActive: {
     shadowOffset: { width: 0, height: 1 },

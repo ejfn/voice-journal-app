@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "main": "index.ts",
   "dependencies": {
-    "@expo/metro-config": "~57.0.0",
-    "@expo/vector-icons": "^15.0.2",
     "@react-native-google-signin/google-signin": "^16.1.5",
+    "@react-native-vector-icons/material-icons": "^13.1.4",
     "babel-preset-expo": "~57.0.0",
     "expo": "~57.0.24",
     "expo-asset": "~57.0.18",
