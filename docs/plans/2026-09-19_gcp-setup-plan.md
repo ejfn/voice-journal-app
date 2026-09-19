@@ -1,26 +1,29 @@
-# GCP Setup & Google Drive OAuth Configuration Plan
+# GCP & Gemini API Setup & Google Drive OAuth Configuration Plan
 
-> **Document Version:** 1.0.0  
+> **Document Version:** 1.1.0  
 > **Date:** 2026-09-19  
-> **Status:** Draft  
+> **Status:** Active Plan  
 > **Related Architecture:** [2026-09-19_voice-journal-app-plan.md](file:///home/eric/repos/voice-journal-app/docs/plans/2026-09-19_voice-journal-app-plan.md)  
-> **Scope:** Google Cloud Platform (GCP) Console, OAuth 2.0 Credentials, Google Drive API v3, EAS Keystore Integration
+> **Scope:** Google Cloud Platform (GCP) Console, Google AI Studio (Gemini 2.5 Flash), OAuth 2.0 Credentials, Google Drive API v3, EAS Keystore Integration
 
 ---
 
 ## 1. Executive Summary
 
-VoiceJournal integrates with Google Drive via `@react-native-google-signin/google-signin` and the Google Drive REST API v3 to provide offline-first cloud backup and synchronization of journal entries and audio files.
+VoiceJournal requires two core cloud integrations provided by the Google ecosystem:
+1. **Multimodal AI Analysis (Gemini API):** Performs on-device-initiated speech transcription, diary headline title generation, executive 1-sentence summaries, and 3–5 lowercase topic tags using `gemini-2.5-flash` via direct REST endpoints.
+2. **Offline-First Cloud Sync (Google Drive API):** Backs up local SQLite metadata and `.m4a` audio recordings to a hierarchical folder structure (`VoiceJournal/YYYY/MM/`) on Google Drive via `@react-native-google-signin/google-signin` and Drive REST API v3.
 
-To allow Android devices to sign in with Google Play Services and exchange tokens for Drive API requests, the application requires:
-1. A Google Cloud Platform (GCP) project with the **Google Drive API** enabled.
-2. An **OAuth Consent Screen** configured with the minimal, non-sensitive scope `https://www.googleapis.com/auth/drive.file`.
-3. A **Web Application OAuth 2.0 Client ID** passed as the server audience parameter (`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`).
-4. An **Android OAuth 2.0 Client ID** linked to package `com.personal.voicejournal` and authorized by the signing certificate SHA-1 fingerprint.
+To enable both capabilities on Android physical devices and emulators, the developer must configure:
+- A Google Cloud Platform (GCP) project with the **Google Drive API** enabled.
+- A **Gemini API Key** generated via Google AI Studio or GCP Generative Language API (`EXPO_PUBLIC_GEMINI_API_KEY`).
+- An **OAuth Consent Screen** configured with the minimal, non-sensitive scope `https://www.googleapis.com/auth/drive.file`.
+- A **Web Application OAuth 2.0 Client ID** passed as the server audience parameter (`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`).
+- An **Android OAuth 2.0 Client ID** linked to package `com.personal.voicejournal` and authorized by the signing certificate SHA-1 fingerprint.
 
 ---
 
-## 2. Architecture & Authentication Flow
+## 2. Architecture & Service Flow
 
 ```mermaid
 sequenceDiagram
@@ -28,19 +31,24 @@ sequenceDiagram
     actor User as User Device (Android)
     participant App as VoiceJournal App
     participant GPS as Google Play Services
-    participant GCP as Google OAuth / Token Server
+    participant Gemini as Gemini 2.5 Flash (AI Studio)
     participant Drive as Google Drive API v3
 
+    Note over User,App: Step 1: Audio Capture & AI Processing
+    User->>App: Record voice clip & tap Stop
+    App->>Gemini: POST /v1beta/models/gemini-2.5-flash:generateContent?key=GEMINI_API_KEY<br/>(Base64 audio + Structured JSON prompt)
+    Gemini-->>App: { transcript, title, tags, summary }
+    App->>App: Save Entry & Sync Queue item to local SQLite (FTS5 indexed)
+
+    Note over User,Drive: Step 2: Google Authentication & Sync
     User->>App: Tap "Connect Google Drive"
     App->>GPS: GoogleSignin.signIn({ webClientId, scopes })
-    GPS->>GCP: Validate Package Name + SHA-1 + Web Client ID
-    GCP-->>GPS: Authorization Code & Access Token
-    GPS-->>App: Access Token + User Info (email, name)
-    App->>Drive: GET /drive/v3/files (Search "VoiceJournal" folder)
+    GPS-->>App: Access Token (drive.file scope)
+    App->>Drive: GET /drive/v3/files (Locate VoiceJournal/ folder)
     Drive-->>App: Folder ID
     App->>Drive: Multipart POST (Upload audio clip + JSON metadata)
-    Drive-->>App: File ID & ETag
-    App-->>User: Show "Connected" & Sync Progress Complete
+    Drive-->>App: Upload confirmed (File ID, ETag)
+    App->>App: Update sync status to 'synced'
 ```
 
 ---
@@ -49,6 +57,7 @@ sequenceDiagram
 
 - A standard Google account (e.g., `ericvan76@gmail.com`).
 - Access to [Google Cloud Console](https://console.cloud.google.com/).
+- Access to [Google AI Studio](https://aistudio.google.com/).
 - EAS CLI installed and authenticated (`npx eas whoami`).
 - GitHub repository with locked `main` branch (merges via Pull Requests).
 
@@ -117,8 +126,8 @@ sequenceDiagram
 1. Navigate to **APIs & Services** &rarr; **Credentials**.
 2. Click **+ Create Credentials** at the top &rarr; select **OAuth client ID**.
 3. **Application type**: Select **Web application**.
-4. **Name**: `VoiceJournal Web Client`.
-5. **Authorized JavaScript origins & Redirect URIs**: Leave empty.
+4. **Name:** `VoiceJournal Web Client`.
+5. **Authorized JavaScript origins & Redirect URIs:** Leave empty.
 6. Click **Create**.
 7. A dialog will appear displaying:
    - **Your Client ID** (e.g., `123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com`).
@@ -163,14 +172,14 @@ If running a local development build via `npx expo run:android`:
 
 1. Return to [Google Cloud Console Credentials](https://console.cloud.google.com/apis/credentials).
 2. Click **+ Create Credentials** &rarr; select **OAuth client ID**.
-3. **Application type**: Select **Android**.
-4. **Name**: `VoiceJournal Android Client (EAS Production / Dev)`.
-5. **Package name**:
+3. **Application type:** Select **Android**.
+4. **Name:** `VoiceJournal Android Client (EAS Production / Dev)`.
+5. **Package name:**
    ```
    com.personal.voicejournal
    ```
    *(Must match `expo.android.package` in [app.json](file:///home/eric/repos/voice-journal-app/app.json)).*
-6. **SHA-1 certificate fingerprint**:
+6. **SHA-1 certificate fingerprint:**
    - Paste the SHA-1 fingerprint extracted in Step 5 (e.g., `AA:BB:CC:DD:...`).
 7. Click **Create**.
 
@@ -182,50 +191,109 @@ If running a local development build via `npx expo run:android`:
 
 ---
 
+### Step 7: Generate Gemini API Key
+
+VoiceJournal uses the **Gemini 2.5 Flash** model for fast multimodal audio processing (verbatim transcription, title generation, summary, and clean lowercase tags).
+
+#### Option A: Via Google AI Studio (Fastest & Recommended)
+1. Open [Google AI Studio](https://aistudio.google.com/).
+2. Sign in with your Google account (`ericvan76@gmail.com`).
+3. In the left navigation menu, click **Get API key** (or visit `https://aistudio.google.com/app/apikey`).
+4. Click **Create API key**.
+5. When prompted to select a Google Cloud project, choose the **`voice-journal-app`** project created in Step 1.
+   *(Linking to the existing GCP project keeps all billing, credentials, and quotas consolidated).*
+6. Google AI Studio generates an API key string (e.g., `AIzaSyD-EXAMPLEKEY1234567890abcdef`).
+7. Click **Copy** to copy the key.
+
+#### Option B: Via Google Cloud Console (Direct GCP Management)
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Select project `voice-journal-app`.
+3. In the search box, search for **Generative Language API** and click **Enable**.
+4. Go to **APIs & Services** &rarr; **Credentials**.
+5. Click **+ Create Credentials** &rarr; select **API key**.
+6. A dialog appears with your newly generated API key.
+7. *(Recommended Security Practice)* Click **Edit API key** in the dialog:
+   - Name: `VoiceJournal Gemini Key`.
+   - **API restrictions:** Select **Restrict key** &rarr; check **Generative Language API** only.
+   - Click **Save**.
+
+#### Adding the Gemini Key to VoiceJournal
+Add the generated key to your local `.env` file:
+```env
+EXPO_PUBLIC_GEMINI_API_KEY=AIzaSyD-EXAMPLEKEY1234567890abcdef
+```
+
+To configure for EAS cloud builds:
+```bash
+npx eas secret:create --name EXPO_PUBLIC_GEMINI_API_KEY --value "AIzaSyD-EXAMPLEKEY..." --type string
+```
+
+> [!NOTE]
+> VoiceJournal also supports entering or updating the Gemini API Key at runtime in the app via the **Settings Modal** ([SettingsModal.tsx](file:///home/eric/repos/voice-journal-app/src/components/SettingsModal.tsx)), with masked input and real-time connection validation.
+
+---
+
 ## 5. Configuration Reference
+
+### Complete `.env` Specification
+
+```env
+# Gemini API Key (multimodal audio transcription, summary, tagging)
+EXPO_PUBLIC_GEMINI_API_KEY=AIzaSy...
+
+# Google OAuth 2.0 Web Client ID (audience ID for Google Play Services on Android)
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=123456789012-xxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com
+```
 
 ### Environment Variables Matrix
 
-| Variable | Description | Location | Public / Secret |
-| :--- | :--- | :--- | :--- |
-| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | OAuth 2.0 Web Client ID from Step 4 | `.env` / EAS Secrets | Public (Embedded in bundle) |
-| `EXPO_PUBLIC_GEMINI_API_KEY` | Multimodal Gemini API Key | `.env` / EAS Secrets | Public or in-app Settings |
+| Variable | Service | Required In | Public / Secret | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| `EXPO_PUBLIC_GEMINI_API_KEY` | Gemini 2.5 Flash | `.env` / EAS Secret | Public in bundle | Can be overridden in app Settings modal |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Google Sign-In & Drive | `.env` / EAS Secret | Public in bundle | Must be OAuth "Web application" type |
 
 ### In-App Configuration Override
-VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/eric/repos/voice-journal-app/src/components/SettingsModal.tsx)) allowing the user to view or override the Web Client ID dynamically without recompiling:
+VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/eric/repos/voice-journal-app/src/components/SettingsModal.tsx)) allowing the user to view or override keys dynamically without rebuilding:
 - Tap the **Gear** icon in the timeline header.
-- Enter custom **Google Web Client ID**.
+- View / edit **Gemini API Key** (with show/hide toggle).
+- View / edit **Google Web Client ID**.
 - Tap **Save Settings**.
-- Tap **Connect Google Drive** to reconfigure `GoogleSignin` immediately.
+- Tap **Connect Google Drive** to authenticate immediately with Google Play Services.
 
 ---
 
 ## 6. Verification and Testing Runbook
 
-1. **Verify Environment Setup**:
-   - Ensure `.env` contains valid `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`.
-2. **Build Dev Client**:
-   ```bash
-   npx eas build -p android --profile development
-   ```
-3. **Install on Android Device**:
-   - Download the generated `.apk` onto an Android device or emulator with Google Play Services.
-4. **Authenticate**:
-   - Launch VoiceJournal.
-   - Tap **Settings** &rarr; verify Google Client ID is populated.
-   - Tap **Connect Google Drive**.
-   - Expected behavior:
-     - Google Play Services bottom-sheet account picker appears.
-     - Select `ericvan76@gmail.com`.
-     - Consent dialog appears: "VoiceJournal wants to access your Google Account... See, edit, create, and delete only the specific Google Drive files you use with this app".
-     - Tap **Allow**.
-     - Settings modal displays `Connected as ericvan76@gmail.com` with a green indicator.
-5. **Sync Verification**:
-   - Record a test journal entry with microphone audio.
-   - Tap **Save**.
-   - Observe sync status indicator change to synced.
-   - Open [Google Drive Web](https://drive.google.com/) with `ericvan76@gmail.com`.
-   - Verify folder `VoiceJournal/` exists and contains the uploaded `.m4a` file and `.json` metadata file.
+### Phase 1: Verify Gemini AI Transcription & Analysis
+1. Launch VoiceJournal in dev client or emulator.
+2. Ensure the Gemini API key is active (either via `.env` or entered in Settings).
+3. Tap the **Record** microphone button and record 10 seconds of speech:
+   > *"Today I went for a 5-kilometer run in the morning park. The weather was cool and refreshing, and I felt great afterwards."*
+4. Tap **Stop**.
+5. The app displays the processing indicator while `GeminiService.ts` uploads the audio to `gemini-2.5-flash`.
+6. Verify the Review Modal:
+   - **Transcript:** Accurately reflects spoken words without filler words.
+   - **Title:** Generated short title (e.g., *"Morning Park Run"*).
+   - **Summary:** Concise 1-sentence summary.
+   - **Tags:** 3 to 5 lowercase tags (e.g., `running`, `morning`, `fitness`, `park`).
+7. Tap **Save Entry**.
+
+---
+
+### Phase 2: Verify Google Drive Sync
+1. In VoiceJournal, tap **Settings** (gear icon in header).
+2. Confirm the Web Client ID is populated.
+3. Tap **Connect Google Drive**.
+4. Expected behavior:
+   - Google Play Services bottom-sheet account picker appears.
+   - Select your test account (`ericvan76@gmail.com`).
+   - Consent dialog displays: *"VoiceJournal wants to access your Google Account... See, edit, create, and delete only the specific Google Drive files you use with this app"*.
+   - Tap **Allow**.
+   - Settings modal displays `Connected as ericvan76@gmail.com` with a green status badge.
+5. In the timeline, observe the entry sync status indicator transition from `pending` to `synced`.
+6. Open [Google Drive Web](https://drive.google.com/):
+   - Navigate to `VoiceJournal/` folder.
+   - Confirm subfolders `YYYY/MM/` contain the uploaded `.m4a` audio clip and `.json` entry metadata file.
 
 ---
 
@@ -233,10 +301,12 @@ VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/er
 
 | Error Code / Symptom | Root Cause | Resolution |
 | :--- | :--- | :--- |
-| **`DEVELOPER_ERROR` (code 10)** | SHA-1 mismatch or Package Name mismatch in GCP Android Client ID | Verify `app.json` package is `com.personal.voicejournal`. Re-extract SHA-1 from `npx eas credentials` and ensure exact match in GCP Console Android Client ID. |
+| **`400 API_KEY_INVALID` (Gemini)** | Missing, mistyped, or disabled Gemini API key | Check `.env` or in-app Settings modal. Confirm the key is active in [Google AI Studio](https://aistudio.google.com/app/apikey). |
+| **`429 RESOURCE_EXHAUSTED` (Gemini)** | Rate limit exceeded on Gemini free tier | Free tier provides 15 RPM. Implement brief backoff or verify billing on the linked GCP project. |
+| **`DEVELOPER_ERROR` (code 10) (Google Sign-In)** | SHA-1 mismatch or Package Name mismatch in GCP Android Client ID | Verify `app.json` package is `com.personal.voicejournal`. Re-extract SHA-1 from `npx eas credentials` and ensure exact match in GCP Console Android Client ID. |
 | **`DEVELOPER_ERROR` (code 10) on configure** | Invalid or missing `webClientId` | Ensure `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` is defined and matches the Web Client ID (type: Web application, NOT Android). |
 | **`Access blocked: VoiceJournal has not completed the Google verification process`** | Google account not added to OAuth Consent Screen Test Users | Add the user's Google email under **OAuth consent screen** &rarr; **Test users** in GCP Console. |
-| **`SIGN_IN_CANCELLED` (code 13)** | User dismissed the Google sign-in dialog | Normal user action. App should safely ignore and allow retry. |
+| **`SIGN_IN_CANCELLED` (code 13)** | User dismissed the Google sign-in dialog | Normal user action. App allows retry without error. |
 | **`PLAY_SERVICES_NOT_AVAILABLE`** | Device lacks Google Play Services (e.g. AOSP emulator) | Use an Android Virtual Device (AVD) image that includes **Google Play** or test on a physical Android device. |
 | **403 Insufficient Permissions during Drive upload** | Scopes mismatch or user revoked Drive permission | Ensure consent screen includes `drive.file` scope. Call `GoogleSignin.signOut()` and re-authenticate. |
 
@@ -252,6 +322,9 @@ VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/er
 - [ ] Web Application OAuth Client ID generated.
 - [ ] Android OAuth Client ID generated with package `com.personal.voicejournal`.
 - [ ] SHA-1 fingerprint from EAS Keystore linked to Android OAuth Client ID.
-- [ ] `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` added to `.env`.
-- [ ] Dev client APK built and tested on Android device.
-- [ ] End-to-end drive upload verified.
+- [ ] **Gemini API Key** generated via Google AI Studio / GCP Console.
+- [ ] Gemini API Key restricted to Generative Language API (optional security best practice).
+- [ ] Both `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` and `EXPO_PUBLIC_GEMINI_API_KEY` added to `.env`.
+- [ ] Dev client APK built and installed on Android device.
+- [ ] Multimodal audio transcription, title, summary, and auto-tagging verified.
+- [ ] End-to-end Google Drive upload verified.
