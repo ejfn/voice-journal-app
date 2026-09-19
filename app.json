@@ -30,6 +30,7 @@
       "favicon": "./assets/favicon.png"
     },
     "updates": {
+      "url": "https://u.expo.dev/903009e4-3681-40db-af23-5f8fa043dc75",
       "requestHeaders": {
         "expo-channel-name": "production"
       }
@@ -51,7 +52,8 @@
       ],
       "@react-native-google-signin/google-signin",
       "expo-document-picker",
-      "expo-updates"
+      "expo-updates",
+      "expo-asset"
     ],
     "extra": {
       "version": "v0.1.0",

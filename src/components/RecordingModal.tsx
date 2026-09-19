@@ -34,14 +34,14 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
   onCancel,
 }) => {
   const { colors } = useTheme();
-  // Array of 15 bars for waveform visualization
+  // Array of 19 bars for waveform visualization
   const [waveformBars, setWaveformBars] = useState<number[]>(
-    new Array(15).fill(0.1),
+    new Array(19).fill(0.1),
   );
 
   useEffect(() => {
     if (!visible) {
-      setWaveformBars(new Array(15).fill(0.1));
+      setWaveformBars(new Array(19).fill(0.1));
       return;
     }
 
@@ -51,8 +51,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
     }
 
     // Shift previous values and add current metering with subtle random variation for organic waveform feel
-    const jitter = (Math.random() - 0.5) * 0.15;
-    const barHeight = Math.max(0.1, Math.min(1.0, meteringLevel + jitter));
+    const jitter = (Math.random() - 0.5) * 0.12;
+    const barHeight = Math.max(0.12, Math.min(1.0, meteringLevel + jitter));
     setWaveformBars((prev) => [...prev.slice(1), barHeight]);
   }, [meteringLevel, visible, isPaused]);
 
@@ -63,22 +63,27 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
       animationType="slide"
       onRequestClose={onCancel}
     >
-      <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.65)" }]}>
+      <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
         <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
           {isProcessing ? (
             <View style={styles.processingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.processingTitle, { color: colors.text }]}>
-                Analyzing with Gemini Flash...
+                Processing Recording
               </Text>
               <Text style={[styles.processingSub, { color: colors.textMuted }]}>
-                Extracting verbatim transcript, smart title, tags, and summary
+                Transcribing audio and generating smart title & summary...
               </Text>
             </View>
           ) : (
             <>
               <View style={styles.header}>
-                <View style={styles.recordingPill}>
+                <View
+                  style={[
+                    styles.recordingPill,
+                    { backgroundColor: colors.surfaceAlt },
+                  ]}
+                >
                   <View
                     style={[
                       styles.recordDot,
@@ -113,7 +118,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                     style={[
                       styles.waveformBar,
                       {
-                        height: Math.max(8, heightFactor * 60),
+                        height: Math.max(6, heightFactor * 54),
                         backgroundColor: isPaused
                           ? colors.waveformBar
                           : colors.waveformActive,
@@ -126,13 +131,13 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
               {/* Status Hint */}
               <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
-                  ? "Recording paused. Tap resume or finish to save."
-                  : "Pause to take a break, or stop to process with Gemini"}
+                  ? "Recording paused. Tap resume or stop to save."
+                  : "Speak naturally. Pause or stop whenever you are ready."}
               </Text>
 
-              {/* Circular Action Buttons */}
+              {/* Action Buttons */}
               <View style={styles.controlsRow}>
-                {/* Large Round Pause/Resume Button */}
+                {/* Pause/Resume Button */}
                 <TouchableOpacity
                   style={[
                     styles.circleButton,
@@ -142,7 +147,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                     },
                   ]}
                   onPress={isPaused ? onResume : onPause}
-                  activeOpacity={0.8}
+                  activeOpacity={0.75}
                   accessibilityLabel={
                     isPaused ? "Resume recording" : "Pause recording"
                   }
@@ -159,7 +164,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                   </Text>
                 </TouchableOpacity>
 
-                {/* Large Round Stop Button */}
+                {/* Stop Button */}
                 <TouchableOpacity
                   style={[
                     styles.circleButton,
@@ -167,24 +172,16 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                     { backgroundColor: colors.danger },
                   ]}
                   onPress={onStop}
-                  activeOpacity={0.8}
-                  accessibilityLabel="Stop recording and analyze"
+                  activeOpacity={0.75}
+                  accessibilityLabel="Stop recording and save"
                 >
-                  <Text
-                    style={[
-                      styles.circleButtonIcon,
-                      { color: colors.textInverse },
-                    ]}
-                  >
+                  <Text style={[styles.circleButtonIcon, { color: "#FFFFFF" }]}>
                     ⏹
                   </Text>
                   <Text
-                    style={[
-                      styles.circleButtonLabel,
-                      { color: colors.textInverse },
-                    ]}
+                    style={[styles.circleButtonLabel, { color: "#FFFFFF" }]}
                   >
-                    Stop
+                    Done
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -194,9 +191,10 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                 style={styles.cancelButton}
                 onPress={onCancel}
                 activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 14, right: 14 }}
               >
                 <Text style={[styles.cancelText, { color: colors.textMuted }]}>
-                  Cancel Recording
+                  Discard
                 </Text>
               </TouchableOpacity>
             </>
@@ -213,15 +211,20 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 40,
+    paddingTop: 24,
+    paddingBottom: 44,
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 8,
   },
   processingContainer: {
-    paddingVertical: 50,
+    paddingVertical: 54,
     alignItems: "center",
   },
   processingTitle: {
@@ -229,11 +232,13 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 20,
     marginBottom: 8,
+    letterSpacing: -0.2,
   },
   processingSub: {
-    fontSize: 13,
+    fontSize: 13.5,
     textAlign: "center",
     paddingHorizontal: 20,
+    lineHeight: 19,
   },
   header: {
     marginBottom: 16,
@@ -252,41 +257,41 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   recordPillText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: "700",
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
   timer: {
-    fontSize: 48,
+    fontSize: 52,
     fontWeight: "700",
     fontVariant: ["tabular-nums"],
-    letterSpacing: 1,
-    marginBottom: 20,
+    letterSpacing: -1,
+    marginBottom: 18,
   },
   waveformContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 70,
-    gap: 5,
+    height: 60,
+    gap: 4,
     marginBottom: 16,
     width: "100%",
   },
   waveformBar: {
-    width: 5,
-    borderRadius: 3,
+    width: 4,
+    borderRadius: 2,
   },
   statusHint: {
     fontSize: 13,
     textAlign: "center",
-    marginBottom: 28,
+    marginBottom: 26,
   },
   controlsRow: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    gap: 36,
-    marginBottom: 24,
+    gap: 32,
+    marginBottom: 22,
   },
   circleButton: {
     width: 72,
@@ -297,21 +302,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.08,
     shadowRadius: 4,
     elevation: 3,
   },
   stopCircleButton: {
     borderWidth: 0,
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
   },
   circleButtonIcon: {
-    fontSize: 24,
+    fontSize: 20,
     marginBottom: 2,
   },
   circleButtonLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "600",
-    textTransform: "uppercase",
   },
   cancelButton: {
     paddingVertical: 8,

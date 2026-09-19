@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   SectionList,
@@ -9,8 +8,8 @@ import {
   RefreshControl,
   StatusBar,
   Alert,
-  Platform,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
@@ -366,16 +365,23 @@ const MainScreen: React.FC = () => {
           )}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyIcon, { color: colors.textMuted }]}>
-                🎙️
-              </Text>
+              <View
+                style={[
+                  styles.emptyIconCircle,
+                  { backgroundColor: colors.surfaceAlt },
+                ]}
+              >
+                <Text style={styles.emptyIcon}>🎙️</Text>
+              </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                No entries found
+                {searchQuery || selectedTag !== "all"
+                  ? "No matching entries"
+                  : "No journal entries yet"}
               </Text>
               <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
                 {searchQuery || selectedTag !== "all"
-                  ? "Try clearing filters or search terms."
-                  : 'Tap "+ New Recording" or "Import Audio Files" to begin your voice journal.'}
+                  ? "Try adjusting your search terms or filter."
+                  : "Tap Record below to start your personal voice diary."}
               </Text>
             </View>
           }
@@ -400,13 +406,19 @@ const MainScreen: React.FC = () => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.primaryFab, { backgroundColor: colors.primary }]}
+            style={[
+              styles.primaryFab,
+              {
+                backgroundColor: colors.primary,
+                shadowColor: colors.primary,
+              },
+            ]}
             onPress={handleStartRecording}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
             accessibilityLabel="New Voice Recording"
           >
             <Text style={styles.primaryFabIcon}>🎙️</Text>
-            <Text style={styles.primaryFabText}>New Recording</Text>
+            <Text style={styles.primaryFabText}>Record</Text>
           </TouchableOpacity>
         </View>
 
@@ -445,16 +457,17 @@ const MainScreen: React.FC = () => {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <MainScreen />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <MainScreen />
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
   responsiveContainer: {
     flex: 1,
@@ -463,33 +476,41 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   listContent: {
-    paddingBottom: 110, // Generous padding so floating buttons never cover list items
+    paddingBottom: 120, // Generous padding so floating buttons never cover list items
   },
   dayGroupWrapper: {
-    marginBottom: 10,
+    marginBottom: 8,
   },
   emptyContainer: {
-    paddingVertical: 80,
+    paddingVertical: 90,
     alignItems: "center",
-    paddingHorizontal: 32,
+    paddingHorizontal: 36,
+  },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
   },
   emptyIcon: {
-    fontSize: 48,
-    marginBottom: 16,
+    fontSize: 28,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
-    marginBottom: 8,
+    letterSpacing: -0.2,
+    marginBottom: 6,
   },
   emptySubtitle: {
     fontSize: 14,
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 21,
   },
   fabContainer: {
     position: "absolute",
-    bottom: 24,
+    bottom: 28,
     right: 20,
     flexDirection: "row",
     alignItems: "center",
@@ -498,39 +519,39 @@ const styles = StyleSheet.create({
   secondaryFab: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 26,
     borderWidth: 1,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   secondaryFabText: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: "600",
   },
   primaryFab: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 22,
     paddingVertical: 14,
     borderRadius: 28,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 5,
-    gap: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+    gap: 8,
   },
   primaryFabIcon: {
-    fontSize: 16,
+    fontSize: 17,
   },
   primaryFabText: {
-    color: "#FFF",
-    fontSize: 14,
+    color: "#FFFFFF",
+    fontSize: 15,
     fontWeight: "700",
+    letterSpacing: -0.2,
   },
 });

@@ -41,7 +41,7 @@ export class GeminiService {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${this.apiKey}`;
 
     const promptText = `
 You are a precise voice journal assistant. Analyze this recorded voice journal audio entry:

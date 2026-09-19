@@ -127,18 +127,20 @@ In Google Cloud Console, the consent screen is managed under the **Google Auth P
 > **Why is Android type needed if not publishing to Google Play Store?**  
 > Even for sideloaded dev APKs, Android OS (Google Play Services running locally on your phone) inspects the installed APK's **Package Name** and cryptographic **SHA-1 certificate signature** before opening the Google Sign-In prompt. Google verifies this against the registered Android Client ID to prevent app spoofing. Without this, Google Sign-In throws `DEVELOPER_ERROR (code 10)`.
 
-### A. Extract your SHA-1 Fingerprint from EAS
-In your terminal, run:
-```bash
-npx eas credentials -p android
-```
-1. Select profile: **`development`**.
-2. Select **Keystore: Manage your keystore**.
-3. Copy the **SHA-1 Fingerprint** (looks like `AA:BB:CC:...`).
+### A. Your Exact SHA-1 Fingerprints from EAS
+
+Because EAS generates independent keystores for different application identifiers, the Dev Client APK and Production APK have different SHA-1 fingerprints:
+
+| Environment | Package Name | SHA-1 Certificate Fingerprint |
+| :--- | :--- | :--- |
+| **Development Build (Dev Client)** | `com.voicejournal.app.dev` | `05:F9:40:16:F4:4A:EF:DF:F1:C7:C5:70:F5:40:55:A9:11:93:05:8C` |
+| **Production Build (Release APK)** | `com.voicejournal.app` | `3B:C9:69:B7:0B:33:43:E3:8E:1B:32:62:4B:B6:C6:1D:23:F0:D4:ED` |
+
+---
 
 ### B. Create in GCP
 
-#### Client 1: Dev Client
+#### Client 1: Dev Client (Required for local development & Dev Client APK)
 1. In **Google Auth Platform** &rarr; **Clients** (or **APIs & Services** &rarr; **Credentials**), click **+ Create client** (or **+ Create Credentials** &rarr; **OAuth client ID**).
 2. **Application type:** Select **Android**.
 3. **Name:** `VoiceJournal Android Dev`.
@@ -146,17 +148,23 @@ npx eas credentials -p android
    ```
    com.voicejournal.app.dev
    ```
-5. **SHA-1 certificate fingerprint:** Paste the SHA-1 from Step A.
+5. **SHA-1 certificate fingerprint:**
+   ```
+   05:F9:40:16:F4:4A:EF:DF:F1:C7:C5:70:F5:40:55:A9:11:93:05:8C
+   ```
 6. Click **Create**.
 
-#### Client 2: Production Client (Optional now, but good to have ready)
+#### Client 2: Production Client (For release APKs)
 1. Click **+ Create client** &rarr; **Android**.
 2. **Name:** `VoiceJournal Android Prod`.
 3. **Package name:**
    ```
    com.voicejournal.app
    ```
-4. **SHA-1 certificate fingerprint:** Paste the **exact same SHA-1** from Step A.
+4. **SHA-1 certificate fingerprint:**
+   ```
+   3B:C9:69:B7:0B:33:43:E3:8E:1B:32:62:4B:B6:C6:1D:23:F0:D4:ED
+   ```
 5. Click **Create**.
 
 ---

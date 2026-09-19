@@ -5,6 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
+  ActivityIndicator,
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 
@@ -25,11 +26,11 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
 }) => {
   const { colors, mode, toggleTheme } = useTheme();
 
-  const getThemeIcon = () => {
-    if (mode === "dark") return "🌙 Dark";
-    if (mode === "light") return "☀️ Light";
-    return "🌓 Auto";
-  };
+  const todayString = new Date().toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 
   return (
     <View
@@ -44,49 +45,68 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
             Voice Journal
           </Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            Zero-subscription diary
+            {todayString}
           </Text>
         </View>
+
         <View style={styles.topActions}>
           {onSyncPress && (
             <TouchableOpacity
               style={[
-                styles.actionButton,
-                { backgroundColor: colors.surfaceAlt },
+                styles.iconButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
               ]}
               onPress={onSyncPress}
               disabled={isSyncing}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel="Sync with Google Drive"
             >
-              <Text style={[styles.actionText, { color: colors.primary }]}>
-                {isSyncing ? "⟳ Syncing..." : "☁ Drive"}
-              </Text>
+              {isSyncing ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text
+                  style={[styles.iconButtonText, { color: colors.primary }]}
+                >
+                  ☁️
+                </Text>
+              )}
             </TouchableOpacity>
           )}
+
           <TouchableOpacity
             style={[
-              styles.actionButton,
-              { backgroundColor: colors.surfaceAlt },
+              styles.iconButton,
+              {
+                backgroundColor: colors.surfaceAlt,
+                borderColor: colors.border,
+              },
             ]}
             onPress={toggleTheme}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Toggle Theme"
           >
-            <Text style={[styles.actionText, { color: colors.text }]}>
-              {getThemeIcon()}
+            <Text style={styles.iconButtonText}>
+              {mode === "dark" ? "☀️" : "🌙"}
             </Text>
           </TouchableOpacity>
+
           {onSettingsPress && (
             <TouchableOpacity
               style={[
-                styles.actionButton,
-                { backgroundColor: colors.surfaceAlt },
+                styles.iconButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
               ]}
               onPress={onSettingsPress}
-              accessibilityLabel="Open Settings & Sync"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Settings"
             >
-              <Text style={[styles.actionText, { color: colors.text }]}>
-                ⚙️
-              </Text>
+              <Text style={styles.iconButtonText}>⚙️</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -112,6 +132,7 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           <TouchableOpacity
             onPress={() => onSearchChange("")}
             style={styles.clearButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={[styles.clearText, { color: colors.textMuted }]}>
               ✕
@@ -125,55 +146,57 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 14,
+    paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   topRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 14,
   },
   titleContainer: {
     flex: 1,
   },
   title: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "700",
     letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 12,
-    fontWeight: "400",
-    marginTop: 1,
+    fontSize: 13,
+    fontWeight: "500",
+    marginTop: 2,
   },
   topActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
-  actionButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  actionText: {
-    fontSize: 12,
-    fontWeight: "600",
+  iconButtonText: {
+    fontSize: 15,
   },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    height: 42,
-    borderRadius: 10,
+    paddingHorizontal: 14,
+    height: 44,
+    borderRadius: 14,
     borderWidth: 1,
   },
   searchIcon: {
     fontSize: 14,
-    marginRight: 8,
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
@@ -185,7 +208,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   clearText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "bold",
   },
 });

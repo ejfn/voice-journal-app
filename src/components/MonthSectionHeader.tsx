@@ -12,9 +12,9 @@ export const MonthSectionHeader: React.FC<MonthSectionHeaderProps> = ({
   const { colors } = useTheme();
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={styles.container}>
       <Text style={[styles.label, { color: colors.textMuted }]}>
-        📅 {monthLabel.toUpperCase()}
+        {monthLabel.toUpperCase()}
       </Text>
     </View>
   );
@@ -22,13 +22,13 @@ export const MonthSectionHeader: React.FC<MonthSectionHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingHorizontal: 20,
+    paddingTop: 18,
     paddingBottom: 6,
   },
   label: {
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: "700",
-    letterSpacing: 0.8,
+    letterSpacing: 1.2,
   },
 });

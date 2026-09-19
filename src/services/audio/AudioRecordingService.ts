@@ -56,35 +56,39 @@ class AudioRecordingService {
       playsInSilentMode: true,
     });
 
-    // In modern expo-audio, createAudioRecorder or AudioRecorder instance
+    // In modern expo-audio (SDK 57), native AudioRecorder is instantiated from ExpoAudio native module
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { createAudioRecorder } = require("expo-audio");
-      if (typeof createAudioRecorder === "function") {
-        const recorder = createAudioRecorder(RecordingPresets.HIGH_QUALITY);
+      const { requireNativeModule } = require("expo-modules-core");
+      const AudioModule = requireNativeModule("ExpoAudio");
+      if (AudioModule && AudioModule.AudioRecorder) {
+        const recorder = new AudioModule.AudioRecorder(
+          RecordingPresets.HIGH_QUALITY,
+        );
         this.activeRecorder = recorder;
-        await recorder?.prepareToRecordAsync?.({
+        await recorder.prepareToRecordAsync({
           ...RecordingPresets.HIGH_QUALITY,
           isMeteringEnabled: true,
         });
-        recorder?.record?.();
+        recorder.record();
       } else {
-        // Fallback for mocked/alternative environments
+        // Fallback for mock/test environments
         this.activeRecorder = {
           record: () => {},
           stop: async () => {},
           pause: () => {},
           resume: () => {},
-          uri: "file:///mock/cache/recording.m4a",
+          uri: null,
         };
       }
-    } catch {
+    } catch (recorderErr) {
+      console.warn("Could not start native audio recorder:", recorderErr);
       this.activeRecorder = {
         record: () => {},
         stop: async () => {},
         pause: () => {},
         resume: () => {},
-        uri: "file:///mock/cache/recording.m4a",
+        uri: null,
       };
     }
 

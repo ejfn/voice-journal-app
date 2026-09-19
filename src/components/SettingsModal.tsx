@@ -68,10 +68,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         `Connected to Google Drive as ${user?.email || "user"}`,
       );
     } catch (err) {
-      Alert.alert(
-        "Google Sign-In Error",
-        (err as Error).message || "Sign in failed",
-      );
+      Alert.alert("Google Sign-In", (err as Error).message || "Sign in failed");
     } finally {
       setIsSigningIn(false);
     }
@@ -83,7 +80,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setGoogleUser(null);
       Alert.alert("Signed Out", "Disconnected from Google Drive.");
     } catch (err) {
-      Alert.alert("Sign Out Notice", (err as Error).message);
+      Alert.alert("Sign Out", (err as Error).message);
     }
   };
 
@@ -121,7 +118,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const freedMb = (result.freedBytes / (1024 * 1024)).toFixed(1);
       Alert.alert(
         "Cache Cleaned",
-        `Evicted ${result.evictedCount} audio file(s) older than 30 days or exceeding cache quota (${freedMb} MB freed). Cloud backups remain intact.`,
+        `Evicted ${result.evictedCount} audio file(s) exceeding cache quota (${freedMb} MB freed). Cloud backups remain intact.`,
       );
     } catch (err) {
       Alert.alert("Cleanup Notice", (err as Error).message);
@@ -133,6 +130,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Header */}
         <View
           style={[
             styles.header,
@@ -143,9 +141,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           ]}
         >
           <Text style={[styles.headerTitle, { color: colors.text }]}>
-            Settings & Sync
+            Settings
           </Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.closeButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
             <Text style={[styles.closeText, { color: colors.primary }]}>
               Done
             </Text>
@@ -155,58 +157,113 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {/* Section: Google Drive Account */}
+          {/* Section: Google Drive Cloud Sync */}
           <View
             style={[
               styles.card,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
             ]}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.cardIcon}>☁️</Text>
+              <View
+                style={[
+                  styles.iconCircle,
+                  { backgroundColor: colors.surfaceAlt },
+                ]}
+              >
+                <Text style={styles.cardIcon}>☁️</Text>
+              </View>
               <View style={styles.cardTitleContainer}>
                 <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  Google Drive Sync
+                  Google Drive Cloud Sync
                 </Text>
                 <Text
                   style={[styles.cardSubtitle, { color: colors.textMuted }]}
                 >
-                  Stores clips hierarchically in VoiceJournal/YYYY/MM/
+                  Automatically backup journal recordings and transcripts
                 </Text>
               </View>
             </View>
 
             <View
-              style={[styles.statusBox, { backgroundColor: colors.surfaceAlt }]}
+              style={[
+                styles.statusPillRow,
+                { backgroundColor: colors.surfaceAlt },
+              ]}
             >
-              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
-                STATUS
-              </Text>
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: googleUser
+                      ? colors.success
+                      : colors.textMuted,
+                  },
+                ]}
+              />
               <Text
                 style={[
-                  styles.statusValue,
-                  { color: googleUser ? colors.success : colors.textMuted },
+                  styles.statusPillText,
+                  { color: googleUser ? colors.text : colors.textMuted },
                 ]}
+                numberOfLines={1}
               >
                 {googleUser
-                  ? `✓ Connected (${googleUser.email})`
-                  : "✕ Not connected"}
+                  ? `Connected: ${googleUser.email}`
+                  : "Not connected to cloud"}
               </Text>
             </View>
 
             <View style={styles.buttonRow}>
               {googleUser ? (
-                <TouchableOpacity
-                  style={[styles.outlineButton, { borderColor: colors.danger }]}
-                  onPress={handleGoogleSignOut}
-                >
-                  <Text
-                    style={[styles.outlineButtonText, { color: colors.danger }]}
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.secondaryButton,
+                      {
+                        backgroundColor: colors.primary,
+                        flex: 1,
+                      },
+                    ]}
+                    onPress={handleManualSync}
+                    disabled={isSyncing}
                   >
-                    Sign Out
-                  </Text>
-                </TouchableOpacity>
+                    {isSyncing ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text
+                        style={[styles.secondaryButtonText, { color: "#FFF" }]}
+                      >
+                        Sync Now
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.outlineButton,
+                      {
+                        borderColor: colors.danger,
+                        paddingHorizontal: 16,
+                      },
+                    ]}
+                    onPress={handleGoogleSignOut}
+                  >
+                    <Text
+                      style={[
+                        styles.outlineButtonText,
+                        { color: colors.danger },
+                      ]}
+                    >
+                      Sign Out
+                    </Text>
+                  </TouchableOpacity>
+                </>
               ) : (
                 <TouchableOpacity
                   style={[
@@ -215,146 +272,148 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ]}
                   onPress={handleGoogleSignIn}
                   disabled={isSigningIn}
+                  activeOpacity={0.8}
                 >
                   {isSigningIn ? (
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
                     <Text style={styles.primaryButtonText}>
-                      Sign In with Google
+                      Connect Google Account
                     </Text>
                   )}
                 </TouchableOpacity>
               )}
+            </View>
+          </View>
 
-              <TouchableOpacity
+          {/* Section: Appearance */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View
                 style={[
-                  styles.secondaryButton,
+                  styles.iconCircle,
                   { backgroundColor: colors.surfaceAlt },
                 ]}
-                onPress={handleManualSync}
-                disabled={isSyncing}
               >
-                {isSyncing ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <Text
-                    style={[
-                      styles.secondaryButtonText,
-                      { color: colors.primary },
-                    ]}
-                  >
-                    Sync Now
-                  </Text>
-                )}
-              </TouchableOpacity>
+                <Text style={styles.cardIcon}>🎨</Text>
+              </View>
+              <View style={styles.cardTitleContainer}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Appearance
+                </Text>
+                <Text
+                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
+                >
+                  Choose app color theme
+                </Text>
+              </View>
             </View>
 
             <View
               style={[
-                styles.statusBox,
-                { backgroundColor: colors.surfaceAlt, marginTop: 8 },
+                styles.segmentedControl,
+                { backgroundColor: colors.surfaceAlt },
               ]}
             >
-              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
-                CONFIGURATION SOURCE
-              </Text>
-              <Text
-                style={[
-                  styles.statusValue,
-                  {
-                    color: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
-                      ? colors.text
-                      : colors.danger,
-                  },
-                ]}
-              >
-                {process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
-                  ? "✓ EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID configured"
-                  : "✕ Missing EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (.env / EAS)"}
-              </Text>
+              {(
+                [
+                  { key: "auto", label: "System" },
+                  { key: "light", label: "Light" },
+                  { key: "dark", label: "Dark" },
+                ] as const
+              ).map((item) => {
+                const isSelected = mode === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[
+                      styles.segmentOption,
+                      isSelected && [
+                        styles.segmentOptionActive,
+                        {
+                          backgroundColor: colors.surface,
+                          shadowColor: colors.text,
+                        },
+                      ],
+                    ]}
+                    onPress={() => setMode(item.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentOptionText,
+                        {
+                          color: isSelected ? colors.primary : colors.textMuted,
+                          fontWeight: isSelected ? "600" : "500",
+                        },
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
 
-          {/* Section: Gemini Multimodal AI */}
+          {/* Section: Storage & Local Cache */}
           <View
             style={[
               styles.card,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
             ]}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.cardIcon}>✨</Text>
+              <View
+                style={[
+                  styles.iconCircle,
+                  { backgroundColor: colors.surfaceAlt },
+                ]}
+              >
+                <Text style={styles.cardIcon}>💾</Text>
+              </View>
               <View style={styles.cardTitleContainer}>
                 <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  Gemini Flash Multimodal AI
+                  Storage & Offline Cache
                 </Text>
                 <Text
                   style={[styles.cardSubtitle, { color: colors.textMuted }]}
                 >
-                  Transcribes audio, creates headlines, summaries & clean tags
+                  Audio is stored locally for instant offline playback
                 </Text>
               </View>
             </View>
 
             <View
-              style={[styles.statusBox, { backgroundColor: colors.surfaceAlt }]}
+              style={[styles.infoRow, { borderBottomColor: colors.border }]}
             >
-              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
-                API KEY STATUS
+              <Text style={[styles.infoLabel, { color: colors.textMuted }]}>
+                Cached audio clips
               </Text>
-              <Text
-                style={[
-                  styles.statusValue,
-                  {
-                    color: process.env.EXPO_PUBLIC_GEMINI_API_KEY
-                      ? colors.success
-                      : colors.danger,
-                  },
-                ]}
-              >
-                {process.env.EXPO_PUBLIC_GEMINI_API_KEY
-                  ? "✓ EXPO_PUBLIC_GEMINI_API_KEY configured (Gemini 2.5 Flash)"
-                  : "✕ Missing EXPO_PUBLIC_GEMINI_API_KEY (.env / EAS)"}
-              </Text>
-            </View>
-          </View>
-
-          {/* Section: Storage & LRU Cache */}
-          <View
-            style={[
-              styles.card,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardIcon}>💾</Text>
-              <View style={styles.cardTitleContainer}>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  Storage & On-Demand Cache
-                </Text>
-                <Text
-                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
-                >
-                  {"Local audio cache with LRU eviction (>500MB or >30 days)"}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[styles.statusBox, { backgroundColor: colors.surfaceAlt }]}
-            >
-              <Text style={[styles.statusLabel, { color: colors.textMuted }]}>
-                CACHED AUDIO CLIPS
-              </Text>
-              <Text style={[styles.statusValue, { color: colors.text }]}>
-                {cachedClipsCount} audio file(s) currently stored on device
+              <Text style={[styles.infoValue, { color: colors.text }]}>
+                {cachedClipsCount} file{cachedClipsCount === 1 ? "" : "s"}
               </Text>
             </View>
 
             <TouchableOpacity
-              style={[styles.outlineButton, { borderColor: colors.border }]}
+              style={[
+                styles.outlineButton,
+                { borderColor: colors.border, marginTop: 12 },
+              ]}
               onPress={handleRunLruCleanup}
               disabled={isCleaningCache}
+              activeOpacity={0.7}
             >
               {isCleaningCache ? (
                 <ActivityIndicator size="small" color={colors.primary} />
@@ -362,69 +421,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Text
                   style={[styles.outlineButtonText, { color: colors.text }]}
                 >
-                  Run Cache Cleanup (Evict &gt;30d)
+                  Clear Cache
                 </Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* Section: Theme Preference */}
-          <View
-            style={[
-              styles.card,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-          >
-            <Text
-              style={[
-                styles.cardTitle,
-                { color: colors.text, marginBottom: 12 },
-              ]}
-            >
-              Appearance
-            </Text>
-            <View style={styles.themeSelectorRow}>
-              {(["auto", "light", "dark"] as const).map((tMode) => (
-                <TouchableOpacity
-                  key={tMode}
-                  style={[
-                    styles.themeOptionBtn,
-                    {
-                      backgroundColor:
-                        mode === tMode ? colors.primary : colors.surfaceAlt,
-                      borderColor:
-                        mode === tMode ? colors.primary : colors.border,
-                    },
-                  ]}
-                  onPress={() => setMode(tMode)}
-                >
-                  <Text
-                    style={[
-                      styles.themeOptionText,
-                      { color: mode === tMode ? "#FFF" : colors.text },
-                    ]}
-                  >
-                    {tMode === "auto"
-                      ? "🌓 Auto"
-                      : tMode === "light"
-                        ? "☀️ Light"
-                        : "🌙 Dark"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
           {/* About / Version Info */}
           <View style={styles.aboutContainer}>
             <Text style={[styles.aboutTitle, { color: colors.text }]}>
-              Voice Journal (VoiceJournal)
+              VoiceJournal
             </Text>
-            <Text style={[styles.aboutText, { color: colors.textMuted }]}>
-              Package: com.personal.voicejournal
+            <Text style={[styles.aboutVersion, { color: colors.textMuted }]}>
+              Version 0.1.0
             </Text>
-            <Text style={[styles.aboutText, { color: colors.textMuted }]}>
-              Version: 1.0.0 (Zero Subscription Voice Diary)
+            <Text style={[styles.aboutSubtitle, { color: colors.textMuted }]}>
+              Offline-first multimodal voice journal
             </Text>
           </View>
         </ScrollView>
@@ -441,40 +453,54 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: Platform.OS === "ios" ? 48 : 16,
-    paddingBottom: 14,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === "ios" ? 54 : 18,
+    paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: "600",
+    fontSize: 18,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   closeButton: {
-    padding: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   closeText: {
     fontSize: 16,
     fontWeight: "600",
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
+    padding: 18,
+    paddingBottom: 48,
     gap: 16,
   },
   card: {
-    padding: 16,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 16,
     borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   cardHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 14,
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 16,
+  },
+  iconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
   cardIcon: {
-    fontSize: 24,
+    fontSize: 18,
   },
   cardTitleContainer: {
     flex: 1,
@@ -482,92 +508,120 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: "600",
+    letterSpacing: -0.2,
     marginBottom: 2,
   },
   cardSubtitle: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 12.5,
+    lineHeight: 17,
   },
-  statusBox: {
-    padding: 12,
-    borderRadius: 8,
+  statusPillRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
     marginBottom: 14,
+    gap: 8,
   },
-  statusLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 2,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  statusValue: {
+  statusPillText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "500",
+    flex: 1,
   },
   buttonRow: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 14,
   },
   primaryButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
+    width: "100%",
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   primaryButtonText: {
-    color: "#FFF",
-    fontSize: 13,
+    color: "#FFFFFF",
+    fontSize: 14,
     fontWeight: "600",
   },
   secondaryButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryButtonText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
   },
   outlineButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingVertical: 11,
+    borderRadius: 12,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   outlineButtonText: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: "600",
   },
-  themeSelectorRow: {
+  segmentedControl: {
     flexDirection: "row",
-    gap: 10,
+    padding: 3,
+    borderRadius: 12,
   },
-  themeOptionBtn: {
+  segmentOption: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
+    paddingVertical: 8,
     alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 9,
   },
-  themeOptionText: {
+  segmentOptionActive: {
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  segmentOptionText: {
     fontSize: 13,
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  infoLabel: {
+    fontSize: 13.5,
+  },
+  infoValue: {
+    fontSize: 13.5,
     fontWeight: "600",
   },
   aboutContainer: {
     alignItems: "center",
-    paddingVertical: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
     gap: 4,
   },
   aboutTitle: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
+    letterSpacing: -0.2,
   },
-  aboutText: {
+  aboutVersion: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  aboutSubtitle: {
     fontSize: 12,
   },
 });
