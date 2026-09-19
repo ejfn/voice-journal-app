@@ -228,8 +228,8 @@ To configure for EAS cloud builds:
 npx eas secret:create --name EXPO_PUBLIC_GEMINI_API_KEY --value "AIzaSyD-EXAMPLEKEY..." --type string
 ```
 
-> [!NOTE]
-> VoiceJournal also supports entering or updating the Gemini API Key at runtime in the app via the **Settings Modal** ([SettingsModal.tsx](file:///home/eric/repos/voice-journal-app/src/components/SettingsModal.tsx)), with masked input and real-time connection validation.
+> [!IMPORTANT]
+> All credentials are baked in at build time via Expo public environment variables (`.env` for local/development builds and EAS Secrets for cloud builds). There are no in-app credential text inputs, eliminating security risks from storing keys in mutable app storage.
 
 ---
 
@@ -249,16 +249,8 @@ EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=123456789012-xxxxxxxxxxxxxxxxxxxx.apps.googleus
 
 | Variable | Service | Required In | Public / Secret | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| `EXPO_PUBLIC_GEMINI_API_KEY` | Gemini 2.5 Flash | `.env` / EAS Secret | Public in bundle | Can be overridden in app Settings modal |
+| `EXPO_PUBLIC_GEMINI_API_KEY` | Gemini 2.5 Flash | `.env` / EAS Secret | Public in bundle | Embedded at build time |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Google Sign-In & Drive | `.env` / EAS Secret | Public in bundle | Must be OAuth "Web application" type |
-
-### In-App Configuration Override
-VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/eric/repos/voice-journal-app/src/components/SettingsModal.tsx)) allowing the user to view or override keys dynamically without rebuilding:
-- Tap the **Gear** icon in the timeline header.
-- View / edit **Gemini API Key** (with show/hide toggle).
-- View / edit **Google Web Client ID**.
-- Tap **Save Settings**.
-- Tap **Connect Google Drive** to authenticate immediately with Google Play Services.
 
 ---
 
@@ -266,7 +258,7 @@ VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/er
 
 ### Phase 1: Verify Gemini AI Transcription & Analysis
 1. Launch VoiceJournal in dev client or emulator.
-2. Ensure the Gemini API key is active (either via `.env` or entered in Settings).
+2. Ensure the Gemini API key is configured in `.env` (or EAS secrets for cloud builds).
 3. Tap the **Record** microphone button and record 10 seconds of speech:
    > *"Today I went for a 5-kilometer run in the morning park. The weather was cool and refreshing, and I felt great afterwards."*
 4. Tap **Stop**.
@@ -282,7 +274,7 @@ VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/er
 
 ### Phase 2: Verify Google Drive Sync
 1. In VoiceJournal, tap **Settings** (gear icon in header).
-2. Confirm the Web Client ID is populated.
+2. Confirm the Configuration Source indicates `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID configured`.
 3. Tap **Connect Google Drive**.
 4. Expected behavior:
    - Google Play Services bottom-sheet account picker appears.
@@ -301,7 +293,7 @@ VoiceJournal includes an in-app Settings UI ([SettingsModal.tsx](file:///home/er
 
 | Error Code / Symptom | Root Cause | Resolution |
 | :--- | :--- | :--- |
-| **`400 API_KEY_INVALID` (Gemini)** | Missing, mistyped, or disabled Gemini API key | Check `.env` or in-app Settings modal. Confirm the key is active in [Google AI Studio](https://aistudio.google.com/app/apikey). |
+| **`400 API_KEY_INVALID` (Gemini)** | Missing, mistyped, or disabled Gemini API key | Check `.env` or EAS secrets. Confirm the key is active in [Google AI Studio](https://aistudio.google.com/app/apikey). |
 | **`429 RESOURCE_EXHAUSTED` (Gemini)** | Rate limit exceeded on Gemini free tier | Free tier provides 15 RPM. Implement brief backoff or verify billing on the linked GCP project. |
 | **`DEVELOPER_ERROR` (code 10) (Google Sign-In)** | SHA-1 mismatch or Package Name mismatch in GCP Android Client ID | Verify `app.json` package is `com.personal.voicejournal`. Re-extract SHA-1 from `npx eas credentials` and ensure exact match in GCP Console Android Client ID. |
 | **`DEVELOPER_ERROR` (code 10) on configure** | Invalid or missing `webClientId` | Ensure `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` is defined and matches the Web Client ID (type: Web application, NOT Android). |
