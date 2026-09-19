@@ -51,6 +51,12 @@ const mockFileSystem = {
   getInfoAsync: jest.fn(async () => ({ exists: true, size: 1024 })),
   readAsStringAsync: jest.fn(async () => "mock_base64_data"),
   writeAsStringAsync: jest.fn(async () => {}),
+  uploadAsync: jest.fn(async () => ({ status: 200 })),
+  downloadAsync: jest.fn(async () => ({ status: 200 })),
+  FileSystemUploadType: {
+    BINARY_CONTENT: 0,
+    MULTIPART: 1,
+  },
   EncodingType: {
     Base64: "base64",
     UTF8: "utf8",

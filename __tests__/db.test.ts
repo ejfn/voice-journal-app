@@ -255,4 +255,152 @@ describe("Database & FTS5 DAO", () => {
     pending = await syncQueueDao.getPendingItems();
     expect(pending.length).toBe(0);
   });
+
+  it("identifies unsynced entries when sidecar is missing or when local is updated", async () => {
+    const t0 = 100000;
+    // Entry 1: Never synced to Drive (drive_sidecar_file_id is null)
+    await entriesDao.insertEntry({
+      id: "entry-unsynced-1",
+      title: "New Unsynced Entry",
+      summary: "Never uploaded",
+      transcript: "Transcript",
+      tags: ["new"],
+      duration_sec: 20,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0,
+    });
+
+    // Entry 2: Synced to Drive, not modified since
+    await entriesDao.insertEntry({
+      id: "entry-synced-2",
+      title: "Already Synced",
+      summary: "Up to date",
+      transcript: "Transcript",
+      tags: ["synced"],
+      duration_sec: 25,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: "audio-file-2",
+      drive_sidecar_file_id: "sidecar-file-2",
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: t0 + 100, // synced after update
+      last_accessed_at: t0,
+    });
+
+    // Entry 3: Synced to Drive previously, but updated locally since
+    await entriesDao.insertEntry({
+      id: "entry-updated-3",
+      title: "Previously Synced But Edited",
+      summary: "Edited locally",
+      transcript: "Transcript",
+      tags: ["edited"],
+      duration_sec: 30,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: "audio-file-3",
+      drive_sidecar_file_id: "sidecar-file-3",
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0 + 500, // updated after sync
+      drive_synced_at: t0 + 200,
+      last_accessed_at: t0,
+    });
+
+    const unsynced = await entriesDao.getUnsyncedEntries();
+    const unsyncedIds = unsynced.map((e) => e.id);
+
+    expect(unsyncedIds).toContain("entry-unsynced-1");
+    expect(unsyncedIds).not.toContain("entry-synced-2");
+    expect(unsyncedIds).toContain("entry-updated-3");
+
+    // Test updateSyncStatus on entry-unsynced-1
+    await entriesDao.updateSyncStatus(
+      "entry-unsynced-1",
+      "sidecar-1",
+      "audio-1",
+      t0 + 1000,
+    );
+    const updated1 = await entriesDao.getEntryById("entry-unsynced-1");
+    expect(updated1?.drive_sidecar_file_id).toBe("sidecar-1");
+    expect(updated1?.drive_audio_file_id).toBe("audio-1");
+    expect(updated1?.drive_synced_at).toBe(t0 + 1000);
+
+    // After sync status update, entry-unsynced-1 should no longer be in getUnsyncedEntries
+    const unsyncedAfter = await entriesDao.getUnsyncedEntries();
+    expect(unsyncedAfter.map((e) => e.id)).not.toContain("entry-unsynced-1");
+  });
+
+  it("getPrunableCachedEntries only returns entries that are fully backed up to Google Drive", async () => {
+    const t0 = 1789700000000;
+
+    // Entry A: Unsynced local recording (should NEVER be prunable)
+    await entriesDao.insertEntry({
+      id: "entry-unbacked-up",
+      title: "Local Only",
+      summary: "Not synced",
+      transcript: "Transcript",
+      tags: ["local"],
+      duration_sec: 20,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/audio/unbacked.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0 - 10000, // Very old access time
+    });
+
+    // Entry B: Audio uploaded, but sidecar not synced / drive_synced_at null (NOT prunable)
+    await entriesDao.insertEntry({
+      id: "entry-partial-sync",
+      title: "Partial Sync",
+      summary: "Audio uploaded but not sidecar",
+      transcript: "Transcript",
+      tags: ["partial"],
+      duration_sec: 20,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/audio/partial.m4a",
+      drive_audio_file_id: "audio-partial-id",
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0 - 9000,
+    });
+
+    // Entry C: Audio and sidecar both confirmed in Drive with valid drive_synced_at (PRUNABLE!)
+    await entriesDao.insertEntry({
+      id: "entry-fully-backed-up",
+      title: "Backed Up",
+      summary: "Safe in cloud",
+      transcript: "Transcript",
+      tags: ["backedup"],
+      duration_sec: 20,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/audio/safe.m4a",
+      drive_audio_file_id: "audio-safe-id",
+      drive_sidecar_file_id: "sidecar-safe-id",
+      is_audio_cached: 1,
+      created_at: t0,
+      drive_synced_at: t0 + 100,
+      last_accessed_at: t0,
+    });
+
+    const prunable = await entriesDao.getPrunableCachedEntries();
+    const prunableIds = prunable.map((e) => e.id);
+
+    expect(prunableIds).not.toContain("entry-unbacked-up");
+    expect(prunableIds).not.toContain("entry-partial-sync");
+    expect(prunableIds).toContain("entry-fully-backed-up");
+  });
 });

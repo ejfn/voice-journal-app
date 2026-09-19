@@ -9,8 +9,9 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  StatusBar,
 } from "react-native";
-import { entriesDao } from "../db/dao/entriesDao";
+import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
 import { useTheme } from "../theme/ThemeContext";
 
@@ -31,12 +32,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [googleUser, setGoogleUser] = useState<{
     email: string;
     name: string | null;
-  } | null>(null);
+  } | null>(() => googleDriveService.getCurrentUser());
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Cache stats
-  const [cachedClipsCount, setCachedClipsCount] = useState<number>(0);
+  // Storage & Cache stats
+  const [storageStats, setStorageStats] = useState<{
+    cachedCount: number;
+    totalBytes: number;
+    maxMb: number;
+  }>({
+    cachedCount: 0,
+    totalBytes: 0,
+    maxMb: 250,
+  });
   const [isCleaningCache, setIsCleaningCache] = useState<boolean>(false);
 
   const refreshStatus = useCallback(async () => {
@@ -44,8 +53,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const user = googleDriveService.getCurrentUser();
       setGoogleUser(user);
 
-      const prunable = await entriesDao.getPrunableCachedEntries();
-      setCachedClipsCount(prunable.length);
+      const stats = await googleDriveService.getStorageStats();
+      setStorageStats(stats);
     } catch {
       // Ignore initial status fetch error
     }
@@ -87,7 +96,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleManualSync = async () => {
     setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTimelineFromDrive();
+      const result = await googleDriveService.syncTwoWay();
       await googleDriveService.runLruEviction();
       await refreshStatus();
       if (onSyncCompleted) {
@@ -95,7 +104,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
       Alert.alert(
         "Sync Complete",
-        `Synchronized timeline. ${result.importedCount} new clips downloaded.`,
+        `Synchronized timeline.\n• ${result.uploadedCount} clip(s) uploaded to Drive\n• ${result.downloadedCount} clip(s) downloaded`,
       );
     } catch (err) {
       Alert.alert(
@@ -107,21 +116,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleRunLruCleanup = async () => {
+  const handleSelectStorageThreshold = async (mb: number) => {
+    try {
+      await settingsDao.setMaxStorageMb(mb);
+      const evictionResult = await googleDriveService.runLruEviction();
+      await refreshStatus();
+      if (onSyncCompleted) {
+        onSyncCompleted();
+      }
+      if (evictionResult.evictedCount > 0) {
+        const freedMb = (evictionResult.freedBytes / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          "Storage Limit Applied",
+          `Evicted ${evictionResult.evictedCount} least recently accessed audio file(s) to adhere to the ${
+            mb === 0 ? "Unlimited" : `${mb} MB`
+          } threshold (${freedMb} MB freed). Cloud copies in Google Drive remain intact.`,
+        );
+      }
+    } catch (err) {
+      Alert.alert("Storage Settings", (err as Error).message);
+    }
+  };
+
+  const handleClearCache = async () => {
     setIsCleaningCache(true);
     try {
-      const result = await googleDriveService.runLruEviction();
+      const result = await googleDriveService.runLruEviction({
+        forceClearAll: true,
+      });
       await refreshStatus();
       if (onSyncCompleted) {
         onSyncCompleted();
       }
       const freedMb = (result.freedBytes / (1024 * 1024)).toFixed(1);
       Alert.alert(
-        "Cache Cleaned",
-        `Evicted ${result.evictedCount} audio file(s) exceeding cache quota (${freedMb} MB freed). Cloud backups remain intact.`,
+        "Cache Cleared",
+        `Removed ${result.evictedCount} audio file(s) (${freedMb} MB freed). Cloud backups remain safe in Google Drive and can be re-downloaded on tap.`,
       );
     } catch (err) {
-      Alert.alert("Cleanup Notice", (err as Error).message);
+      Alert.alert("Clear Cache", (err as Error).message);
     } finally {
       setIsCleaningCache(false);
     }
@@ -155,137 +188,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </View>
 
         <ScrollView
+          style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Section: Google Drive Cloud Sync */}
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-              },
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <View
-                style={[
-                  styles.iconCircle,
-                  { backgroundColor: colors.surfaceAlt },
-                ]}
-              >
-                <Text style={styles.cardIcon}>☁️</Text>
-              </View>
-              <View style={styles.cardTitleContainer}>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  Google Drive Cloud Sync
-                </Text>
-                <Text
-                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
-                >
-                  Automatically backup journal recordings and transcripts
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.statusPillRow,
-                { backgroundColor: colors.surfaceAlt },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statusDot,
-                  {
-                    backgroundColor: googleUser
-                      ? colors.success
-                      : colors.textMuted,
-                  },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusPillText,
-                  { color: googleUser ? colors.text : colors.textMuted },
-                ]}
-                numberOfLines={1}
-              >
-                {googleUser
-                  ? `Connected: ${googleUser.email}`
-                  : "Not connected to cloud"}
-              </Text>
-            </View>
-
-            <View style={styles.buttonRow}>
-              {googleUser ? (
-                <>
-                  <TouchableOpacity
-                    style={[
-                      styles.secondaryButton,
-                      {
-                        backgroundColor: colors.primary,
-                        flex: 1,
-                      },
-                    ]}
-                    onPress={handleManualSync}
-                    disabled={isSyncing}
-                  >
-                    {isSyncing ? (
-                      <ActivityIndicator size="small" color="#FFF" />
-                    ) : (
-                      <Text
-                        style={[styles.secondaryButtonText, { color: "#FFF" }]}
-                      >
-                        Sync Now
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.outlineButton,
-                      {
-                        borderColor: colors.danger,
-                        paddingHorizontal: 16,
-                      },
-                    ]}
-                    onPress={handleGoogleSignOut}
-                  >
-                    <Text
-                      style={[
-                        styles.outlineButtonText,
-                        { color: colors.danger },
-                      ]}
-                    >
-                      Sign Out
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    { backgroundColor: colors.primary },
-                  ]}
-                  onPress={handleGoogleSignIn}
-                  disabled={isSigningIn}
-                  activeOpacity={0.8}
-                >
-                  {isSigningIn ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>
-                      Connect Google Account
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-
           {/* Section: Appearance */}
           <View
             style={[
@@ -297,14 +204,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             ]}
           >
             <View style={styles.cardHeader}>
-              <View
-                style={[
-                  styles.iconCircle,
-                  { backgroundColor: colors.surfaceAlt },
-                ]}
-              >
-                <Text style={styles.cardIcon}>🎨</Text>
-              </View>
               <View style={styles.cardTitleContainer}>
                 <Text style={[styles.cardTitle, { color: colors.text }]}>
                   Appearance
@@ -364,6 +263,127 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           </View>
 
+          {/* Section: Google Drive Cloud Sync */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleContainer}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Google Drive Cloud Sync
+                </Text>
+                <Text
+                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
+                >
+                  Automatically backup journal recordings and transcripts
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.statusPillRow,
+                { backgroundColor: colors.surfaceAlt },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: googleUser
+                      ? colors.success
+                      : colors.textMuted,
+                  },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.statusPillText,
+                  { color: googleUser ? colors.text : colors.textMuted },
+                ]}
+                numberOfLines={1}
+              >
+                {googleUser
+                  ? `Connected: ${googleUser.email}`
+                  : "Not connected to cloud"}
+              </Text>
+            </View>
+
+            <View style={styles.buttonRow}>
+              {googleUser ? (
+                <>
+                  <TouchableOpacity
+                    key="sync-now-button"
+                    style={[
+                      styles.secondaryButton,
+                      {
+                        backgroundColor: colors.primary,
+                      },
+                    ]}
+                    onPress={handleManualSync}
+                    disabled={isSyncing}
+                  >
+                    {isSyncing ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Text
+                        style={[styles.secondaryButtonText, { color: "#FFF" }]}
+                      >
+                        Sync Now
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    key="sign-out-button"
+                    style={[
+                      styles.outlineButton,
+                      {
+                        borderColor: colors.danger,
+                        paddingHorizontal: 16,
+                      },
+                    ]}
+                    onPress={handleGoogleSignOut}
+                  >
+                    <Text
+                      style={[
+                        styles.outlineButtonText,
+                        { color: colors.danger },
+                      ]}
+                    >
+                      Sign Out
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  key="sign-in-button"
+                  style={[
+                    styles.primaryButton,
+                    { backgroundColor: colors.primary },
+                  ]}
+                  onPress={handleGoogleSignIn}
+                  disabled={isSigningIn}
+                  activeOpacity={0.8}
+                >
+                  {isSigningIn ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>
+                      Connect Google Account
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
           {/* Section: Storage & Local Cache */}
           <View
             style={[
@@ -375,14 +395,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             ]}
           >
             <View style={styles.cardHeader}>
-              <View
-                style={[
-                  styles.iconCircle,
-                  { backgroundColor: colors.surfaceAlt },
-                ]}
-              >
-                <Text style={styles.cardIcon}>💾</Text>
-              </View>
               <View style={styles.cardTitleContainer}>
                 <Text style={[styles.cardTitle, { color: colors.text }]}>
                   Storage & Offline Cache
@@ -399,29 +411,116 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               style={[styles.infoRow, { borderBottomColor: colors.border }]}
             >
               <Text style={[styles.infoLabel, { color: colors.textMuted }]}>
-                Cached audio clips
+                Cached audio storage
               </Text>
               <Text style={[styles.infoValue, { color: colors.text }]}>
-                {cachedClipsCount} file{cachedClipsCount === 1 ? "" : "s"}
+                {(storageStats.totalBytes / (1024 * 1024)).toFixed(1)} MB (
+                {storageStats.cachedCount} clip
+                {storageStats.cachedCount === 1 ? "" : "s"})
               </Text>
+            </View>
+
+            {/* Threshold Selector */}
+            <View style={{ marginTop: 14 }}>
+              <Text
+                style={[
+                  styles.infoLabel,
+                  { color: colors.text, fontWeight: "600", marginBottom: 4 },
+                ]}
+              >
+                Max Audio Cache Threshold
+              </Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: colors.textMuted,
+                  marginBottom: 10,
+                  lineHeight: 16,
+                }}
+              >
+                When cache exceeds this limit, least recently accessed audio is
+                automatically deleted. Cloud copies in Google Drive remain safe.
+              </Text>
+
+              <View
+                style={[
+                  styles.segmentedControl,
+                  { backgroundColor: colors.surfaceAlt },
+                ]}
+              >
+                {[
+                  { label: "100 MB", value: 100 },
+                  { label: "250 MB", value: 250 },
+                  { label: "500 MB", value: 500 },
+                  { label: "1 GB", value: 1000 },
+                  { label: "Unlimited", value: 0 },
+                ].map((item) => {
+                  const isSelected = storageStats.maxMb === item.value;
+                  return (
+                    <TouchableOpacity
+                      key={item.label}
+                      style={[
+                        styles.segmentOption,
+                        isSelected && [
+                          styles.segmentOptionActive,
+                          {
+                            backgroundColor: colors.surface,
+                            shadowColor: colors.text,
+                          },
+                        ],
+                      ]}
+                      onPress={() => handleSelectStorageThreshold(item.value)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.segmentOptionText,
+                          {
+                            color: isSelected
+                              ? colors.primary
+                              : colors.textMuted,
+                            fontWeight: isSelected ? "600" : "500",
+                            fontSize: 11.5,
+                          },
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
             <TouchableOpacity
               style={[
                 styles.outlineButton,
-                { borderColor: colors.border, marginTop: 12 },
+                { borderColor: colors.border, marginTop: 16 },
               ]}
-              onPress={handleRunLruCleanup}
-              disabled={isCleaningCache}
+              onPress={handleClearCache}
+              disabled={isCleaningCache || storageStats.cachedCount === 0}
               activeOpacity={0.7}
             >
               {isCleaningCache ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
                 <Text
-                  style={[styles.outlineButtonText, { color: colors.text }]}
+                  style={[
+                    styles.outlineButtonText,
+                    {
+                      color:
+                        storageStats.cachedCount === 0
+                          ? colors.textMuted
+                          : colors.text,
+                    },
+                  ]}
                 >
-                  Clear Cache
+                  {storageStats.cachedCount === 0
+                    ? "Cache is Clean"
+                    : `Clear Local Cache (${(
+                        storageStats.totalBytes /
+                        (1024 * 1024)
+                      ).toFixed(1)} MB)`}
                 </Text>
               )}
             </TouchableOpacity>
@@ -454,7 +553,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 54 : 18,
+    paddingTop:
+      Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 54,
     paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
@@ -471,12 +571,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  scrollView: {
+    flex: 1,
+    width: "100%",
+  },
   scrollContent: {
+    width: "100%",
     padding: 18,
     paddingBottom: 48,
     gap: 16,
   },
   card: {
+    width: "100%",
     padding: 18,
     borderRadius: 16,
     borderWidth: 1,
@@ -536,6 +642,8 @@ const styles = StyleSheet.create({
   },
   buttonRow: {
     flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
     gap: 10,
   },
   primaryButton: {
@@ -551,6 +659,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   secondaryButton: {
+    flex: 1,
+    minWidth: 0,
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
@@ -561,6 +671,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   outlineButton: {
+    flexShrink: 0,
     paddingVertical: 11,
     borderRadius: 12,
     borderWidth: 1,

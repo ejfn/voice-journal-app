@@ -1,5 +1,6 @@
 import {
   formatDate,
+  formatDayLabel,
   formatDuration,
   formatTime,
   formatTimer,
@@ -51,9 +52,30 @@ describe("Path & Audio Utilities", () => {
   it("formats time and date", () => {
     const timestamp = new Date(2026, 8, 19, 14, 30).getTime();
     const timeStr = formatTime(timestamp);
-    expect(timeStr).toMatch(/\d{2}:\d{2}/);
+    expect(timeStr).toMatch(/\d{1,2}:\d{2}\s*(AM|PM)/i);
 
     const dateStr = formatDate(timestamp);
     expect(dateStr).toContain("Sep 19");
+  });
+
+  it("formats day label as Today, Yesterday, or full date", () => {
+    const now = new Date(2026, 8, 19, 15, 0); // Sep 19, 2026 15:00
+
+    // Today
+    const todayClip = new Date(2026, 8, 19, 9, 30);
+    expect(formatDayLabel(todayClip, now)).toBe("Today");
+
+    // Yesterday
+    const yesterdayClip = new Date(2026, 8, 18, 22, 15);
+    expect(formatDayLabel(yesterdayClip, now)).toBe("Yesterday");
+
+    // Older date (e.g. Sep 17, 2026)
+    const olderClip = new Date(2026, 8, 17, 10, 0);
+    expect(formatDayLabel(olderClip, now)).toContain("Sep 17");
+
+    // Month boundary: now is Sep 1, clip is Aug 31
+    const sep1 = new Date(2026, 8, 1, 10, 0);
+    const aug31 = new Date(2026, 7, 31, 23, 0);
+    expect(formatDayLabel(aug31, sep1)).toBe("Yesterday");
   });
 });

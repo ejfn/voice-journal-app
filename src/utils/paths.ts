@@ -64,14 +64,14 @@ export const formatTimer = (seconds: number): string => {
 };
 
 /**
- * Formats timestamp into 24h or 12h time string (e.g. "19:42").
+ * Formats timestamp into 12h time string (e.g. "9:15 AM" or "7:42 PM").
  */
 export const formatTime = (timestamp: number): string => {
   const date = new Date(timestamp);
   return date.toLocaleTimeString("en-US", {
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
   });
 };
 
@@ -81,6 +81,50 @@ export const formatTime = (timestamp: number): string => {
 export const formatDate = (timestamp: number): string => {
   const date = new Date(timestamp);
   return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+/**
+ * Formats date into "Today", "Yesterday", or standard date string (e.g. "Thursday, Sep 17").
+ */
+export const formatDayLabel = (
+  timestampOrDate: number | Date,
+  referenceNow: Date = new Date(),
+): string => {
+  const target =
+    typeof timestampOrDate === "number"
+      ? new Date(timestampOrDate)
+      : timestampOrDate;
+
+  const targetYear = target.getFullYear();
+  const targetMonth = target.getMonth();
+  const targetDay = target.getDate();
+
+  const nowYear = referenceNow.getFullYear();
+  const nowMonth = referenceNow.getMonth();
+  const nowDay = referenceNow.getDate();
+
+  const isToday =
+    targetYear === nowYear && targetMonth === nowMonth && targetDay === nowDay;
+
+  if (isToday) {
+    return "Today";
+  }
+
+  const yesterday = new Date(nowYear, nowMonth, nowDay - 1);
+  const isYesterday =
+    targetYear === yesterday.getFullYear() &&
+    targetMonth === yesterday.getMonth() &&
+    targetDay === yesterday.getDate();
+
+  if (isYesterday) {
+    return "Yesterday";
+  }
+
+  return target.toLocaleDateString("en-US", {
     weekday: "long",
     month: "short",
     day: "numeric",

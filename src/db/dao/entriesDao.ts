@@ -1,5 +1,8 @@
+import * as FileSystem from "expo-file-system/legacy";
 import { getDatabase } from "../database";
 import { JournalEntry, JournalEntryRow } from "../schema";
+import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
+import { deletedEntriesDao } from "./deletedEntriesDao";
 
 export interface DayGroup {
   dayKey: string; // "2026-09-19"
@@ -32,6 +35,11 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
       .filter(Boolean);
   }
 
+  // If audio is marked cached, dynamically resolve to the current device's sandbox path
+  const canonicalPath = getEntryAudioPath(row.id, row.created_at);
+  const localAudioPath =
+    row.is_audio_cached === 1 ? canonicalPath : row.local_audio_path || null;
+
   return {
     id: row.id,
     title: row.title,
@@ -40,11 +48,13 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
     tags: parsedTags,
     duration_sec: row.duration_sec,
     source_type: row.source_type,
-    local_audio_path: row.local_audio_path,
+    local_audio_path: localAudioPath,
     drive_audio_file_id: row.drive_audio_file_id,
     drive_sidecar_file_id: row.drive_sidecar_file_id,
     is_audio_cached: row.is_audio_cached,
     created_at: row.created_at,
+    updated_at: row.updated_at || row.created_at,
+    drive_synced_at: row.drive_synced_at ?? null,
     last_accessed_at: row.last_accessed_at,
   };
 };
@@ -66,12 +76,13 @@ export const entriesDao = {
     const tagsJson = JSON.stringify(
       entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
     );
+    const updatedAt = entry.updated_at || entry.created_at;
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
-        is_audio_cached, created_at, last_accessed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -85,6 +96,8 @@ export const entriesDao = {
         entry.drive_sidecar_file_id || null,
         entry.is_audio_cached,
         entry.created_at,
+        updatedAt,
+        entry.drive_synced_at ?? null,
         entry.last_accessed_at || entry.created_at,
       ],
     );
@@ -95,11 +108,13 @@ export const entriesDao = {
     const tagsJson = JSON.stringify(
       entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
     );
+    const updatedAt = entry.updated_at || Date.now();
     await db.runAsync(
       `UPDATE entries SET
         title = ?, summary = ?, transcript = ?, tags = ?, duration_sec = ?,
         source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
-        drive_sidecar_file_id = ?, is_audio_cached = ?, last_accessed_at = ?
+        drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
+        drive_synced_at = ?, last_accessed_at = ?
       WHERE id = ?`,
       [
         entry.title,
@@ -112,15 +127,39 @@ export const entriesDao = {
         entry.drive_audio_file_id || null,
         entry.drive_sidecar_file_id || null,
         entry.is_audio_cached,
+        updatedAt,
+        entry.drive_synced_at ?? null,
         entry.last_accessed_at || Date.now(),
         entry.id,
       ],
     );
   },
 
-  async deleteEntry(id: string): Promise<void> {
+  async deleteEntry(id: string): Promise<JournalEntry | null> {
     const db = getDatabase();
+    const entry = await this.getEntryById(id);
+    if (entry) {
+      // Record tombstone for cloud sync
+      await deletedEntriesDao.recordDeletion(
+        entry.id,
+        entry.drive_sidecar_file_id,
+        entry.drive_audio_file_id,
+      );
+
+      // Clean up local audio file on device
+      const localAudioUri =
+        entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
+      if (localAudioUri) {
+        try {
+          await FileSystem.deleteAsync(localAudioUri, { idempotent: true });
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
     await db.runAsync(`DELETE FROM entries WHERE id = ?`, [id]);
+    return entry;
   },
 
   async getEntryById(id: string): Promise<JournalEntry | null> {
@@ -206,10 +245,58 @@ export const entriesDao = {
     );
   },
 
+  async updateSyncStatus(
+    id: string,
+    sidecarId: string,
+    audioId: string | null,
+    syncedAt: number,
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE entries SET
+        drive_sidecar_file_id = ?,
+        drive_audio_file_id = ?,
+        drive_synced_at = ?
+      WHERE id = ?`,
+      [sidecarId, audioId, syncedAt, id],
+    );
+  },
+
+  async getUnsyncedEntries(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries
+       WHERE drive_sidecar_file_id IS NULL
+          OR drive_synced_at IS NULL
+          OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
+       ORDER BY created_at ASC`,
+    );
+    return rows.map(rowToEntry);
+  },
+
   async getPrunableCachedEntries(): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
-      `SELECT * FROM entries WHERE is_audio_cached = 1 AND local_audio_path IS NOT NULL ORDER BY last_accessed_at ASC`,
+      `SELECT * FROM entries
+       WHERE is_audio_cached = 1
+         AND local_audio_path IS NOT NULL
+         AND drive_audio_file_id IS NOT NULL
+         AND length(drive_audio_file_id) > 0
+         AND drive_sidecar_file_id IS NOT NULL
+         AND length(drive_sidecar_file_id) > 0
+         AND drive_synced_at IS NOT NULL
+       ORDER BY last_accessed_at ASC`,
+    );
+    return rows.map(rowToEntry);
+  },
+
+  async getAllCachedEntries(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries
+       WHERE is_audio_cached = 1
+         AND local_audio_path IS NOT NULL
+       ORDER BY last_accessed_at ASC`,
     );
     return rows.map(rowToEntry);
   },
@@ -247,11 +334,7 @@ export const entriesDao = {
       });
 
       const dayKey = `${year}-${monthNum}-${String(date.getDate()).padStart(2, "0")}`; // "YYYY-MM-DD" local
-      const dayLabel = date.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "short",
-        day: "numeric",
-      });
+      const dayLabel = formatDayLabel(date);
 
       if (!monthMap.has(monthKey)) {
         monthMap.set(monthKey, {

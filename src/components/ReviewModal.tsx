@@ -9,6 +9,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
 } from "react-native";
 import { JournalEntry } from "../db/schema";
 import {
@@ -33,7 +34,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onDelete,
   onClose,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -153,9 +154,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             onPress={handleClose}
             style={styles.closeButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Close"
           >
-            <Text style={[styles.closeText, { color: colors.textMuted }]}>
-              Cancel
+            <Text style={[styles.closeIcon, { color: colors.textMuted }]}>
+              ✕
             </Text>
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
@@ -163,12 +165,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </Text>
           <TouchableOpacity
             onPress={handleSaveAndClose}
-            style={styles.saveHeaderButton}
+            style={[
+              styles.saveHeaderButton,
+              { backgroundColor: colors.primary },
+            ]}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Save Changes"
           >
-            <Text style={[styles.saveHeaderText, { color: colors.primary }]}>
-              Save
-            </Text>
+            <Text style={styles.saveHeaderText}>Save</Text>
           </TouchableOpacity>
         </View>
 
@@ -360,11 +364,38 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             />
           </View>
 
-          {/* Delete Action */}
+          {/* Bottom Actions: Cancel & Delete aligned together */}
           <View style={styles.bottomActions}>
             <TouchableOpacity
-              style={[styles.deleteButton, { borderColor: colors.danger }]}
+              style={[
+                styles.cancelButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              onPress={handleClose}
+              activeOpacity={0.7}
+              accessibilityLabel="Cancel editing"
+            >
+              <Text style={[styles.cancelButtonText, { color: colors.text }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.deleteButton,
+                {
+                  borderColor: colors.danger,
+                  backgroundColor: isDark
+                    ? "rgba(239, 68, 68, 0.12)"
+                    : "#FEF2F2",
+                },
+              ]}
               onPress={handleDelete}
+              activeOpacity={0.7}
+              accessibilityLabel="Delete entry"
             >
               <Text style={[styles.deleteText, { color: colors.danger }]}>
                 Delete Entry
@@ -386,7 +417,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 18,
-    paddingTop: Platform.OS === "ios" ? 52 : 16,
+    paddingTop:
+      Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 52,
     paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
@@ -395,16 +427,23 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   closeButton: {
-    padding: 4,
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  closeText: {
-    fontSize: 15,
+  closeIcon: {
+    fontSize: 18,
+    fontWeight: "600",
   },
   saveHeaderButton: {
-    padding: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 8,
   },
   saveHeaderText: {
-    fontSize: 15,
+    color: "#FFFFFF",
+    fontSize: 14,
     fontWeight: "700",
   },
   scrollContent: {
@@ -532,14 +571,29 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   bottomActions: {
-    marginTop: 20,
+    marginTop: 24,
+    flexDirection: "row",
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    borderWidth: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   deleteButton: {
+    flex: 1,
     borderWidth: 1,
-    paddingHorizontal: 22,
-    paddingVertical: 11,
+    paddingVertical: 12,
     borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   deleteText: {
     fontSize: 14,

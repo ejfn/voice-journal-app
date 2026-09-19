@@ -4,15 +4,17 @@ import { entriesDao } from "../../db/dao/entriesDao";
 import { syncQueueDao } from "../../db/dao/syncQueueDao";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
+import { generateUUID } from "../../utils/uuid";
 
 export interface ImportedAudioResult {
   entryId: string;
-  name: string;
+  name?: string;
   localPath: string;
   size?: number;
+  durationSec?: number;
 }
 
-class AudioImportService {
+export class AudioImportService {
   async importAudioFiles(): Promise<ImportedAudioResult[]> {
     const pickerResult = await DocumentPicker.getDocumentAsync({
       type: ["audio/*"],
@@ -31,7 +33,7 @@ class AudioImportService {
     const importedResults: ImportedAudioResult[] = [];
 
     for (const asset of pickerResult.assets) {
-      const entryId = `import_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const entryId = generateUUID();
       const now = Date.now();
       const destinationPath = getEntryAudioPath(entryId, now);
 
@@ -67,6 +69,7 @@ class AudioImportService {
         drive_sidecar_file_id: null,
         is_audio_cached: 1,
         created_at: now,
+        updated_at: now,
         last_accessed_at: now,
       };
 

@@ -131,72 +131,109 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
               {/* Status Hint */}
               <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
-                  ? "Recording paused. Tap resume or stop to save."
-                  : "Speak naturally. Pause or stop whenever you are ready."}
+                  ? durationSec < 3
+                    ? "Recording paused (< 3s). Tap resume to continue, or discard."
+                    : "Recording paused. Tap resume to continue, or done to save."
+                  : durationSec < 3
+                    ? "Speak naturally. Minimum 3 seconds to save."
+                    : "Speak naturally. Tap pause to take a break, or done when finished."}
               </Text>
 
               {/* Action Buttons */}
               <View style={styles.controlsRow}>
-                {/* Pause/Resume Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.circleButton,
-                    {
-                      backgroundColor: colors.surfaceAlt,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                  onPress={isPaused ? onResume : onPause}
-                  activeOpacity={0.75}
-                  accessibilityLabel={
-                    isPaused ? "Resume recording" : "Pause recording"
-                  }
-                >
+                {/* Left: Pause / Resume */}
+                <View style={styles.actionColumn}>
+                  <View style={styles.buttonWrapper}>
+                    <TouchableOpacity
+                      style={[
+                        styles.secondaryActionButton,
+                        isPaused
+                          ? {
+                              backgroundColor: colors.primary,
+                              borderColor: colors.primary,
+                              shadowColor: colors.primary,
+                            }
+                          : {
+                              backgroundColor: colors.surfaceAlt,
+                              borderColor: colors.borderStrong,
+                              shadowColor: "#000",
+                            },
+                      ]}
+                      onPress={isPaused ? onResume : onPause}
+                      activeOpacity={0.75}
+                      accessibilityLabel={
+                        isPaused ? "Resume recording" : "Pause recording"
+                      }
+                    >
+                      {isPaused ? (
+                        <View
+                          style={[
+                            styles.resumeTriangle,
+                            { borderLeftColor: "#FFFFFF" },
+                          ]}
+                        />
+                      ) : (
+                        <View style={styles.pauseBarsContainer}>
+                          <View
+                            style={[
+                              styles.pauseBar,
+                              { backgroundColor: colors.text },
+                            ]}
+                          />
+                          <View
+                            style={[
+                              styles.pauseBar,
+                              { backgroundColor: colors.text },
+                            ]}
+                          />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                   <Text
-                    style={[styles.circleButtonIcon, { color: colors.text }]}
-                  >
-                    {isPaused ? "▶" : "⏸"}
-                  </Text>
-                  <Text
-                    style={[styles.circleButtonLabel, { color: colors.text }]}
+                    style={[
+                      styles.actionLabel,
+                      isPaused
+                        ? [styles.activeLabel, { color: colors.primary }]
+                        : { color: colors.text },
+                    ]}
                   >
                     {isPaused ? "Resume" : "Pause"}
                   </Text>
-                </TouchableOpacity>
+                </View>
 
-                {/* Stop Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.circleButton,
-                    styles.stopCircleButton,
-                    { backgroundColor: colors.danger },
-                  ]}
-                  onPress={onStop}
-                  activeOpacity={0.75}
-                  accessibilityLabel="Stop recording and save"
-                >
-                  <Text style={[styles.circleButtonIcon, { color: "#FFFFFF" }]}>
-                    ⏹
-                  </Text>
+                {/* Right: Stop */}
+                <View style={styles.actionColumn}>
+                  <View style={styles.buttonWrapper}>
+                    <TouchableOpacity
+                      style={[
+                        styles.doneActionButton,
+                        {
+                          backgroundColor: colors.primary,
+                          shadowColor: colors.primary,
+                          opacity: durationSec < 3 ? 0.45 : 1,
+                        },
+                      ]}
+                      onPress={onStop}
+                      activeOpacity={0.8}
+                      accessibilityLabel="Stop and save recording"
+                    >
+                      <Text style={styles.doneCheckmark}>✓</Text>
+                    </TouchableOpacity>
+                  </View>
                   <Text
-                    style={[styles.circleButtonLabel, { color: "#FFFFFF" }]}
+                    style={[
+                      styles.actionLabel,
+                      styles.doneLabel,
+                      {
+                        color: durationSec < 3 ? colors.textMuted : colors.text,
+                      },
+                    ]}
                   >
-                    Done
+                    Stop
                   </Text>
-                </TouchableOpacity>
+                </View>
               </View>
-
-              {/* Cancel Button */}
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={onCancel}
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 14, right: 14 }}
-              >
-                <Text style={[styles.cancelText, { color: colors.textMuted }]}>
-                  Discard
-                </Text>
-              </TouchableOpacity>
             </>
           )}
         </View>
@@ -288,43 +325,104 @@ const styles = StyleSheet.create({
   },
   controlsRow: {
     flexDirection: "row",
-    justifyContent: "center",
+    justifyContent: "space-evenly",
     alignItems: "center",
-    gap: 32,
-    marginBottom: 22,
+    width: "100%",
+    paddingHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
   },
-  circleButton: {
+  actionColumn: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 80,
+    gap: 8,
+  },
+  buttonWrapper: {
+    width: 72,
+    height: 72,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryActionButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  middlePauseButton: {
     width: 72,
     height: 72,
     borderRadius: 36,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    shadowColor: "#000",
+    borderWidth: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  doneActionButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
     elevation: 3,
   },
-  stopCircleButton: {
-    borderWidth: 0,
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+  pauseBarsContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
   },
-  circleButtonIcon: {
-    fontSize: 20,
-    marginBottom: 2,
+  pauseBar: {
+    width: 5,
+    height: 22,
+    borderRadius: 2.5,
   },
-  circleButtonLabel: {
-    fontSize: 11,
+  resumeTriangle: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 16,
+    borderTopWidth: 10,
+    borderBottomWidth: 10,
+    borderTopColor: "transparent",
+    borderBottomColor: "transparent",
+    marginLeft: 4,
+  },
+  doneCheckmark: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+  discardIcon: {
+    fontSize: 18,
+    fontWeight: "600",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+  actionLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+    letterSpacing: -0.1,
+  },
+  doneLabel: {
     fontWeight: "600",
   },
-  cancelButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  cancelText: {
-    fontSize: 14,
-    fontWeight: "500",
+  activeLabel: {
+    fontWeight: "700",
   },
 });

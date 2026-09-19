@@ -8,8 +8,13 @@ import {
   RefreshControl,
   StatusBar,
   Alert,
+  Platform,
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from "react-native-safe-area-context";
+import * as FileSystem from "expo-file-system/legacy";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
@@ -19,6 +24,7 @@ import { SettingsModal } from "./src/components/SettingsModal";
 import { TagFilterChips } from "./src/components/TagFilterChips";
 import { TimelineHeader } from "./src/components/TimelineHeader";
 import { DayGroup, entriesDao, MonthSection } from "./src/db/dao/entriesDao";
+import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
 import { syncQueueDao } from "./src/db/dao/syncQueueDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
@@ -28,6 +34,7 @@ import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService"
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
 import { googleDriveService } from "./src/services/drive/GoogleDriveService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
+import { generateUUID } from "./src/utils/uuid";
 
 const MainScreen: React.FC = () => {
   const { colors, isDark } = useTheme();
@@ -96,12 +103,12 @@ const MainScreen: React.FC = () => {
   const handleDriveSync = async () => {
     setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTimelineFromDrive();
+      const result = await googleDriveService.syncTwoWay();
       await googleDriveService.runLruEviction();
       await loadData();
       Alert.alert(
         "Sync Complete",
-        `Synchronized timeline. ${result.importedCount} new clips found.`,
+        `Synchronized timeline.\n• ${result.uploadedCount} clip(s) uploaded to Drive\n• ${result.downloadedCount} new clip(s) downloaded`,
       );
     } catch (err) {
       Alert.alert(
@@ -124,7 +131,7 @@ const MainScreen: React.FC = () => {
       return;
     }
 
-    const newId = `entry_${Date.now()}`;
+    const newId = generateUUID();
     setCurrentRecordingId(newId);
     setRecordingDurationSec(0);
     setRecordingMetering(0);
@@ -133,7 +140,7 @@ const MainScreen: React.FC = () => {
     setIsRecordingVisible(true);
 
     await audioRecordingService.startRecording(newId, (status) => {
-      setRecordingDurationSec(Math.round(status.durationMillis / 1000));
+      setRecordingDurationSec(Math.floor(status.durationMillis / 1000));
       setRecordingMetering(status.meteringLevel);
       setIsRecordingPaused(status.isPaused);
     });
@@ -154,11 +161,31 @@ const MainScreen: React.FC = () => {
   };
 
   const handleStopRecording = async () => {
-    setIsProcessingAI(true);
     try {
       const { localUri, durationSec } =
         await audioRecordingService.stopRecording();
-      const entryId = currentRecordingId || `entry_${Date.now()}`;
+
+      // Enforce 3-second minimum duration threshold
+      if (durationSec < 3) {
+        if (localUri) {
+          try {
+            await FileSystem.deleteAsync(localUri, { idempotent: true });
+          } catch (delErr) {
+            console.warn("Could not delete short recording:", delErr);
+          }
+        }
+        setIsRecordingVisible(false);
+        setCurrentRecordingId(null);
+        setIsProcessingAI(false);
+        Alert.alert(
+          "Recording Too Short",
+          "Voice entries shorter than 3 seconds will not be saved.",
+        );
+        return;
+      }
+
+      setIsProcessingAI(true);
+      const entryId = currentRecordingId || generateUUID();
       const now = Date.now();
 
       let aiResult = {
@@ -187,6 +214,7 @@ const MainScreen: React.FC = () => {
         drive_sidecar_file_id: null,
         is_audio_cached: 1,
         created_at: now,
+        updated_at: now,
         last_accessed_at: now,
       };
 
@@ -195,6 +223,18 @@ const MainScreen: React.FC = () => {
         entry_id: entryId,
         action: "ANALYZE_AND_UPLOAD",
       });
+
+      // Attempt background upload if user is signed in to Google Drive
+      if (googleDriveService.getCurrentUser()) {
+        googleDriveService
+          .uploadEntry(newEntry)
+          .then(async () => {
+            await syncQueueDao.deleteByEntryId(entryId);
+          })
+          .catch((uploadErr) => {
+            console.warn("Deferred background Drive upload:", uploadErr);
+          });
+      }
 
       setIsRecordingVisible(false);
       setCurrentRecordingId(null);
@@ -278,10 +318,26 @@ const MainScreen: React.FC = () => {
   };
 
   const handleSaveReview = async (updated: JournalEntry) => {
-    await entriesDao.updateEntry(updated);
+    const entryToSave: JournalEntry = {
+      ...updated,
+      updated_at: Date.now(),
+    };
+    await entriesDao.updateEntry(entryToSave);
     setIsReviewVisible(false);
     setReviewEntry(null);
     await loadData();
+
+    // Trigger background upload if signed in to Google Drive
+    if (googleDriveService.getCurrentUser()) {
+      googleDriveService
+        .uploadEntry(entryToSave)
+        .then(async () => {
+          await syncQueueDao.deleteByEntryId(entryToSave.id);
+        })
+        .catch((err) => {
+          console.warn("Deferred background Drive upload after edit:", err);
+        });
+    }
   };
 
   const handleDeleteEntry = async (id: string) => {
@@ -294,10 +350,22 @@ const MainScreen: React.FC = () => {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            await entriesDao.deleteEntry(id);
+            const deleted = await entriesDao.deleteEntry(id);
             setIsReviewVisible(false);
             setReviewEntry(null);
             await loadData();
+
+            // If user is connected to Google Drive, delete from cloud immediately
+            if (deleted && googleDriveService.getCurrentUser()) {
+              googleDriveService
+                .deleteEntryFromDrive(deleted)
+                .then(async () => {
+                  await deletedEntriesDao.removeDeletion(deleted.id);
+                })
+                .catch((err) => {
+                  console.warn("Deferred cloud deletion:", err);
+                });
+            }
           },
         },
       ],
@@ -315,15 +383,27 @@ const MainScreen: React.FC = () => {
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: colors.background }]}
+      edges={["top", "left", "right"]}
+      style={[
+        styles.safeArea,
+        {
+          backgroundColor: colors.surface,
+        },
+      ]}
     >
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-      <View style={styles.responsiveContainer}>
+      <StatusBar
+        barStyle={isDark ? "light-content" : "dark-content"}
+        backgroundColor={colors.surface}
+      />
+      <View
+        style={[
+          styles.responsiveContainer,
+          { backgroundColor: colors.background },
+        ]}
+      >
         <TimelineHeader
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          onSyncPress={handleDriveSync}
-          isSyncing={isSyncing}
           onSettingsPress={() => setIsSettingsVisible(true)}
         />
 
@@ -389,8 +469,9 @@ const MainScreen: React.FC = () => {
           stickySectionHeadersEnabled={false}
         />
 
-        {/* Floating Action Buttons Container */}
+        {/* Floating Action Buttons Container (Vertical Circular FABs) */}
         <View style={styles.fabContainer}>
+          {/* Top: Import Audio */}
           <TouchableOpacity
             style={[
               styles.secondaryFab,
@@ -400,11 +481,10 @@ const MainScreen: React.FC = () => {
             activeOpacity={0.8}
             accessibilityLabel="Import Audio Files"
           >
-            <Text style={[styles.secondaryFabText, { color: colors.text }]}>
-              📥 Import
-            </Text>
+            <Text style={styles.secondaryFabIcon}>📥</Text>
           </TouchableOpacity>
 
+          {/* Bottom: Record Voice */}
           <TouchableOpacity
             style={[
               styles.primaryFab,
@@ -418,7 +498,6 @@ const MainScreen: React.FC = () => {
             accessibilityLabel="New Voice Recording"
           >
             <Text style={styles.primaryFabIcon}>🎙️</Text>
-            <Text style={styles.primaryFabText}>Record</Text>
           </TouchableOpacity>
         </View>
 
@@ -512,46 +591,38 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: 28,
     right: 20,
-    flexDirection: "row",
+    flexDirection: "column",
     alignItems: "center",
-    gap: 12,
+    gap: 14,
   },
   secondaryFab: {
-    flexDirection: "row",
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderRadius: 26,
+    justifyContent: "center",
     borderWidth: 1,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.08,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
-  secondaryFabText: {
-    fontSize: 13.5,
-    fontWeight: "600",
+  secondaryFabIcon: {
+    fontSize: 23,
   },
   primaryFab: {
-    flexDirection: "row",
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     alignItems: "center",
-    paddingHorizontal: 22,
-    paddingVertical: 14,
-    borderRadius: 28,
+    justifyContent: "center",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 6,
-    gap: 8,
   },
   primaryFabIcon: {
-    fontSize: 17,
-  },
-  primaryFabText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: -0.2,
+    fontSize: 30,
   },
 });
