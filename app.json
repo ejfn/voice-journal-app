@@ -1,25 +1,60 @@
 {
   "expo": {
-    "name": "voice-journal-app",
+    "name": "VoiceJournal",
     "slug": "voice-journal-app",
     "version": "1.0.0",
+    "runtimeVersion": "v1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.personal.voicejournal",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "updates": {
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow VoiceJournal to access your microphone for journal recordings.",
+          "enableBackgroundPlayback": true,
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true
+        }
+      ],
+      "@react-native-google-signin/google-signin",
+      "expo-document-picker",
+      "expo-updates"
+    ],
+    "extra": {
+      "version": "v1.0.0",
+      "eas": {
+        "projectId": "voice-journal-app"
+      }
     }
   }
 }

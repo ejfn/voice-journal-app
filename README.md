@@ -29,8 +29,7 @@ npm test
 
 ## Documentation
 
-- [Implementation Plan](docs/plans/voice-journal-app-plan.md)
-- [UI Mockups](docs/plans/ui_mockups.md)
+- [UI Mockups](docs/mockups/ui_mockups.md)
 - [Agent Guidelines](AGENTS.md)
 
 ## License

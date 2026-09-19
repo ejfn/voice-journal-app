@@ -1,0 +1,59 @@
+name: Build Dev Client
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Dev Client APK
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
+      - name: Override app name, package ID, and EAS channel for Dev Client
+        run: |
+          jq '.expo.name = .expo.name + " (Dev)" | .expo.android.package = .expo.android.package + ".dev" | .expo.updates.requestHeaders["expo-channel-name"] = "${{ steps.version.outputs.eas-branch }}"' app.json > app.json.tmp
+          mv app.json.tmp app.json
+
+      - name: Build Dev Client APK
+        run: eas build --platform android --profile development --wait
+        env:
+          CI: 1
+
+      - name: Get build artifact URL
+        id: build-url
+        run: |
+          # Get the latest SUCCESSFUL build for this project
+          BUILD_URL=$(eas build:list --platform android --profile development --status finished --limit 1 --json | jq -r '.[0].artifacts | .buildUrl // .applicationArchiveUrl // empty')
+          echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
+          echo "Build URL: $BUILD_URL"
+        env:
+          CI: 1

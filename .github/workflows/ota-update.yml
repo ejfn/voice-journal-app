@@ -1,0 +1,56 @@
+name: OTA Update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch_name:
+        description: "Branch name to update (leave blank for selected ref)"
+        required: false
+        type: string
+
+# Prevent concurrent deployments due to rate limits
+concurrency:
+  group: ota-update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ota-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch_name || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality checks
+        run: npm run qualitycheck
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
+      - name: Publish OTA Update
+        run: eas update --branch ${{ steps.version.outputs.eas-branch }} --environment ${{ steps.version.outputs.eas-branch }} --message "Update ${{ steps.version.outputs.full-version }}"
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CI: 1

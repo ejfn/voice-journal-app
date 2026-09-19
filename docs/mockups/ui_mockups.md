@@ -14,7 +14,7 @@ This document presents the visual design mockups for the application, featuring 
 - **Previous Days**: Subsequent date sections (e.g. `Friday, Sep 18`).
 - **Quick Action Insets**: Floating bottom buttons (`+ New Recording`, `Import Audio Files`).
 
-![1. Multi-Clip Timeline](../mockups/timeline_multiclip.jpg)
+![1. Multi-Clip Timeline](./timeline_multiclip.jpg)
 
 ---
 
@@ -25,7 +25,7 @@ This document presents the visual design mockups for the application, featuring 
 - **Accessible Thumb Hit Targets**: Large round circular buttons (`72x72` px) for **Pause / Resume** (amber) and **Stop** (crimson) for effortless one-handed control.
 - Sleek `Cancel` link below.
 
-![2. Active Recording Modal](../mockups/recording_modal.jpg)
+![2. Active Recording Modal](./recording_modal.jpg)
 
 ---
 
@@ -36,4 +36,4 @@ This document presents the visual design mockups for the application, featuring 
 - **Editable Metadata**: Inline title editor and clean auto-generated tag pills (`School`, `Science`, `Poster` — no `#`).
 - **Primary CTA**: Prominent `Save & Queue Sync` button.
 
-![3. Review & Details Screen](../mockups/review_screen.jpg)
+![3. Review & Details Screen](./review_screen.jpg)

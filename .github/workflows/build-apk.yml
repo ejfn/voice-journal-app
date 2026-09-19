@@ -1,0 +1,74 @@
+name: Build APK
+
+on:
+  release:
+    types: [prereleased, released]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality checks
+        run: npm run qualitycheck
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
+      - name: Build APK
+        if: steps.version.outputs.eas-branch == 'production' || steps.version.outputs.eas-branch == 'preview'
+        run: eas build --platform android --profile ${{ steps.version.outputs.eas-branch }} --wait
+        env:
+          CI: 1
+
+      - name: Get build artifact URL
+        if: steps.version.outputs.eas-branch == 'production' || steps.version.outputs.eas-branch == 'preview'
+        id: build-url
+        run: |
+          # Get the latest SUCCESSFUL build for this project
+          BUILD_URL=$(eas build:list --platform android --profile ${{ steps.version.outputs.eas-branch }} --status finished --limit 1 --json | jq -r '.[0].artifacts | .buildUrl // .applicationArchiveUrl // empty')
+          echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
+          echo "Build URL: $BUILD_URL"
+        env:
+          CI: 1
+
+      - name: Download APK
+        if: github.event_name == 'release'
+        run: |
+          curl -L -o voice-journal-app-${{ steps.version.outputs.version }}.apk "${{ steps.build-url.outputs.build_url }}"
+
+      - name: Upload APK to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: voice-journal-app-${{ steps.version.outputs.version }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
