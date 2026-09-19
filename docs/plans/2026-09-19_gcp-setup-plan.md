@@ -224,7 +224,7 @@ npx eas credentials -p android
 You do **not** need a local `.env` file on your development machine. Configure these two variables directly in **EAS Environment Variables**, and EAS will automatically inline them into the Dev Client APK bundle during compilation.
 
 #### Option A: Via the Expo Web Dashboard (Recommended)
-1. Go to [expo.dev](https://expo.dev/) and sign in as `ejfn`.
+1. Go to [expo.dev](https://expo.dev/) and sign in to your account.
 2. Select the **`voice-journal-app`** project.
 3. In the left navigation sidebar, click **Configuration** &rarr; **Environment Variables**.
 4. Click **Add Variable**:
