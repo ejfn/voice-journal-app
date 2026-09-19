@@ -215,8 +215,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       style={[
                         styles.doneActionButton,
                         {
-                          backgroundColor: colors.primary,
-                          shadowColor: colors.primary,
+                          backgroundColor: colors.danger,
+                          shadowColor: colors.danger,
                           opacity: durationSec < 3 ? 0.45 : 1,
                         },
                       ]}
