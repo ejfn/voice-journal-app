@@ -1,7 +1,7 @@
-# Implementation Plan: Voice Journal App (DaySpoken)
+# Implementation Plan: Voice Journal App (VoiceJournal)
 
 ## Goal Description
-Build the `voice-journal-app` (branded as **DaySpoken** / **Voice Journal**) according to the technical specification in [voice-journal-app-complete-spec.pdf](file:///home/eric/Downloads/voice-journal-app-complete-spec.pdf), while adopting the CI/CD, versioning, release automation, and Dev Client architecture from [Tractor](file:///home/eric/repos/Tractor).
+Build the `voice-journal-app` (branded as **VoiceJournal** / **Voice Journal**) according to the technical specification in [voice-journal-app-complete-spec.pdf](file:///home/eric/Downloads/voice-journal-app-complete-spec.pdf), while adopting the CI/CD, versioning, release automation, and Dev Client architecture from [Tractor](file:///home/eric/repos/Tractor).
 
 The application is an Android-targeted zero-subscription voice diary combining:
 1. Native audio capture (pause, resume, stop, audio metering) with prominent circular hit targets, and multi-file SAF audio import (e.g. Google Recorder).
@@ -12,8 +12,8 @@ The application is an Android-targeted zero-subscription voice diary combining:
    - Timeline groups clips by Month (`September 2026`) and Day (`Saturday, Sep 19`), stacking multiple clips recorded on the same day chronologically.
 5. **Unified Single-Pane Layout** (No dual-pane complexity):
    - Consistent, clean single-pane layout across all devices (phones, foldables, tablets) with centered max-width content container for wide screens.
-6. **Calendar/Month Hierarchical Google Drive Storage** (`DaySpoken/YYYY/MM/`):
-   - Files are organized hierarchically by year and month (e.g., `DaySpoken/2026/09/{entry_id}.m4a` and `DaySpoken/2026/09/{entry_id}.json`).
+6. **Calendar/Month Hierarchical Google Drive Storage** (`VoiceJournal/YYYY/MM/`):
+   - Files are organized hierarchically by year and month (e.g., `VoiceJournal/2026/09/{entry_id}.m4a` and `VoiceJournal/2026/09/{entry_id}.json`).
    - Pure file-based sync with no `appProperties` (eliminates 124-byte limits and drift).
 7. **Comprehensive Scrolling Ergonomics**:
    - Pull-to-refresh on timeline `SectionList`.
@@ -63,7 +63,7 @@ flowchart TD
 
     subgraph CloudSync ["Google Drive v3 (Calendar Hierarchy: YYYY/MM)"]
         GoogleAuth["Google Sign-In"] -->|"drive.file OAuth2"| DriveClient["DriveSyncService"]
-        Outbox -->|"Upload to DaySpoken/YYYY/MM/"| DriveClient
+        Outbox -->|"Upload to VoiceJournal/YYYY/MM/"| DriveClient
         DriveClient -->|"Hydrate SQLite from .json"| DBRepo
         DriveClient -->|"On-Demand Audio Download"| SandboxFiles
         LRUWorker["LRU Eviction Worker"] -->|"Evict >500MB / >30 days"| SandboxFiles
@@ -192,7 +192,7 @@ Exact composite action from Tractor:
 Runs `npm ci` and `npm run qualitycheck` on PRs targeting `main`.
 
 #### [NEW] `.github/workflows/build-dev-client.yml`
-Triggered via `workflow_dispatch`. Injects version, overrides `app.json` name (`DaySpoken (Dev)`) and Android package (`com.personal.voicejournal.dev`), runs `eas build --platform android --profile development --wait`, and extracts build URL.
+Triggered via `workflow_dispatch`. Injects version, overrides `app.json` name (`Voice Journal (Dev)`) and Android package (`com.personal.voicejournal.dev`), runs `eas build --platform android --profile development --wait`, and extracts build URL.
 
 #### [NEW] `.github/workflows/build-apk.yml`
 Triggered on GitHub release (`prereleased`, `released`) or manual dispatch. Runs `qualitycheck`, detects version via `git-version`, triggers `eas build --platform android --profile <branch>`, downloads built APK (`voice-journal-app-<version>.apk`), and uploads it to GitHub Release assets via `softprops/action-gh-release@v2`.
@@ -231,7 +231,7 @@ Dependencies to install:
 
 #### [MODIFY] `app.json`
 Configure neutral identifiers, plugins, and automatic theme style:
-- `name`: `"DaySpoken"`
+- `name`: `"VoiceJournal"`
 - `slug`: `"voice-journal-app"`
 - `userInterfaceStyle`: `"automatic"` (allows OS-level light/dark theme switching)
 - `android.package`: `"com.personal.voicejournal"`
@@ -313,7 +313,7 @@ Database connection manager and migration runner using `expo-sqlite` (new SDK 52
 - Google OAuth2 authentication via `@react-native-google-signin/google-signin` with `https://www.googleapis.com/auth/drive.file`.
 - **Calendar/Month Directory Hierarchy in Google Drive**:
   ```
-  DaySpoken/
+  VoiceJournal/
   └── YYYY/          (e.g., 2026)
       └── MM/        (e.g., 09)
           ├── {entry_id}.m4a
@@ -390,4 +390,4 @@ Main application entry:
 4. Verify recording multiple clips on the same day: each clip displays its exact recording time (`19:42`, `09:15`) under the shared date header (`Saturday, Sep 19`).
 5. Verify smooth scrolling on timeline (pull-to-refresh) and review screen.
 6. Verify recording modal: round/circular buttons, live metering waveform.
-7. Verify Google Drive hierarchical folder creation (`DaySpoken/YYYY/MM/`).
+7. Verify Google Drive hierarchical folder creation (`VoiceJournal/YYYY/MM/`).
