@@ -149,17 +149,22 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             },
           ]}
         >
-          <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+          <TouchableOpacity
+            onPress={handleClose}
+            style={styles.closeButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
             <Text style={[styles.closeText, { color: colors.textMuted }]}>
               Cancel
             </Text>
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
-            Entry Review & Details
+            Review Entry
           </Text>
           <TouchableOpacity
             onPress={handleSaveAndClose}
             style={styles.saveHeaderButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Text style={[styles.saveHeaderText, { color: colors.primary }]}>
               Save
@@ -170,6 +175,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           {/* Audio Player Bar */}
           <View
@@ -205,7 +211,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   ]}
                   activeOpacity={1}
                   onPress={(e) => {
-                    const width = 200; // approximation
+                    const width = 200;
                     const clickX = e.nativeEvent.locationX;
                     handleSeek(clickX / width);
                   }}
@@ -221,8 +227,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   />
                 </TouchableOpacity>
               </View>
-
-              <Text style={styles.volumeIcon}>🔊</Text>
             </View>
           </View>
 
@@ -242,7 +246,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               ]}
               value={title}
               onChangeText={setTitle}
-              placeholder="Give this entry a headline..."
+              placeholder="Headline..."
               placeholderTextColor={colors.textMuted}
             />
           </View>
@@ -250,7 +254,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           {/* AI Summary */}
           <View style={styles.section}>
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-              AI SUMMARY
+              SUMMARY
             </Text>
             <TextInput
               style={[
@@ -265,7 +269,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               value={summary}
               onChangeText={setSummary}
               multiline
-              placeholder="Executive summary..."
+              placeholder="Key takeaway..."
               placeholderTextColor={colors.textMuted}
             />
           </View>
@@ -293,6 +297,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   <TouchableOpacity
                     onPress={() => handleRemoveTag(tag)}
                     style={styles.removeTagBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Text
                       style={[
@@ -318,7 +323,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 ]}
                 value={newTagInput}
                 onChangeText={setNewTagInput}
-                placeholder="Add tag (lowercase, no #)..."
+                placeholder="Add new tag..."
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleAddTag}
                 returnKeyType="done"
@@ -327,7 +332,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 style={[styles.addTagBtn, { backgroundColor: colors.primary }]}
                 onPress={handleAddTag}
               >
-                <Text style={styles.addTagBtnText}>+ Add</Text>
+                <Text style={styles.addTagBtnText}>Add</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -335,7 +340,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           {/* Verbatim Transcript */}
           <View style={styles.section}>
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-              TRANSCRIPT (VERBATIM)
+              VERBATIM TRANSCRIPT
             </Text>
             <TextInput
               style={[
@@ -344,7 +349,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
                   color: colors.text,
-                  minHeight: 140,
+                  minHeight: 130,
                 },
               ]}
               value={transcript}
@@ -380,13 +385,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: Platform.OS === "ios" ? 48 : 16,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === "ios" ? 52 : 16,
     paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "600",
   },
   closeButton: {
@@ -400,33 +405,38 @@ const styles = StyleSheet.create({
   },
   saveHeaderText: {
     fontSize: 15,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   scrollContent: {
-    padding: 16,
+    padding: 18,
     paddingBottom: 40,
   },
   playerContainer: {
-    padding: 14,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
     marginBottom: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   playerControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 14,
   },
   playerPlayBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
   playerPlayIcon: {
-    color: "#FFF",
-    fontSize: 16,
+    color: "#FFFFFF",
+    fontSize: 15,
     marginLeft: 2,
   },
   playerTimeInfo: {
@@ -434,7 +444,7 @@ const styles = StyleSheet.create({
   },
   timerText: {
     fontSize: 13,
-    fontWeight: "500",
+    fontWeight: "600",
     marginBottom: 6,
   },
   progressBarBg: {
@@ -446,9 +456,6 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 3,
   },
-  volumeIcon: {
-    fontSize: 16,
-  },
   section: {
     marginBottom: 18,
   },
@@ -456,22 +463,23 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.8,
-    marginBottom: 6,
+    marginBottom: 7,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     fontSize: 15,
     fontWeight: "600",
   },
   textArea: {
     borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     fontSize: 14,
+    lineHeight: 20,
     textAlignVertical: "top",
   },
   tagWrap: {
@@ -483,21 +491,21 @@ const styles = StyleSheet.create({
   tagItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
     borderRadius: 14,
     borderWidth: 1,
     gap: 6,
   },
   tagItemText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: "500",
   },
   removeTagBtn: {
     padding: 2,
   },
   removeTagText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
   },
   addTagRow: {
@@ -507,20 +515,20 @@ const styles = StyleSheet.create({
   addTagInput: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    fontSize: 13,
+    paddingVertical: 8,
+    fontSize: 13.5,
   },
   addTagBtn: {
-    paddingHorizontal: 14,
-    borderRadius: 8,
+    paddingHorizontal: 16,
+    borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
   },
   addTagBtnText: {
-    color: "#FFF",
-    fontSize: 13,
+    color: "#FFFFFF",
+    fontSize: 13.5,
     fontWeight: "600",
   },
   bottomActions: {
@@ -529,9 +537,9 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     borderWidth: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 10,
   },
   deleteText: {
     fontSize: 14,

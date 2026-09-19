@@ -19,8 +19,6 @@ export const EntryCard: React.FC<EntryCardProps> = ({
 }) => {
   const { colors } = useTheme();
 
-  const isCached = entry.is_audio_cached === 1;
-
   return (
     <TouchableOpacity
       style={[
@@ -28,11 +26,10 @@ export const EntryCard: React.FC<EntryCardProps> = ({
         {
           backgroundColor: colors.surface,
           borderColor: isPlaying ? colors.primary : colors.border,
-          shadowColor: colors.text,
         },
       ]}
       onPress={onPress}
-      activeOpacity={0.85}
+      activeOpacity={0.7}
     >
       <View style={styles.headerRow}>
         <View style={styles.titleArea}>
@@ -40,48 +37,30 @@ export const EntryCard: React.FC<EntryCardProps> = ({
             style={[styles.title, { color: colors.text }]}
             numberOfLines={1}
           >
-            {entry.title || "Voice Entry"}
+            {entry.title || "Voice Note"}
           </Text>
-          <View style={styles.metaRow}>
-            <Text style={[styles.metaText, { color: colors.textMuted }]}>
-              {formatTime(entry.created_at)} •{" "}
-              {formatDuration(entry.duration_sec)}
-            </Text>
-            <View
-              style={[
-                styles.statusBadge,
-                {
-                  backgroundColor: isCached
-                    ? colors.surfaceAlt
-                    : colors.surfaceHover,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statusText,
-                  { color: isCached ? colors.success : colors.primary },
-                ]}
-              >
-                {isCached ? "✓ Cached" : "☁ On Demand"}
-              </Text>
-            </View>
-          </View>
+          <Text style={[styles.metaText, { color: colors.textMuted }]}>
+            {formatTime(entry.created_at)} •{" "}
+            {formatDuration(entry.duration_sec)}
+          </Text>
         </View>
 
         <TouchableOpacity
           style={[
             styles.playButton,
-            { backgroundColor: isPlaying ? colors.primary : colors.surfaceAlt },
+            {
+              backgroundColor: isPlaying ? colors.primary : colors.surfaceAlt,
+            },
           ]}
           onPress={onPlayPress}
           activeOpacity={0.7}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           accessibilityLabel={isPlaying ? "Pause Audio" : "Play Audio"}
         >
           <Text
             style={[
               styles.playIcon,
-              { color: isPlaying ? colors.textInverse : colors.primary },
+              { color: isPlaying ? "#FFFFFF" : colors.primary },
             ]}
           >
             {isPlaying ? "⏸" : "▶"}
@@ -94,7 +73,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           style={[styles.summary, { color: colors.text }]}
           numberOfLines={2}
         >
-          {`"${entry.summary}"`}
+          {entry.summary}
         </Text>
       ) : null}
 
@@ -103,7 +82,13 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           {entry.tags.map((tag) => (
             <View
               key={tag}
-              style={[styles.tagBadge, { backgroundColor: colors.surfaceAlt }]}
+              style={[
+                styles.tagBadge,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
             >
               <Text style={[styles.tagText, { color: colors.textMuted }]}>
                 {tag.toLowerCase()}
@@ -119,14 +104,15 @@ export const EntryCard: React.FC<EntryCardProps> = ({
 const styles = StyleSheet.create({
   card: {
     marginHorizontal: 16,
-    marginVertical: 5,
-    padding: 14,
-    borderRadius: 12,
+    marginVertical: 6,
+    padding: 16,
+    borderRadius: 16,
     borderWidth: 1,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   headerRow: {
     flexDirection: "row",
@@ -136,46 +122,34 @@ const styles = StyleSheet.create({
   },
   titleArea: {
     flex: 1,
-    marginRight: 10,
+    marginRight: 12,
   },
   title: {
     fontSize: 16,
     fontWeight: "600",
+    letterSpacing: -0.2,
     marginBottom: 3,
   },
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
   metaText: {
-    fontSize: 12,
-  },
-  statusBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 8,
-  },
-  statusText: {
-    fontSize: 10,
-    fontWeight: "600",
+    fontSize: 12.5,
+    fontWeight: "500",
   },
   playButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
   },
   playIcon: {
-    fontSize: 15,
-    marginLeft: 2, // optical center for play icon
+    fontSize: 14,
+    marginLeft: 2,
   },
   summary: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontStyle: "italic",
-    marginBottom: 8,
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginBottom: 10,
+    opacity: 0.9,
   },
   tagRow: {
     flexDirection: "row",
@@ -183,12 +157,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tagBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
   },
   tagText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: "500",
+    letterSpacing: 0.1,
   },
 });

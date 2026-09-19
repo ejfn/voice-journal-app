@@ -24,7 +24,7 @@ export const TagFilterChips: React.FC<TagFilterChipsProps> = ({
   const allTags = ["all", ...tags.filter((t) => t.toLowerCase() !== "all")];
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={styles.container}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -38,9 +38,7 @@ export const TagFilterChips: React.FC<TagFilterChipsProps> = ({
               style={[
                 styles.chip,
                 {
-                  backgroundColor: isSelected
-                    ? colors.primary
-                    : colors.surfaceAlt,
+                  backgroundColor: isSelected ? colors.primary : colors.surface,
                   borderColor: isSelected ? colors.primary : colors.border,
                 },
               ]}
@@ -51,12 +49,12 @@ export const TagFilterChips: React.FC<TagFilterChipsProps> = ({
                 style={[
                   styles.chipText,
                   {
-                    color: isSelected ? colors.textInverse : colors.text,
-                    fontWeight: isSelected ? "600" : "400",
+                    color: isSelected ? "#FFFFFF" : colors.textMuted,
+                    fontWeight: isSelected ? "600" : "500",
                   },
                 ]}
               >
-                {tag.toLowerCase()}
+                {tag === "all" ? "All" : tag.toLowerCase()}
               </Text>
             </TouchableOpacity>
           );
@@ -68,7 +66,7 @@ export const TagFilterChips: React.FC<TagFilterChipsProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -76,12 +74,16 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 1,
   },
   chipText: {
     fontSize: 13,
-    textTransform: "lowercase",
   },
 });

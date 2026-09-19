@@ -20,9 +20,17 @@ export const DayGroupHeader: React.FC<DayGroupHeaderProps> = ({
           {dayLabel}
         </Text>
         {clipCount > 1 && (
-          <View style={[styles.badge, { backgroundColor: colors.surfaceAlt }]}>
+          <View
+            style={[
+              styles.badge,
+              {
+                backgroundColor: colors.surfaceAlt,
+                borderColor: colors.border,
+              },
+            ]}
+          >
             <Text style={[styles.badgeText, { color: colors.textMuted }]}>
-              {clipCount} clips
+              {clipCount} entries
             </Text>
           </View>
         )}
@@ -33,7 +41,7 @@ export const DayGroupHeader: React.FC<DayGroupHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 6,
   },
@@ -43,14 +51,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   dateText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
     letterSpacing: -0.2,
   },
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   badgeText: {
     fontSize: 11,
