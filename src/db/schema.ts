@@ -11,6 +11,8 @@ export interface JournalEntry {
   drive_sidecar_file_id: string | null;
   is_audio_cached: number; // 1 = cached/local, 0 = cloud-only
   created_at: number; // Epoch timestamp ms
+  updated_at?: number; // Epoch timestamp ms for edits/sync detection
+  drive_synced_at?: number | null; // Epoch timestamp ms for Drive sync status
   last_accessed_at: number; // Epoch timestamp ms for LRU
 }
 
@@ -27,6 +29,8 @@ export interface JournalEntryRow {
   drive_sidecar_file_id: string | null;
   is_audio_cached: number;
   created_at: number;
+  updated_at?: number | null;
+  drive_synced_at?: number | null;
   last_accessed_at: number;
 }
 
@@ -53,6 +57,8 @@ CREATE TABLE IF NOT EXISTS entries (
   drive_sidecar_file_id TEXT,
   is_audio_cached INTEGER DEFAULT 1,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  drive_synced_at INTEGER,
   last_accessed_at INTEGER NOT NULL
 );
 
@@ -74,6 +80,18 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deleted_entries (
+  id TEXT PRIMARY KEY NOT NULL,
+  drive_sidecar_file_id TEXT,
+  drive_audio_file_id TEXT,
+  deleted_at INTEGER NOT NULL
+);
+
 -- Triggers to maintain entries_fts in sync with entries
 CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
   INSERT INTO entries_fts(id, title, transcript, summary, tags)
@@ -81,13 +99,11 @@ CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-  INSERT INTO entries_fts(entries_fts, id, title, transcript, summary, tags)
-  VALUES('delete', old.id, old.title, old.transcript, old.summary, old.tags);
+  DELETE FROM entries_fts WHERE id = old.id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-  INSERT INTO entries_fts(entries_fts, id, title, transcript, summary, tags)
-  VALUES('delete', old.id, old.title, old.transcript, old.summary, old.tags);
+  DELETE FROM entries_fts WHERE id = old.id;
   INSERT INTO entries_fts(id, title, transcript, summary, tags)
   VALUES (new.id, new.title, new.transcript, new.summary, new.tags);
 END;

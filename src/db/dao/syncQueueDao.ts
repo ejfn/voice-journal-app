@@ -1,19 +1,19 @@
 import { getDatabase } from "../database";
 import { SyncQueueItem } from "../schema";
 
+import { generateUUID } from "../../utils/uuid";
+
 export const syncQueueDao = {
   async enqueue(item: {
     id?: string;
     entry_id: string;
-    action: "ANALYZE_AND_UPLOAD" | "METADATA_ONLY";
-    status?: "PENDING" | "FAILED" | "PROCESSING" | "COMPLETED";
+    action: SyncQueueItem["action"];
+    status?: SyncQueueItem["status"];
     retry_count?: number;
     created_at?: number;
   }): Promise<string> {
     const db = getDatabase();
-    const id =
-      item.id ||
-      `sync_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const id = item.id || generateUUID();
     const status = item.status || "PENDING";
     const retryCount = item.retry_count || 0;
     const createdAt = item.created_at || Date.now();
@@ -56,6 +56,15 @@ export const syncQueueDao = {
   async deleteItem(id: string): Promise<void> {
     const db = getDatabase();
     await db.runAsync(`DELETE FROM sync_queue WHERE id = ?`, [id]);
+  },
+
+  async markCompleted(id: string): Promise<void> {
+    await this.updateStatus(id, "COMPLETED");
+  },
+
+  async deleteByEntryId(entryId: string): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(`DELETE FROM sync_queue WHERE entry_id = ?`, [entryId]);
   },
 
   async getItemByEntryId(entryId: string): Promise<SyncQueueItem | null> {

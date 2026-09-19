@@ -57,14 +57,14 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           accessibilityLabel={isPlaying ? "Pause Audio" : "Play Audio"}
         >
-          <Text
-            style={[
-              styles.playIcon,
-              { color: isPlaying ? "#FFFFFF" : colors.primary },
-            ]}
-          >
-            {isPlaying ? "⏸" : "▶"}
-          </Text>
+          {isPlaying ? (
+            <View style={styles.pauseIcon}>
+              <View style={[styles.pauseBar, { backgroundColor: "#FFFFFF" }]} />
+              <View style={[styles.pauseBar, { backgroundColor: "#FFFFFF" }]} />
+            </View>
+          ) : (
+            <Text style={[styles.playIcon, { color: colors.primary }]}>▶</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -79,7 +79,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
 
       {entry.tags && entry.tags.length > 0 ? (
         <View style={styles.tagRow}>
-          {entry.tags.map((tag) => (
+          {entry.tags.slice(0, 3).map((tag) => (
             <View
               key={tag}
               style={[
@@ -95,6 +95,21 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               </Text>
             </View>
           ))}
+          {entry.tags.length > 3 && (
+            <View
+              style={[
+                styles.tagBadge,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <Text style={[styles.tagText, { color: colors.textMuted }]}>
+                +{entry.tags.length - 3}
+              </Text>
+            </View>
+          )}
         </View>
       ) : null}
     </TouchableOpacity>
@@ -144,6 +159,17 @@ const styles = StyleSheet.create({
   playIcon: {
     fontSize: 14,
     marginLeft: 2,
+  },
+  pauseIcon: {
+    flexDirection: "row",
+    gap: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pauseBar: {
+    width: 3.5,
+    height: 14,
+    borderRadius: 2,
   },
   summary: {
     fontSize: 13.5,

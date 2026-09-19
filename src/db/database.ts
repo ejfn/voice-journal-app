@@ -50,6 +50,43 @@ export const initDatabase = async (
     activeDb = customDb;
   }
   const db = getDatabase();
+
+  // Drop legacy triggers so they are recreated cleanly without FTS syntax errors
+  try {
+    await db.execAsync("DROP TRIGGER IF EXISTS entries_au;");
+    await db.execAsync("DROP TRIGGER IF EXISTS entries_ad;");
+  } catch {
+    // Ignore
+  }
+
   await db.execAsync(SCHEMA_SQL);
+
+  try {
+    await db.execAsync("ALTER TABLE entries ADD COLUMN updated_at INTEGER;");
+  } catch {
+    // Ignore if column already exists
+  }
+  try {
+    await db.execAsync(
+      "ALTER TABLE entries ADD COLUMN drive_synced_at INTEGER;",
+    );
+  } catch {
+    // Ignore if column already exists
+  }
+  try {
+    await db.execAsync(
+      "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
+    );
+  } catch {
+    // Ignore if table already exists
+  }
+  try {
+    await db.execAsync(
+      "CREATE TABLE IF NOT EXISTS deleted_entries (id TEXT PRIMARY KEY NOT NULL, drive_sidecar_file_id TEXT, drive_audio_file_id TEXT, deleted_at INTEGER NOT NULL);",
+    );
+  } catch {
+    // Ignore if table already exists
+  }
+
   return db;
 };

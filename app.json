@@ -53,7 +53,8 @@
       "@react-native-google-signin/google-signin",
       "expo-document-picker",
       "expo-updates",
-      "expo-asset"
+      "expo-asset",
+      "expo-font"
     ],
     "extra": {
       "version": "v0.1.0",

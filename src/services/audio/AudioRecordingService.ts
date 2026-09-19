@@ -1,6 +1,7 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import * as FileSystem from "expo-file-system/legacy";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
+import { generateUUID } from "../../utils/uuid";
 
 export interface RecordingStatus {
   isRecording: boolean;
@@ -22,6 +23,8 @@ interface AudioRecorderInstance {
   metering?: number;
   getStatusAsync?: () => Promise<{ metering?: number }>;
 }
+
+export const MIN_RECORDING_DURATION_SEC = 3;
 
 class AudioRecordingService {
   private activeRecorder: AudioRecorderInstance | null = null;
@@ -168,10 +171,7 @@ class AudioRecordingService {
     durationSec: number;
   }> {
     this.stopStatusTimer();
-    const finalDurationSec = Math.max(
-      1,
-      Math.round(this.durationMillis / 1000),
-    );
+    const finalDurationSec = Math.floor(this.durationMillis / 1000);
 
     let recordedTempUri: string | null = null;
     if (this.activeRecorder) {
@@ -186,7 +186,26 @@ class AudioRecordingService {
       }
     }
 
-    const entryId = this.currentEntryId || `entry_${Date.now()}`;
+    // Recordings shorter than MIN_RECORDING_DURATION_SEC will not be saved
+    if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
+      if (recordedTempUri) {
+        try {
+          await FileSystem.deleteAsync(recordedTempUri, { idempotent: true });
+        } catch {
+          // Ignore temp cleanup errors
+        }
+      }
+      this.activeRecorder = null;
+      this.statusCallback = null;
+      this.currentEntryId = null;
+
+      return {
+        localUri: "",
+        durationSec: finalDurationSec,
+      };
+    }
+
+    const entryId = this.currentEntryId || generateUUID();
     const destinationUri = getEntryAudioPath(
       entryId,
       this.currentTimestamp || Date.now(),

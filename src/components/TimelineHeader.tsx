@@ -5,32 +5,21 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 
 interface TimelineHeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
-  onSyncPress?: () => void;
-  isSyncing?: boolean;
   onSettingsPress?: () => void;
 }
 
 export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   searchQuery,
   onSearchChange,
-  onSyncPress,
-  isSyncing,
   onSettingsPress,
 }) => {
-  const { colors, mode, toggleTheme } = useTheme();
-
-  const todayString = new Date().toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  const { colors } = useTheme();
 
   return (
     <View
@@ -44,72 +33,25 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           <Text style={[styles.title, { color: colors.text }]}>
             Voice Journal
           </Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            {todayString}
-          </Text>
         </View>
 
-        <View style={styles.topActions}>
-          {onSyncPress && (
-            <TouchableOpacity
-              style={[
-                styles.iconButton,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                },
-              ]}
-              onPress={onSyncPress}
-              disabled={isSyncing}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel="Sync with Google Drive"
-            >
-              {isSyncing ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Text
-                  style={[styles.iconButtonText, { color: colors.primary }]}
-                >
-                  ☁️
-                </Text>
-              )}
-            </TouchableOpacity>
-          )}
-
+        {onSettingsPress && (
           <TouchableOpacity
             style={[
-              styles.iconButton,
+              styles.settingsButton,
               {
                 backgroundColor: colors.surfaceAlt,
                 borderColor: colors.border,
               },
             ]}
-            onPress={toggleTheme}
+            onPress={onSettingsPress}
+            activeOpacity={0.7}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Toggle Theme"
+            accessibilityLabel="Settings"
           >
-            <Text style={styles.iconButtonText}>
-              {mode === "dark" ? "☀️" : "🌙"}
-            </Text>
+            <Text style={styles.settingsIconText}>⚙️</Text>
           </TouchableOpacity>
-
-          {onSettingsPress && (
-            <TouchableOpacity
-              style={[
-                styles.iconButton,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                },
-              ]}
-              onPress={onSettingsPress}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel="Settings"
-            >
-              <Text style={styles.iconButtonText}>⚙️</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        )}
       </View>
 
       <View
@@ -147,51 +89,46 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
+    paddingTop: 8,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   topRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    marginBottom: 12,
   },
   titleContainer: {
     flex: 1,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
-    letterSpacing: -0.5,
+    letterSpacing: -0.4,
   },
   subtitle: {
     fontSize: 13,
     fontWeight: "500",
     marginTop: 2,
   },
-  topActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  settingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  iconButtonText: {
-    fontSize: 15,
+  settingsIconText: {
+    fontSize: 16,
   },
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
-    height: 44,
-    borderRadius: 14,
+    height: 42,
+    borderRadius: 12,
     borderWidth: 1,
   },
   searchIcon: {
