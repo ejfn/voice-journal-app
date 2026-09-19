@@ -186,11 +186,11 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       }
                     >
                       {isPaused ? (
-                        <MaterialIcons name="mic" size={24} color="#FFFFFF" />
+                        <MaterialIcons name="mic" size={32} color="#FFFFFF" />
                       ) : (
                         <MaterialIcons
                           name="pause"
-                          size={24}
+                          size={32}
                           color={colors.text}
                         />
                       )}
@@ -224,7 +224,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       activeOpacity={0.8}
                       accessibilityLabel="Stop and save recording"
                     >
-                      <MaterialIcons name="stop" size={28} color="#FFFFFF" />
+                      <MaterialIcons name="stop" size={34} color="#FFFFFF" />
                     </TouchableOpacity>
                   </View>
                   <Text
@@ -353,88 +353,42 @@ const styles = StyleSheet.create({
   actionColumn: {
     alignItems: "center",
     justifyContent: "center",
-    width: 80,
-    gap: 8,
+    width: 96,
+    gap: 10,
   },
   buttonWrapper: {
-    width: 72,
-    height: 72,
+    width: 84,
+    height: 84,
     alignItems: "center",
     justifyContent: "center",
   },
   secondaryActionButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  middlePauseButton: {
     width: 72,
     height: 72,
     borderRadius: 36,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 2,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  doneActionButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: "center",
-    justifyContent: "center",
+    borderWidth: 1.5,
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
     elevation: 3,
   },
-  pauseBarsContainer: {
-    flexDirection: "row",
+  doneActionButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-  },
-  pauseBar: {
-    width: 5,
-    height: 22,
-    borderRadius: 2.5,
-  },
-  resumeTriangle: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 16,
-    borderTopWidth: 10,
-    borderBottomWidth: 10,
-    borderTopColor: "transparent",
-    borderBottomColor: "transparent",
-    marginLeft: 4,
-  },
-  doneCheckmark: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    textAlign: "center",
-    includeFontPadding: false,
-  },
-  discardIcon: {
-    fontSize: 18,
-    fontWeight: "600",
-    textAlign: "center",
-    includeFontPadding: false,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    elevation: 4,
   },
   actionLabel: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 13,
+    fontWeight: "600",
     letterSpacing: -0.1,
   },
   doneLabel: {
