@@ -1,3 +1,5 @@
+export const WAVEFORM_BAR_COUNT = 75;
+
 /**
  * Generates a deterministic sequence of normalized waveform bar amplitudes (0.08 to 0.95)
  * for an audio entry based on its unique seed (e.g. entry ID).
@@ -7,7 +9,7 @@
  */
 export const generateDeterministicWaveform = (
   seed: string,
-  count: number = 75,
+  count: number = WAVEFORM_BAR_COUNT,
 ): number[] => {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
@@ -49,7 +51,7 @@ export const generateDeterministicWaveform = (
  */
 export const resampleWaveform = (
   samples: number[],
-  targetCount: number = 75,
+  targetCount: number = WAVEFORM_BAR_COUNT,
 ): number[] => {
   if (!samples || samples.length === 0) {
     return [];
@@ -88,4 +90,50 @@ export const resampleWaveform = (
   }
 
   return result;
+};
+
+export type WaveformState = "missing" | "half" | "done";
+
+/**
+ * Determines whether an entry's waveform is:
+ * - "missing": null/undefined, wrong length, all 0s, all 0.2, flat uniform, or synthetic fallback envelope
+ * - "half": partially sampled (some bars are 0 un-sampled placeholders)
+ * - "done": authentic, non-zero, dynamic audio amplitudes matching WAVEFORM_BAR_COUNT
+ */
+export const getWaveformState = (
+  entryId: string,
+  raw: number[] | null | undefined,
+): WaveformState => {
+  if (!raw || !Array.isArray(raw) || raw.length !== WAVEFORM_BAR_COUNT) {
+    return "missing";
+  }
+  if (raw.every((v) => v === 0)) {
+    return "missing";
+  }
+  if (raw.every((v) => v === 0.2)) {
+    return "missing";
+  }
+  // Check for flat uniform baseline (zero variance across all bars)
+  if (raw.every((v) => Math.abs(v - raw[0]) < 0.001)) {
+    return "missing";
+  }
+
+  // Check if this array was produced by generateDeterministicWaveform fallback
+  const synthetic = generateDeterministicWaveform(entryId, WAVEFORM_BAR_COUNT);
+  let matchCount = 0;
+  for (let i = 0; i < WAVEFORM_BAR_COUNT; i++) {
+    if (Math.abs(raw[i] - synthetic[i]) < 0.02) {
+      matchCount++;
+    }
+  }
+  if (matchCount >= Math.floor(WAVEFORM_BAR_COUNT * 0.8)) {
+    return "missing";
+  }
+
+  // If any bar is 0, it is an un-sampled gap from partial playback
+  if (raw.some((v) => v === 0)) {
+    return "half";
+  }
+
+  return "done";
 };

@@ -20,6 +20,10 @@ jest.mock("expo-audio", () => ({
     isAudioSamplingSupported: false,
     setAudioSamplingEnabled: jest.fn(),
   })),
+  requestRecordingPermissionsAsync: jest.fn(async () => ({
+    granted: true,
+    status: "granted",
+  })),
   useAudioPlayer: jest.fn(() => ({
     play: jest.fn(),
     pause: jest.fn(),

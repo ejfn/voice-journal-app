@@ -155,6 +155,9 @@ const MainScreen: React.FC = () => {
   useEffect(() => {
     const unsubscribePlayback = audioPlaybackService.addListener((state) => {
       setPlayingEntryId(state.isPlaying ? state.entryId : null);
+      if (!state.isPlaying && state.waveformBars) {
+        void loadData();
+      }
     });
     const unsubscribeTranscription = transcriptionQueueService.addListener(
       () => {

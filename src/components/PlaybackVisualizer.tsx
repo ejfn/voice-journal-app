@@ -11,6 +11,7 @@ import {
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { formatNegativeCountdown, formatTimer } from "../utils/paths";
+import { WAVEFORM_BAR_COUNT } from "../utils/waveform";
 
 export interface PlaybackVisualizerProps {
   entryId: string;
@@ -27,7 +28,6 @@ export interface PlaybackVisualizerProps {
 const BAR_WIDTH = 3.5;
 const BAR_GAP = 3.5;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
-const WAVEFORM_BAR_COUNT = 75;
 
 export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
   entryId: _entryId,
@@ -126,6 +126,16 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
     onSeek(target);
   };
 
+  // Dynamic auto-gain: scales quiet recordings (whispers) up while leaving normal/loud audio natural
+  const dynamicGain = useMemo(() => {
+    let peak = 0;
+    for (const v of audioBars) {
+      if (v > peak) peak = v;
+    }
+    if (peak <= 0.05) return 1.0;
+    return Math.max(0.85, Math.min(3.0, 0.85 / peak));
+  }, [audioBars]);
+
   return (
     <View
       style={[
@@ -149,7 +159,7 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
         {...panResponder.panHandlers}
         accessibilityLabel="Waveform audio scrubber. Drag horizontally to scrub."
       >
-        {/* Horizontally scrolling waveform bars */}
+        {/* Continuous Horizontal Waveform Strip */}
         <View
           style={[
             styles.waveformStrip,
@@ -162,8 +172,24 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
             // Determine if this bar has passed the center needle
             const isPlayed =
               index < leadBarsCount + progress * audioBars.length;
-            // If heightFactor is 0 (un-sampled bar), render at 0.2 baseline height
-            const effectiveHeight = heightFactor === 0 ? 0.2 : heightFactor;
+            const isLeadBar =
+              index < leadBarsCount ||
+              index >= leadBarsCount + audioBars.length;
+
+            let effectiveHeight = 0.08;
+            if (isLeadBar) {
+              effectiveHeight = 0.08;
+            } else if (heightFactor === 0) {
+              // Un-sampled placeholder bar
+              effectiveHeight = 0.2;
+            } else {
+              const amplified = heightFactor * dynamicGain;
+              // Soft-knee compression: as amplitude approaches 1.0, smoothly compress
+              // so loud screams maintain distinct peak shapes rather than flat-topping
+              const compressed = Math.tanh(amplified * 1.25) * 0.95;
+              effectiveHeight = Math.max(0.08, Math.min(1.0, compressed));
+            }
+
             return (
               <View
                 key={index}

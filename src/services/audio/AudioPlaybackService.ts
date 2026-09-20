@@ -1,5 +1,14 @@
-import { createAudioPlayer } from "expo-audio";
+import {
+  createAudioPlayer,
+  requestRecordingPermissionsAsync,
+} from "expo-audio";
+import { Platform } from "react-native";
 import { entriesDao } from "../../db/dao/entriesDao";
+import {
+  generateDeterministicWaveform,
+  getWaveformState,
+  WAVEFORM_BAR_COUNT,
+} from "../../utils/waveform";
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -25,6 +34,8 @@ export interface AudioSampleData {
 
 interface AudioPlayerInstance {
   playing?: boolean;
+  status?: { isPlaying?: boolean };
+  currentStatus?: { playing?: boolean };
   currentTime?: number;
   duration?: number;
   isAudioSamplingSupported?: boolean;
@@ -52,6 +63,10 @@ class AudioPlaybackService {
   private hasMissingWaveform: boolean = false;
   private isDirtyWaveform: boolean = false;
   private newlySampledIndices: Set<number> = new Set();
+  private receivedSampleCount: number = 0;
+  private fallbackEnvelope: number[] | null = null;
+  private isStopping: boolean = false;
+  private isCompleted: boolean = false;
 
   addListener(listener: PlaybackListener): () => void {
     this.listeners.add(listener);
@@ -109,34 +124,45 @@ class AudioPlaybackService {
     this.hasMissingWaveform = false;
     this.isDirtyWaveform = false;
     this.newlySampledIndices.clear();
+    this.receivedSampleCount = 0;
+    this.fallbackEnvelope = null;
+    this.isCompleted = false;
 
-    // Check if entry is missing waveform data or partially generated:
-    // - Missing (no array at all): rawWaveform is empty or not length 75
-    // - Legacy dummy: all 75 bars are 0.2
-    // - Partially generated (half-regened): some bars are 0 (un-sampled placeholder)
-    // - Fully generated: length 75, all bars have real amplitudes (no 0 values and not legacy dummy)
+    // Check if entry waveform is missing, half, or done:
+    // - "missing": null/undefined, wrong length, all 0s, all 0.2, flat uniform, or synthetic fallback envelope
+    // - "half": partially sampled (some bars are 0 un-sampled placeholders)
+    // - "done": 75 authentic, non-zero, dynamic audio amplitudes
     try {
       const existing = await entriesDao.getEntryById(entryId);
       const raw = existing?.waveform_data;
-      const isMissing = !raw || raw.length !== 75;
-      const isLegacyDummy = !isMissing && raw.every((val) => val === 0.2);
-      const isPartiallyGenerated =
-        !isMissing && !isLegacyDummy && raw.some((val) => val === 0);
+      const waveformState = getWaveformState(entryId, raw);
 
-      if (isMissing || isLegacyDummy) {
+      if (waveformState === "missing") {
         this.hasMissingWaveform = true;
-        this.playbackWaveformBars = new Array(75).fill(0);
-      } else if (isPartiallyGenerated) {
+        this.playbackWaveformBars = new Array(WAVEFORM_BAR_COUNT).fill(0);
+      } else if (waveformState === "half") {
         this.hasMissingWaveform = true;
-        this.playbackWaveformBars = [...raw];
+        this.playbackWaveformBars = [...(raw as number[])];
       } else {
-        // Fully generated: skip audio sampling and skip database saves
+        // Fully generated ("done"): skip audio sampling and skip database saves
         this.hasMissingWaveform = false;
-        this.playbackWaveformBars = [...raw];
+        this.playbackWaveformBars = [...(raw as number[])];
       }
-    } catch {
+    } catch (err) {
+      console.warn("Error reading entry from DB:", err);
       this.playbackWaveformBars = null;
       this.hasMissingWaveform = false;
+    }
+
+    // If waveform is missing, ensure recording permissions on Android so setAudioSamplingEnabled doesn't silently fail
+    if (this.hasMissingWaveform) {
+      try {
+        if (typeof requestRecordingPermissionsAsync === "function") {
+          await requestRecordingPermissionsAsync();
+        }
+      } catch (err) {
+        console.warn("Permission request failed:", err);
+      }
     }
 
     try {
@@ -147,14 +173,16 @@ class AudioPlaybackService {
         // Only enable audio sampling if this clip has missing/un-sampled waveform bars
         if (
           this.hasMissingWaveform &&
-          this.activePlayer.isAudioSamplingSupported
+          this.activePlayer.isAudioSamplingSupported !== false &&
+          typeof this.activePlayer.setAudioSamplingEnabled === "function"
         ) {
           try {
-            this.activePlayer.setAudioSamplingEnabled?.(true);
+            this.activePlayer.setAudioSamplingEnabled(true);
             if (this.activePlayer.addListener) {
               this.sampleSubscription = this.activePlayer.addListener(
                 "audioSampleUpdate",
                 (data: unknown) => {
+                  this.receivedSampleCount++;
                   const sample = data as AudioSampleData;
                   if (
                     !sample ||
@@ -185,8 +213,38 @@ class AudioPlaybackService {
                     this.durationSec > 0
                       ? this.durationSec
                       : initialDurationSec || 1;
-                  const targetIdx = Math.floor((sample.timestamp / dur) * 75);
-                  if (targetIdx >= 0 && targetIdx < 75) {
+
+                  // Normalize timestamp across platforms:
+                  // - Android ExoPlayer returns currentPosition in milliseconds
+                  // - iOS AudioTapProcessor hardcodes timestamp to 0.0
+                  // - Fall back to player's actual currentTimeSec
+                  let sampleTimeSec =
+                    this.activePlayer?.currentTime ?? this.currentTimeSec;
+                  if (
+                    typeof sample.timestamp === "number" &&
+                    sample.timestamp > 0
+                  ) {
+                    if (Platform.OS === "android") {
+                      sampleTimeSec = sample.timestamp / 1000;
+                    } else if (
+                      sample.timestamp > 100 &&
+                      sample.timestamp > dur * 1.5
+                    ) {
+                      sampleTimeSec = sample.timestamp / 1000;
+                    } else if (sample.timestamp <= dur) {
+                      sampleTimeSec = sample.timestamp;
+                    }
+                  }
+
+                  const targetIdx = Math.max(
+                    0,
+                    Math.min(
+                      WAVEFORM_BAR_COUNT - 1,
+                      Math.floor((sampleTimeSec / dur) * WAVEFORM_BAR_COUNT),
+                    ),
+                  );
+
+                  if (targetIdx >= 0 && targetIdx < WAVEFORM_BAR_COUNT) {
                     const currentVal = this.playbackWaveformBars[targetIdx];
                     const isUnsampled = currentVal === 0;
                     const isNewlySampled =
@@ -249,9 +307,10 @@ class AudioPlaybackService {
                   status?.duration !== undefined &&
                   status.duration > 0 &&
                   status?.currentTime !== undefined &&
-                  status.currentTime >= status.duration)
+                  status.currentTime >= status.duration - 0.5)
               ) {
-                this.stop();
+                this.isCompleted = true;
+                void this.stop();
               }
             },
           );
@@ -283,6 +342,39 @@ class AudioPlaybackService {
         if (this.activePlayer.duration) {
           this.durationSec = Math.round(this.activePlayer.duration);
         }
+
+        // Progressive waveform fallback:
+        // If native audioSampleUpdate is not emitting samples (unsupported device/emulator or permission denied),
+        // progressively fill waveform bars along with playback position
+        if (
+          this.hasMissingWaveform &&
+          this.playbackWaveformBars &&
+          this.receivedSampleCount === 0 &&
+          this.currentTimeSec > 0.3
+        ) {
+          const dur = this.durationSec > 0 ? this.durationSec : 1;
+          const targetIdx = Math.max(
+            0,
+            Math.min(
+              WAVEFORM_BAR_COUNT - 1,
+              Math.floor((this.currentTimeSec / dur) * WAVEFORM_BAR_COUNT),
+            ),
+          );
+          if (!this.fallbackEnvelope) {
+            this.fallbackEnvelope = generateDeterministicWaveform(
+              this.currentEntryId || "fallback",
+              WAVEFORM_BAR_COUNT,
+            );
+          }
+          for (let i = 0; i <= targetIdx; i++) {
+            if (this.playbackWaveformBars[i] === 0) {
+              this.playbackWaveformBars[i] = this.fallbackEnvelope[i] ?? 0.35;
+              this.newlySampledIndices.add(i);
+              this.isDirtyWaveform = true;
+            }
+          }
+        }
+
         // If native player stopped or reached duration
         if (
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
@@ -290,13 +382,15 @@ class AudioPlaybackService {
             this.currentTimeSec > 0 &&
             this.currentTimeSec >= this.durationSec - 0.5)
         ) {
-          this.stop();
+          this.isCompleted = true;
+          void this.stop();
           return;
         }
       } else {
         this.currentTimeSec += 0.25;
         if (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) {
-          this.stop();
+          this.isCompleted = true;
+          void this.stop();
           return;
         }
       }
@@ -316,7 +410,7 @@ class AudioPlaybackService {
       !this.isDirtyWaveform ||
       !this.currentEntryId ||
       !this.playbackWaveformBars ||
-      this.playbackWaveformBars.length !== 75
+      this.playbackWaveformBars.length !== WAVEFORM_BAR_COUNT
     ) {
       return;
     }
@@ -364,44 +458,109 @@ class AudioPlaybackService {
   }
 
   async stop(): Promise<void> {
-    this.stopProgressTracker();
-    await this.persistRegeneratedWaveform();
-    if (this.sampleSubscription) {
-      try {
-        this.sampleSubscription.remove();
-      } catch {
-        // Ignore unbind error
-      }
-      this.sampleSubscription = null;
-    }
-    if (this.playerSubscription) {
-      try {
-        this.playerSubscription.remove();
-      } catch {
-        // Ignore unbind error
-      }
-      this.playerSubscription = null;
-    }
-    if (this.activePlayer) {
-      try {
-        if (this.activePlayer.pause) {
-          this.activePlayer.pause();
+    if (this.isStopping) return;
+    this.isStopping = true;
+    try {
+      this.stopProgressTracker();
+
+      const effectiveCurrentTime =
+        typeof this.activePlayer?.currentTime === "number" &&
+        this.activePlayer.currentTime > 0
+          ? this.activePlayer.currentTime
+          : this.currentTimeSec;
+      const effectiveDuration =
+        typeof this.activePlayer?.duration === "number" &&
+        this.activePlayer.duration > 0
+          ? this.activePlayer.duration
+          : this.durationSec;
+
+      const wasCompleted =
+        this.isCompleted ||
+        (effectiveDuration > 0 &&
+          effectiveCurrentTime >= effectiveDuration - 0.5);
+
+      // If clip had missing waveform and playback completed to the end:
+      // ensure any remaining un-sampled bars are filled and persisted
+      if (
+        this.hasMissingWaveform &&
+        this.playbackWaveformBars &&
+        this.currentEntryId &&
+        (wasCompleted || this.isDirtyWaveform)
+      ) {
+        if (wasCompleted && this.playbackWaveformBars.some((v) => v === 0)) {
+          if (!this.fallbackEnvelope) {
+            this.fallbackEnvelope = generateDeterministicWaveform(
+              this.currentEntryId,
+              WAVEFORM_BAR_COUNT,
+            );
+          }
+          for (let i = 0; i < WAVEFORM_BAR_COUNT; i++) {
+            if (this.playbackWaveformBars[i] === 0) {
+              this.playbackWaveformBars[i] = this.fallbackEnvelope[i] ?? 0.35;
+              this.newlySampledIndices.add(i);
+              this.isDirtyWaveform = true;
+            }
+          }
         }
-        if (this.activePlayer.remove) {
-          this.activePlayer.remove();
-        }
-      } catch {
-        // Ignore cleanup errors
       }
+
+      await this.persistRegeneratedWaveform();
+      if (this.sampleSubscription) {
+        try {
+          this.sampleSubscription.remove();
+        } catch {
+          // Ignore unbind error
+        }
+        this.sampleSubscription = null;
+      }
+      if (this.playerSubscription) {
+        try {
+          this.playerSubscription.remove();
+        } catch {
+          // Ignore unbind error
+        }
+        this.playerSubscription = null;
+      }
+      if (this.activePlayer) {
+        try {
+          if (this.activePlayer.pause) {
+            this.activePlayer.pause();
+          }
+          if (this.activePlayer.remove) {
+            this.activePlayer.remove();
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+
+      const stoppedEntryId = this.currentEntryId;
+      const finalWaveform = this.playbackWaveformBars
+        ? [...this.playbackWaveformBars]
+        : undefined;
+
+      this.activePlayer = null;
+      this.currentEntryId = null;
+      this.currentTimeSec = 0;
+      this.playbackWaveformBars = null;
+      this.hasMissingWaveform = false;
+      this.isDirtyWaveform = false;
+      this.newlySampledIndices.clear();
+      this.receivedSampleCount = 0;
+      this.fallbackEnvelope = null;
+      this.isCompleted = false;
+
+      const state: PlaybackState = {
+        isPlaying: false,
+        currentTimeSec: 0,
+        durationSec: this.durationSec,
+        entryId: stoppedEntryId,
+        waveformBars: finalWaveform,
+      };
+      this.listeners.forEach((l) => l(state));
+    } finally {
+      this.isStopping = false;
     }
-    this.activePlayer = null;
-    this.currentEntryId = null;
-    this.currentTimeSec = 0;
-    this.playbackWaveformBars = null;
-    this.hasMissingWaveform = false;
-    this.isDirtyWaveform = false;
-    this.newlySampledIndices.clear();
-    this.notify();
   }
 }
 

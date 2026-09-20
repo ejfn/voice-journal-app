@@ -1,6 +1,8 @@
 import {
   generateDeterministicWaveform,
+  getWaveformState,
   resampleWaveform,
+  WAVEFORM_BAR_COUNT,
 } from "../src/utils/waveform";
 
 describe("Deterministic Waveform Generator", () => {
@@ -32,7 +34,7 @@ describe("Deterministic Waveform Generator", () => {
 
   it("handles fallback default count when count parameter is omitted", () => {
     const defaultBars = generateDeterministicWaveform("test-entry");
-    expect(defaultBars).toHaveLength(75);
+    expect(defaultBars).toHaveLength(WAVEFORM_BAR_COUNT);
   });
 
   describe("resampleWaveform", () => {
@@ -54,6 +56,56 @@ describe("Deterministic Waveform Generator", () => {
       expect(resampled).toHaveLength(10);
       // Peak around index 5
       expect(resampled[5]).toBeGreaterThan(0.5);
+    });
+  });
+
+  describe("getWaveformState", () => {
+    const entryId = "entry-test-123";
+
+    it("returns 'missing' for null or undefined or wrong array length", () => {
+      expect(getWaveformState(entryId, null)).toBe("missing");
+      expect(getWaveformState(entryId, undefined)).toBe("missing");
+      expect(getWaveformState(entryId, [])).toBe("missing");
+      expect(getWaveformState(entryId, new Array(50).fill(0.5))).toBe(
+        "missing",
+      );
+    });
+
+    it("returns 'missing' for all zeros or all 0.2 legacy dummy", () => {
+      expect(
+        getWaveformState(entryId, new Array(WAVEFORM_BAR_COUNT).fill(0)),
+      ).toBe("missing");
+      expect(
+        getWaveformState(entryId, new Array(WAVEFORM_BAR_COUNT).fill(0.2)),
+      ).toBe("missing");
+    });
+
+    it("returns 'missing' for flat uniform baseline (zero variance)", () => {
+      expect(
+        getWaveformState(entryId, new Array(WAVEFORM_BAR_COUNT).fill(0.45)),
+      ).toBe("missing");
+    });
+
+    it("returns 'missing' when matching deterministic synthetic fallback", () => {
+      const synthetic = generateDeterministicWaveform(
+        entryId,
+        WAVEFORM_BAR_COUNT,
+      );
+      expect(getWaveformState(entryId, synthetic)).toBe("missing");
+    });
+
+    it("returns 'half' when partially sampled with some 0 placeholders", () => {
+      const partial = new Array(WAVEFORM_BAR_COUNT)
+        .fill(0)
+        .map((_, i) => (i < 30 ? 0.3 + (i % 5) * 0.1 : 0));
+      expect(getWaveformState(entryId, partial)).toBe("half");
+    });
+
+    it("returns 'done' when fully sampled with authentic dynamic values", () => {
+      const authentic = new Array(WAVEFORM_BAR_COUNT)
+        .fill(0)
+        .map((_, i) => 0.15 + ((i * 7) % 50) / 100);
+      expect(getWaveformState(entryId, authentic)).toBe("done");
     });
   });
 });
