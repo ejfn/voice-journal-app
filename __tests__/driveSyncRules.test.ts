@@ -126,6 +126,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
 
     const createRequests: string[] = [];
     const lookupRequests: string[] = [];
+    let audioLookupCount = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (File as any).mockUpload.mockClear();
     global.fetch = jest.fn(
@@ -139,13 +140,24 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
         }
         if (query.includes("name = 'entry-retry.m4a'")) {
           lookupRequests.push(urlStr);
+          audioLookupCount += 1;
+          if (audioLookupCount === 1) {
+            return new Response(
+              JSON.stringify({
+                nextPageToken: "next-page",
+                files: [
+                  {
+                    id: "z-existing-audio-id",
+                    createdTime: "2026-09-01T00:00:00.000Z",
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
           return new Response(
             JSON.stringify({
               files: [
-                {
-                  id: "z-existing-audio-id",
-                  createdTime: "2026-09-01T00:00:00.000Z",
-                },
                 {
                   id: "existing-audio-id",
                   createdTime: "2026-09-01T00:00:00.000Z",
@@ -176,7 +188,9 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       raceDetected: false,
     });
     expect(createRequests).toEqual([]);
+    expect(lookupRequests).toHaveLength(2);
     expect(lookupRequests[0]).toContain("orderBy=createdTime");
+    expect(lookupRequests[1]).toContain("pageToken=next-page");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockUpload).toHaveBeenCalledWith(
       expect.stringContaining("existing-audio-id"),

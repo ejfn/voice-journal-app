@@ -219,32 +219,64 @@ export class GoogleDriveService {
     const query = encodeURIComponent(
       `name = '${escapedName}' and '${parentId}' in parents and mimeType = '${mimeType}' and trashed = false`,
     );
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,createdTime)&orderBy=createdTime&pageSize=100`,
-      { headers: { Authorization: "Bearer " + token } },
-    );
-    if (!response.ok) {
-      throw new Error(
-        `Failed to find Google Drive file "${name}": ${await response.text()}`,
-      );
-    }
+    const requestUrl =
+      `https://www.googleapis.com/drive/v3/files?q=${query}` +
+      "&fields=nextPageToken,files(id,createdTime)" +
+      "&orderBy=createdTime&pageSize=100";
+    let pageToken: string | null = null;
+    let bestMatch: { id?: string; createdTime?: string } | null = null;
 
-    const data = await response.json();
-    const files: { id?: string; createdTime?: string }[] = Array.isArray(
-      data.files,
-    )
-      ? [...data.files]
-      : [];
-    files.sort((first, second) => {
-      const createdTimeCompare = (first.createdTime ?? "").localeCompare(
-        second.createdTime ?? "",
+    while (true) {
+      const response: Response = await fetch(
+        pageToken
+          ? `${requestUrl}&pageToken=${encodeURIComponent(pageToken)}`
+          : requestUrl,
+        { headers: { Authorization: "Bearer " + token } },
       );
-      if (createdTimeCompare !== 0) {
-        return createdTimeCompare;
+      if (!response.ok) {
+        throw new Error(
+          `Failed to find Google Drive file "${name}": ${await response.text()}`,
+        );
       }
-      return (first.id ?? "").localeCompare(second.id ?? "");
-    });
-    return files[0]?.id || null;
+
+      const data: {
+        files?: { id?: string; createdTime?: string }[];
+        nextPageToken?: string;
+      } = await response.json();
+      const files: { id?: string; createdTime?: string }[] = Array.isArray(
+        data.files,
+      )
+        ? [...data.files]
+        : [];
+      files.sort((first, second) => {
+        const createdTimeCompare = (first.createdTime ?? "").localeCompare(
+          second.createdTime ?? "",
+        );
+        if (createdTimeCompare !== 0) {
+          return createdTimeCompare;
+        }
+        return (first.id ?? "").localeCompare(second.id ?? "");
+      });
+
+      for (const file of files) {
+        if (!bestMatch) {
+          bestMatch = file;
+          continue;
+        }
+        if ((file.createdTime ?? "") !== (bestMatch.createdTime ?? "")) {
+          return bestMatch.id || null;
+        }
+        if ((file.id ?? "").localeCompare(bestMatch.id ?? "") < 0) {
+          bestMatch = file;
+        }
+      }
+
+      pageToken =
+        typeof data.nextPageToken === "string" ? data.nextPageToken : null;
+      if (!pageToken) {
+        return bestMatch?.id || null;
+      }
+    }
   }
 
   /**
