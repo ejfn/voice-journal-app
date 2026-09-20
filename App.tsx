@@ -3,7 +3,6 @@ import {
   View,
   Text,
   SectionList,
-  TouchableOpacity,
   StyleSheet,
   RefreshControl,
   StatusBar,
@@ -14,6 +13,7 @@ import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
 import { RecordingModal } from "./src/components/RecordingModal";
+import { RecordGestureFab } from "./src/components/RecordGestureFab";
 import { ReviewModal } from "./src/components/ReviewModal";
 import { SettingsModal } from "./src/components/SettingsModal";
 import { TagFilterChips } from "./src/components/TagFilterChips";
@@ -632,37 +632,11 @@ const MainScreen: React.FC = () => {
           stickySectionHeadersEnabled={false}
         />
 
-        {/* Floating Action Buttons Container (Vertical Circular FABs) */}
-        <View style={styles.fabContainer}>
-          {/* Top: Import Audio */}
-          <TouchableOpacity
-            style={[
-              styles.secondaryFab,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-            onPress={handleImportAudio}
-            activeOpacity={0.8}
-            accessibilityLabel="Import Audio Files"
-          >
-            <MaterialIcons name="file-download" size={22} color={colors.text} />
-          </TouchableOpacity>
-
-          {/* Bottom: Record Voice */}
-          <TouchableOpacity
-            style={[
-              styles.primaryFab,
-              {
-                backgroundColor: colors.danger,
-                shadowColor: colors.danger,
-              },
-            ]}
-            onPress={handleStartRecording}
-            activeOpacity={0.85}
-            accessibilityLabel="New Voice Recording"
-          >
-            <MaterialIcons name="mic" size={28} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
+        {/* Centered Microphone FAB with Hold-and-Slide Import Gesture */}
+        <RecordGestureFab
+          onStartRecording={handleStartRecording}
+          onImportAudio={handleImportAudio}
+        />
 
         {/* Active Recording Modal */}
         <RecordingModal
@@ -740,7 +714,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   listContent: {
-    paddingBottom: 120, // Generous padding so floating buttons never cover list items
+    paddingBottom: 162, // Generous padding so centered floating button never covers list items
   },
   dayGroupWrapper: {
     marginBottom: 8,
@@ -768,37 +742,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 21,
-  },
-  fabContainer: {
-    position: "absolute",
-    bottom: 28,
-    right: 20,
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 14,
-  },
-  secondaryFab: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  primaryFab: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6,
   },
 });
