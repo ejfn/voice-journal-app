@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -73,6 +73,7 @@ const MainScreen: React.FC = () => {
   const [uploadingEntryIds, setUploadingEntryIds] = useState<Set<string>>(
     new Set(),
   );
+  const pendingDownloadRequestsRef = useRef<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -347,6 +348,12 @@ const MainScreen: React.FC = () => {
 
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
+    if (pendingDownloadRequestsRef.current.has(entry.id)) {
+      return;
+    }
+
+    let startedDownloadRequest = false;
+
     if (playingEntryId === entry.id) {
       await audioPlaybackService.pause();
       return;
@@ -375,6 +382,8 @@ const MainScreen: React.FC = () => {
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
+        pendingDownloadRequestsRef.current.add(entry.id);
+        startedDownloadRequest = true;
         showToast({
           message: "Downloading audio from Google Drive...",
           icon: "cloud-download",
@@ -403,6 +412,10 @@ const MainScreen: React.FC = () => {
         icon: "error-outline",
         type: "error",
       });
+    } finally {
+      if (startedDownloadRequest) {
+        pendingDownloadRequestsRef.current.delete(entry.id);
+      }
     }
   };
 
