@@ -61,8 +61,21 @@ export const initDatabase = async (
     if (!hasWaveformCol) {
       await db.execAsync(`ALTER TABLE entries ADD COLUMN waveform_data TEXT;`);
     }
-  } catch {
-    // Ignore migration error if already applied or table created fresh
+  } catch (migrationError) {
+    // Only tolerate if column is present (e.g. concurrent migration race); otherwise rethrow
+    try {
+      const columns = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(entries);`,
+      );
+      const hasWaveformCol = columns.some(
+        (col) => col.name === "waveform_data",
+      );
+      if (!hasWaveformCol) {
+        throw migrationError;
+      }
+    } catch {
+      throw migrationError;
+    }
   }
 
   return db;

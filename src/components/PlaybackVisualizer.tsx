@@ -162,13 +162,15 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
             // Determine if this bar has passed the center needle
             const isPlayed =
               index < leadBarsCount + progress * audioBars.length;
+            // If heightFactor is 0 (un-sampled bar), render at 0.2 baseline height
+            const effectiveHeight = heightFactor === 0 ? 0.2 : heightFactor;
             return (
               <View
                 key={index}
                 style={[
                   styles.waveformBar,
                   {
-                    height: Math.max(6, heightFactor * 104),
+                    height: Math.max(6, effectiveHeight * 104),
                     backgroundColor: colors.waveformActive,
                     opacity: isPlayed ? 1.0 : 0.35,
                   },

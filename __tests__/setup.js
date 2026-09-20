@@ -8,6 +8,18 @@ jest.mock("expo-sqlite", () => ({
 }));
 
 jest.mock("expo-audio", () => ({
+  createAudioPlayer: jest.fn(() => ({
+    play: jest.fn(),
+    pause: jest.fn(),
+    seekTo: jest.fn(),
+    remove: jest.fn(),
+    addListener: jest.fn(),
+    currentTime: 0,
+    duration: 0,
+    playing: false,
+    isAudioSamplingSupported: false,
+    setAudioSamplingEnabled: jest.fn(),
+  })),
   useAudioPlayer: jest.fn(() => ({
     play: jest.fn(),
     pause: jest.fn(),

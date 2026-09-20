@@ -16,6 +16,21 @@ export interface MonthSection {
   dayGroups: DayGroup[];
 }
 
+export const sanitizeWaveform = (waveform: unknown): number[] | undefined => {
+  if (!Array.isArray(waveform) || waveform.length === 0) {
+    return undefined;
+  }
+  const result: number[] = [];
+  for (let i = 0; i < waveform.length; i++) {
+    const rawVal = waveform[i];
+    if (typeof rawVal !== "number" || !Number.isFinite(rawVal)) {
+      return undefined;
+    }
+    result.push(Math.max(0, Math.min(1, Number(rawVal.toFixed(2)))));
+  }
+  return result;
+};
+
 const rowToEntry = (row: JournalEntryRow): JournalEntry => {
   let parsedTags: string[] = [];
   try {
@@ -44,9 +59,7 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
   if (row.waveform_data) {
     try {
       const parsed = JSON.parse(row.waveform_data);
-      if (Array.isArray(parsed)) {
-        parsedWaveform = parsed.map((v) => Number(v));
-      }
+      parsedWaveform = sanitizeWaveform(parsed);
     } catch {
       // Ignore malformed waveform data
     }
@@ -99,8 +112,11 @@ export const entriesDao = {
     const transcriptionStatus = entry.transcription_status || "completed";
     const retryCount = entry.transcription_retry_count ?? 0;
     const nextRetryAt = entry.transcription_next_retry_at ?? null;
-    const waveformJson = entry.waveform_data
-      ? JSON.stringify(entry.waveform_data)
+    const sanitizedWaveform = entry.waveform_data
+      ? sanitizeWaveform(entry.waveform_data)
+      : undefined;
+    const waveformJson = sanitizedWaveform
+      ? JSON.stringify(sanitizedWaveform)
       : null;
     await db.runAsync(
       `INSERT INTO entries (
@@ -143,8 +159,11 @@ export const entriesDao = {
     );
     const updatedAt = entry.updated_at || Date.now();
     const transcriptionStatus = entry.transcription_status || "completed";
-    const waveformJson = entry.waveform_data
-      ? JSON.stringify(entry.waveform_data)
+    const sanitizedWaveform = entry.waveform_data
+      ? sanitizeWaveform(entry.waveform_data)
+      : undefined;
+    const waveformJson = sanitizedWaveform
+      ? JSON.stringify(sanitizedWaveform)
       : null;
     await db.runAsync(
       `UPDATE entries SET
@@ -519,7 +538,11 @@ export const entriesDao = {
 
   async updateWaveform(id: string, waveform: number[]): Promise<void> {
     const db = getDatabase();
-    const waveformJson = JSON.stringify(waveform);
+    const sanitized = sanitizeWaveform(waveform);
+    if (!sanitized) {
+      return;
+    }
+    const waveformJson = JSON.stringify(sanitized);
     await db.runAsync(`UPDATE entries SET waveform_data = ? WHERE id = ?`, [
       waveformJson,
       id,
