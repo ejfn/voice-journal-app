@@ -107,13 +107,9 @@ describe("ReviewModal", () => {
     "renders label-only status row for $name status",
     ({ expectedLabel, removedShort, forbiddenText, entry }) => {
       const tree = renderModal(entry);
-      // The local react-test-renderer declaration does not expose
-      // findAllByType; cast root to access it for test introspection.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const texts = (tree.root as any).findAllByType("Text");
-      const renderedText = texts
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((t: any) => flattenText(t.props.children))
+      const renderedText = tree.root
+        .findAll(() => true)
+        .map((node) => flattenText(node.props.children))
         .join(" ");
 
       expect(renderedText).toContain(expectedLabel);
