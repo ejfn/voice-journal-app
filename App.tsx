@@ -484,8 +484,6 @@ const MainScreen: React.FC = () => {
       updated_at: Date.now(),
     };
     await entriesDao.updateEntry(entryToSave);
-    setIsReviewVisible(false);
-    setReviewEntry(null);
     await loadData();
 
     // Trigger background upload if signed in to Google Drive

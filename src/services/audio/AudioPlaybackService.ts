@@ -1,4 +1,4 @@
-import { AudioModule, createAudioPlayer } from "expo-audio";
+import { AudioModule, createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { Platform } from "react-native";
 import { entriesDao } from "../../db/dao/entriesDao";
 import { getWaveformState, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
@@ -50,6 +50,7 @@ class AudioPlaybackService {
   private durationSec: number = 0;
   private listeners: Set<PlaybackListener> = new Set();
   private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private pausedCheckInterval: ReturnType<typeof setInterval> | null = null;
   private playerSubscription: { remove: () => void } | null = null;
   private sampleSubscription: { remove: () => void } | null = null;
   private playbackWaveformBars: number[] | null = null;
@@ -60,6 +61,7 @@ class AudioPlaybackService {
   private stopPromise: Promise<void> | null = null;
   private persistPromise: Promise<void> | null = null;
   private isCompleted: boolean = false;
+  private isAudioPlaying: boolean = false;
 
   addListener(listener: PlaybackListener): () => void {
     this.listeners.add(listener);
@@ -77,11 +79,7 @@ class AudioPlaybackService {
   }
 
   getState(): PlaybackState {
-    const isPlaying = Boolean(
-      this.currentEntryId &&
-      (this.activePlayer?.playing ||
-        (this.progressInterval && !this.activePlayer?.pause)),
-    );
+    const isPlaying = Boolean(this.currentEntryId && this.isAudioPlaying);
     return {
       isPlaying,
       currentTimeSec: this.currentTimeSec,
@@ -103,6 +101,7 @@ class AudioPlaybackService {
       if (this.activePlayer.play) {
         this.activePlayer.play();
       }
+      this.isAudioPlaying = true;
       this.startProgressTracker();
       this.notify();
       return;
@@ -111,9 +110,22 @@ class AudioPlaybackService {
     // Stop existing playback
     await this.stop();
 
+    try {
+      if (typeof setAudioModeAsync === "function") {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          interruptionMode: "doNotMix",
+          shouldPlayInBackground: true,
+        });
+      }
+    } catch {
+      // Ignore audio mode configuration error in mock environments
+    }
+
     this.currentEntryId = entryId;
     this.currentTimeSec = 0;
     this.durationSec = initialDurationSec || 0;
+    this.isAudioPlaying = true;
     this.hasMissingWaveform = false;
     this.isDirtyWaveform = false;
     this.newlySampledIndices.clear();
@@ -161,7 +173,10 @@ class AudioPlaybackService {
 
     try {
       if (typeof createAudioPlayer === "function") {
-        const player = createAudioPlayer({ uri: audioUri });
+        const player = createAudioPlayer(
+          { uri: audioUri },
+          { updateInterval: 200 },
+        );
         this.activePlayer = player as unknown as AudioPlayerInstance;
 
         // Only enable audio sampling if this clip has missing/un-sampled waveform bars
@@ -295,21 +310,47 @@ class AudioPlaybackService {
             "playbackStatusUpdate",
             (data: unknown) => {
               const status = data as AudioPlayerStatusUpdate;
+
+              if (typeof status?.duration === "number" && status.duration > 0) {
+                this.durationSec = Math.round(status.duration);
+              }
+
+              if (typeof status?.currentTime === "number") {
+                this.currentTimeSec = status.currentTime;
+              }
+
               if (
                 status?.didJustFinish ||
-                (!status?.playing &&
-                  status?.duration !== undefined &&
-                  status.duration > 0 &&
-                  status?.currentTime !== undefined &&
-                  status.currentTime >= status.duration - 0.5)
+                (status?.playing === false &&
+                  this.durationSec > 0 &&
+                  this.currentTimeSec >= this.durationSec - 0.5)
               ) {
                 this.isCompleted = true;
                 void this.stop();
+                return;
+              }
+
+              if (typeof status?.playing === "boolean") {
+                const wasPlaying = this.isAudioPlaying;
+                const nowPlaying = status.playing;
+                this.isAudioPlaying = nowPlaying;
+
+                if (nowPlaying && !wasPlaying) {
+                  // Resumed via external media controls (earbuds, bluetooth, lockscreen)
+                  this.startProgressTracker();
+                  this.notify();
+                } else if (!nowPlaying && wasPlaying) {
+                  // Paused via external media controls (earbuds, bluetooth, lockscreen)
+                  this.stopProgressTracker();
+                  void this.persistRegeneratedWaveform();
+                  this.notify();
+                }
               }
             },
           );
         }
         this.activePlayer?.play?.();
+        this.isAudioPlaying = true;
       } else {
         // Fallback for mock environments
         this.activePlayer = {
@@ -319,6 +360,7 @@ class AudioPlaybackService {
           seekTo: (_pos: number) => {},
           remove: () => {},
         };
+        this.isAudioPlaying = true;
       }
     } catch (err) {
       console.warn("Error creating audio player:", err);
@@ -329,6 +371,7 @@ class AudioPlaybackService {
   }
 
   private startProgressTracker() {
+    this.stopPausedChecker();
     this.stopProgressTracker();
     this.progressInterval = setInterval(() => {
       if (this.activePlayer?.currentTime !== undefined) {
@@ -337,10 +380,24 @@ class AudioPlaybackService {
           this.durationSec = Math.round(this.activePlayer.duration);
         }
 
+        // Direct getter check fallback in case event was delayed
+        if (
+          typeof this.activePlayer.playing === "boolean" &&
+          this.activePlayer.playing !== this.isAudioPlaying
+        ) {
+          this.isAudioPlaying = this.activePlayer.playing;
+          if (!this.isAudioPlaying) {
+            this.stopProgressTracker();
+            void this.persistRegeneratedWaveform();
+            this.notify();
+            return;
+          }
+        }
+
         // If native player stopped or reached duration
         if (
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
-          (!this.activePlayer.playing &&
+          (!this.isAudioPlaying &&
             this.currentTimeSec > 0 &&
             this.currentTimeSec >= this.durationSec - 0.5)
         ) {
@@ -364,6 +421,33 @@ class AudioPlaybackService {
     if (this.progressInterval) {
       clearInterval(this.progressInterval);
       this.progressInterval = null;
+    }
+    if (this.activePlayer && !this.isAudioPlaying) {
+      this.startPausedChecker();
+    }
+  }
+
+  private startPausedChecker() {
+    this.stopPausedChecker();
+    this.pausedCheckInterval = setInterval(() => {
+      if (
+        this.activePlayer &&
+        typeof this.activePlayer.playing === "boolean" &&
+        this.activePlayer.playing &&
+        !this.isAudioPlaying
+      ) {
+        this.isAudioPlaying = true;
+        this.stopPausedChecker();
+        this.startProgressTracker();
+        this.notify();
+      }
+    }, 250);
+  }
+
+  private stopPausedChecker() {
+    if (this.pausedCheckInterval) {
+      clearInterval(this.pausedCheckInterval);
+      this.pausedCheckInterval = null;
     }
   }
 
@@ -400,6 +484,7 @@ class AudioPlaybackService {
   }
 
   async pause(): Promise<void> {
+    this.isAudioPlaying = false;
     this.stopProgressTracker();
     if (this.activePlayer?.pause) {
       this.activePlayer.pause();
@@ -444,6 +529,7 @@ class AudioPlaybackService {
 
   private async performStop(): Promise<void> {
     this.stopProgressTracker();
+    this.stopPausedChecker();
 
     // Detach sample subscription and disable audio sampling first,
     // ensuring no late samples arrive while persistence is in-flight.
@@ -492,6 +578,7 @@ class AudioPlaybackService {
     this.activePlayer = null;
     this.currentEntryId = null;
     this.currentTimeSec = 0;
+    this.isAudioPlaying = false;
     this.playbackWaveformBars = null;
     this.hasMissingWaveform = false;
     this.isDirtyWaveform = false;

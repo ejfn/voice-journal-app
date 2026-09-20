@@ -24,10 +24,12 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
     isAudioSamplingSupported: boolean;
   };
   let sampleListener: ((data: unknown) => void) | null = null;
+  let statusListener: ((data: unknown) => void) | null = null;
 
   beforeEach(() => {
     jest.clearAllMocks();
     sampleListener = null;
+    statusListener = null;
 
     mockPlayer = {
       play: jest.fn(),
@@ -38,6 +40,9 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
         (event: string, callback: (data: unknown) => void) => {
           if (event === "audioSampleUpdate") {
             sampleListener = callback;
+          }
+          if (event === "playbackStatusUpdate") {
+            statusListener = callback;
           }
           return { remove: jest.fn() };
         },
@@ -396,5 +401,68 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
       "entry-inflight",
       expect.any(Array),
     );
+  });
+
+  it("updates isPlaying to false when external media controls (earbuds) pause playback via playbackStatusUpdate", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-earbuds",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-earbuds", "file:///test.m4a", 10);
+    expect(audioPlaybackService.getState().isPlaying).toBe(true);
+
+    const receivedStates: boolean[] = [];
+    const unsubscribe = audioPlaybackService.addListener((state) => {
+      receivedStates.push(state.isPlaying);
+    });
+
+    // Simulate earbud tap (pausing playback)
+    expect(statusListener).toBeTruthy();
+    statusListener!({
+      playing: false,
+      currentTime: 3.5,
+    });
+
+    expect(audioPlaybackService.getState().isPlaying).toBe(false);
+    expect(audioPlaybackService.getState().currentTimeSec).toBe(3.5);
+    expect(receivedStates).toContain(false);
+
+    unsubscribe();
+  });
+
+  it("updates isPlaying to true when external media controls (earbuds) resume playback via playbackStatusUpdate", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-earbuds-resume",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play(
+      "entry-earbuds-resume",
+      "file:///test.m4a",
+      10,
+    );
+    await audioPlaybackService.pause();
+    expect(audioPlaybackService.getState().isPlaying).toBe(false);
+
+    const receivedStates: boolean[] = [];
+    const unsubscribe = audioPlaybackService.addListener((state) => {
+      receivedStates.push(state.isPlaying);
+    });
+
+    // Simulate earbud tap (resuming playback)
+    expect(statusListener).toBeTruthy();
+    statusListener!({
+      playing: true,
+      currentTime: 4.0,
+    });
+
+    expect(audioPlaybackService.getState().isPlaying).toBe(true);
+    expect(audioPlaybackService.getState().currentTimeSec).toBe(4.0);
+    expect(receivedStates).toContain(true);
+
+    unsubscribe();
   });
 });
