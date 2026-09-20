@@ -159,11 +159,6 @@ const MainScreen: React.FC = () => {
         loadData();
       },
     );
-    const unsubscribeUpload = uploadQueueService.addListener((event) => {
-      if (event.status !== "uploading") {
-        loadData();
-      }
-    });
     const unsubscribeDriveTransfer = googleDriveService.addTransferListener(
       (event) => {
         if (event.status === "uploading") {
@@ -195,7 +190,6 @@ const MainScreen: React.FC = () => {
     return () => {
       unsubscribePlayback();
       unsubscribeTranscription();
-      unsubscribeUpload();
       unsubscribeDriveTransfer();
       unsubscribeSmartSync();
     };
