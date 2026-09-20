@@ -46,7 +46,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onClose,
   onRetryTranscription,
 }) => {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { showToast } = useToast();
 
   const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(entry);
@@ -245,17 +245,31 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Review Entry
           </Text>
-          <TouchableOpacity
-            onPress={handleSaveAndClose}
-            style={[
-              styles.saveHeaderButton,
-              { backgroundColor: colors.primary },
-            ]}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Save Changes"
-          >
-            <Text style={styles.saveHeaderText}>Save</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              onPress={handleDelete}
+              style={styles.headerDeleteButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Delete Entry"
+            >
+              <MaterialIcons
+                name="delete-outline"
+                size={22}
+                color={colors.danger}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleSaveAndClose}
+              style={[
+                styles.saveHeaderButton,
+                { backgroundColor: colors.primary },
+              ]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Save Changes"
+            >
+              <Text style={styles.saveHeaderText}>Save</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView
@@ -577,50 +591,23 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             </ScrollView>
           </View>
 
-          {/* Bottom Actions: Cancel & Delete aligned together */}
-          <View style={styles.bottomActions}>
-            <TouchableOpacity
-              style={[
-                styles.cancelButton,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                },
-              ]}
-              onPress={handleClose}
-              activeOpacity={0.7}
-              accessibilityLabel="Cancel editing"
-            >
-              <Text style={[styles.cancelButtonText, { color: colors.text }]}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.deleteButton,
-                {
-                  borderColor: colors.danger,
-                  backgroundColor: isDark
-                    ? "rgba(239, 68, 68, 0.12)"
-                    : "#FEF2F2",
-                },
-              ]}
-              onPress={handleDelete}
-              activeOpacity={0.7}
-              accessibilityLabel="Delete entry"
-            >
-              <MaterialIcons
-                name="delete-outline"
-                size={18}
-                color={colors.danger}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.deleteText, { color: colors.danger }]}>
-                Delete Entry
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* Subtle bottom delete action */}
+          <TouchableOpacity
+            style={styles.deleteLinkContainer}
+            onPress={handleDelete}
+            activeOpacity={0.6}
+            accessibilityLabel="Delete entry"
+          >
+            <MaterialIcons
+              name="delete-outline"
+              size={16}
+              color={colors.danger}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.deleteLinkText, { color: colors.danger }]}>
+              Delete Entry
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
@@ -654,6 +641,17 @@ const styles = StyleSheet.create({
   closeIcon: {
     fontSize: 18,
     fontWeight: "600",
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  headerDeleteButton: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
   saveHeaderButton: {
     paddingHorizontal: 16,
@@ -813,34 +811,16 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "600",
   },
-  bottomActions: {
-    marginTop: 24,
+  deleteLinkContainer: {
     flexDirection: "row",
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    borderWidth: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 28,
+    marginBottom: 12,
+    paddingVertical: 8,
   },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  deleteButton: {
-    flex: 1,
-    flexDirection: "row",
-    borderWidth: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deleteText: {
-    fontSize: 14,
+  deleteLinkText: {
+    fontSize: 13.5,
     fontWeight: "600",
   },
   statusBarContainer: {
