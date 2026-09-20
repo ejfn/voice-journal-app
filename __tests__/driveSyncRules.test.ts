@@ -125,6 +125,9 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     await entriesDao.insertEntry(entry);
 
     const createRequests: string[] = [];
+    const lookupRequests: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
     global.fetch = jest.fn(
       async (url: RequestInfo | URL, init?: RequestInit) => {
         const urlStr = url.toString();
@@ -135,6 +138,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
           });
         }
         if (query.includes("name = 'entry-retry.m4a'")) {
+          lookupRequests.push(urlStr);
           return new Response(
             JSON.stringify({ files: [{ id: "existing-audio-id" }] }),
             { status: 200 },
@@ -161,11 +165,92 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       raceDetected: false,
     });
     expect(createRequests).toEqual([]);
+    expect(lookupRequests[0]).toContain("orderBy=createdTime,id");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockUpload).toHaveBeenCalledWith(
       expect.stringContaining("existing-audio-id"),
       expect.any(Object),
     );
+  });
+
+  it("reuses an existing cloud audio file when the local file is missing", async () => {
+    const entry: JournalEntry = {
+      id: "entry-cloud-only",
+      title: "Cloud Only",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 0,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    const createRequests: string[] = [];
+    const sidecarBodies: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const query = decodeURIComponent(urlStr);
+        if (query.includes("application/vnd.google-apps.folder")) {
+          return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-cloud-only.m4a'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-audio-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (query.includes("name = 'entry-cloud-only.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (
+          init?.method === "PATCH" &&
+          urlStr.includes(
+            "/upload/drive/v3/files/existing-sidecar-id?uploadType=media",
+          )
+        ) {
+          sidecarBodies.push(String(init.body));
+          return new Response(JSON.stringify({ id: "existing-sidecar-id" }), {
+            status: 200,
+          });
+        }
+        if (init?.method === "POST") {
+          createRequests.push(urlStr);
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const result = await driveService.uploadEntry(entry);
+
+    expect(result).toEqual({
+      audioFileId: "existing-audio-id",
+      sidecarFileId: "existing-sidecar-id",
+      raceDetected: false,
+    });
+    expect(createRequests).toEqual([]);
+    expect(sidecarBodies[0]).toContain(
+      '"drive_audio_file_id": "existing-audio-id"',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).not.toHaveBeenCalled();
   });
 
   it("shares concurrent month folder resolution", async () => {
@@ -185,7 +270,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
 
     const [first, second] = await Promise.all([
       driveService.resolveMonthFolder(2026, 9, "token"),
-      driveService.resolveMonthFolder(2026, 9, "token"),
+      driveService.resolveMonthFolder("2026", "09", "token"),
     ]);
 
     expect(first).toBe("folder-09");

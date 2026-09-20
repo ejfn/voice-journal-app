@@ -177,13 +177,19 @@ export class GoogleDriveService {
     month: number | string,
     token: string,
   ): Promise<string> {
-const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
+    const normalizedYear = String(year);
+    const normalizedMonth = String(month).padStart(2, "0");
+    const cacheKey = `${normalizedYear}:${normalizedMonth}`;
     const pendingRequest = this.monthFolderRequests.get(cacheKey);
     if (pendingRequest) {
       return pendingRequest;
     }
 
-    const request = this.resolveMonthFolderUncached(year, month, token);
+    const request = this.resolveMonthFolderUncached(
+      normalizedYear,
+      normalizedMonth,
+      token,
+    );
     this.monthFolderRequests.set(cacheKey, request);
     try {
       return await request;
@@ -213,7 +219,8 @@ const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
     const query = encodeURIComponent(
       `name = '${escapedName}' and '${parentId}' in parents and mimeType = '${mimeType}' and trashed = false`,
     );
-      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&orderBy=createdTime,id&pageSize=1`
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&orderBy=createdTime,id&pageSize=1`,
       { headers: { Authorization: "Bearer " + token } },
     );
     if (!response.ok) {
@@ -253,20 +260,21 @@ const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
       let audioFileId = entry.drive_audio_file_id;
       const localAudioUri =
         entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
+      const audioFile = localAudioUri ? new File(localAudioUri) : null;
+      const localAudioExists = audioFile?.exists ?? false;
+      let reusedAudioFile = false;
 
-      if (localAudioUri) {
-        const audioFile = new File(localAudioUri);
-        let reusedAudioFile = false;
+      if (!audioFileId) {
+        audioFileId = await this.findFileId(
+          `${entry.id}.m4a`,
+          monthFolderId,
+          token,
+          "audio/mp4",
+        );
+        reusedAudioFile = Boolean(audioFileId);
+      }
+      if (audioFile && localAudioExists) {
         if (!audioFileId) {
-          audioFileId = await this.findFileId(
-            `${entry.id}.m4a`,
-            monthFolderId,
-            token,
-            "audio/mp4",
-          );
-          reusedAudioFile = Boolean(audioFileId);
-        }
-        if (audioFile.exists && !audioFileId) {
           // Create audio file placeholder with metadata in Drive
           const createAudioRes = await fetch(
             "https://www.googleapis.com/drive/v3/files",
@@ -302,7 +310,7 @@ const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
             );
           }
         }
-        if (audioFile.exists && audioFileId && reusedAudioFile) {
+        if (audioFileId && reusedAudioFile) {
           await audioFile.upload(
             `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
             {
