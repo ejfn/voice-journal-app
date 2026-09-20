@@ -116,6 +116,7 @@ export class GoogleDriveService {
   async signOut(): Promise<void> {
     this.driveCacheSessionVersion += 1;
     this.monthFolderRequests.clear();
+    this.uploadRequests.clear();
     this.folderIdCache.clear();
     try {
       await GoogleSignin.signOut();
@@ -313,17 +314,20 @@ export class GoogleDriveService {
     sidecarFileId: string;
     raceDetected?: boolean;
   }> {
-    const pendingRequest = this.uploadRequests.get(entry.id);
+    const requestKey = `${this.driveCacheSessionVersion}:${entry.id}`;
+    const pendingRequest = this.uploadRequests.get(requestKey);
     if (pendingRequest) {
       return pendingRequest;
     }
 
     const request = this.uploadEntryInternal(entry);
-    this.uploadRequests.set(entry.id, request);
+    this.uploadRequests.set(requestKey, request);
     try {
       return await request;
     } finally {
-      this.uploadRequests.delete(entry.id);
+      if (this.uploadRequests.get(requestKey) === request) {
+        this.uploadRequests.delete(requestKey);
+      }
     }
   }
 
