@@ -245,31 +245,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Review Entry
           </Text>
-          <View style={styles.headerRight}>
-            <TouchableOpacity
-              onPress={handleDelete}
-              style={styles.headerDeleteButton}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Delete Entry"
-            >
-              <MaterialIcons
-                name="delete-outline"
-                size={22}
-                color={colors.danger}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleSaveAndClose}
-              style={[
-                styles.saveHeaderButton,
-                { backgroundColor: colors.primary },
-              ]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Save Changes"
-            >
-              <Text style={styles.saveHeaderText}>Save</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            onPress={handleSaveAndClose}
+            style={[
+              styles.saveHeaderButton,
+              { backgroundColor: colors.primary },
+            ]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Save Changes"
+          >
+            <Text style={styles.saveHeaderText}>Save</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -641,17 +627,6 @@ const styles = StyleSheet.create({
   closeIcon: {
     fontSize: 18,
     fontWeight: "600",
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  headerDeleteButton: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
   },
   saveHeaderButton: {
     paddingHorizontal: 16,
