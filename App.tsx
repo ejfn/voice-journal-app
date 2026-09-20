@@ -73,7 +73,51 @@ const MainScreen: React.FC = () => {
   const [uploadingEntryIds, setUploadingEntryIds] = useState<Set<string>>(
     new Set(),
   );
+  const uploadingTransferCountRef = useRef<Map<string, number>>(new Map());
+  const downloadingTransferCountRef = useRef<Map<string, number>>(new Map());
   const pendingDownloadRequestsRef = useRef<Set<string>>(new Set());
+
+  const incrementUploadingEntry = useCallback((entryId: string) => {
+    const currentCount = uploadingTransferCountRef.current.get(entryId) ?? 0;
+    uploadingTransferCountRef.current.set(entryId, currentCount + 1);
+    setUploadingEntryIds((prev) => new Set(prev).add(entryId));
+  }, []);
+
+  const decrementUploadingEntry = useCallback((entryId: string) => {
+    const currentCount = uploadingTransferCountRef.current.get(entryId) ?? 0;
+    const nextCount = currentCount - 1;
+    if (nextCount <= 0) {
+      uploadingTransferCountRef.current.delete(entryId);
+      setUploadingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entryId);
+        return next;
+      });
+      return;
+    }
+    uploadingTransferCountRef.current.set(entryId, nextCount);
+  }, []);
+
+  const incrementDownloadingEntry = useCallback((entryId: string) => {
+    const currentCount = downloadingTransferCountRef.current.get(entryId) ?? 0;
+    downloadingTransferCountRef.current.set(entryId, currentCount + 1);
+    setDownloadingEntryIds((prev) => new Set(prev).add(entryId));
+  }, []);
+
+  const decrementDownloadingEntry = useCallback((entryId: string) => {
+    const currentCount = downloadingTransferCountRef.current.get(entryId) ?? 0;
+    const nextCount = currentCount - 1;
+    if (nextCount <= 0) {
+      downloadingTransferCountRef.current.delete(entryId);
+      setDownloadingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entryId);
+        return next;
+      });
+      return;
+    }
+    downloadingTransferCountRef.current.set(entryId, nextCount);
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -120,42 +164,30 @@ const MainScreen: React.FC = () => {
         event.status === "uploading" &&
         uploadQueueService.isEntryUploading(event.entryId)
       ) {
-        setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
+        incrementUploadingEntry(event.entryId);
         return;
       }
 
       if (event.status !== "uploading") {
-        setUploadingEntryIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.entryId);
-          return next;
-        });
+        decrementUploadingEntry(event.entryId);
         loadData();
       }
     });
     const unsubscribeDriveTransfer = googleDriveService.addTransferListener(
       (event) => {
         if (event.status === "uploading") {
-          setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
+          incrementUploadingEntry(event.entryId);
           return;
         }
         if (event.status === "downloading") {
-          setDownloadingEntryIds((prev) => new Set(prev).add(event.entryId));
+          incrementDownloadingEntry(event.entryId);
           return;
         }
 
         if (event.direction === "upload") {
-          setUploadingEntryIds((prev) => {
-            const next = new Set(prev);
-            next.delete(event.entryId);
-            return next;
-          });
+          decrementUploadingEntry(event.entryId);
         } else {
-          setDownloadingEntryIds((prev) => {
-            const next = new Set(prev);
-            next.delete(event.entryId);
-            return next;
-          });
+          decrementDownloadingEntry(event.entryId);
         }
 
         if (event.status === "synced" || event.status === "uploaded") {
@@ -178,7 +210,13 @@ const MainScreen: React.FC = () => {
       unsubscribeDriveTransfer();
       unsubscribeSmartSync();
     };
-  }, [loadData]);
+  }, [
+    decrementDownloadingEntry,
+    decrementUploadingEntry,
+    incrementDownloadingEntry,
+    incrementUploadingEntry,
+    loadData,
+  ]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
