@@ -2,7 +2,7 @@ import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { Directory, File } from "expo-file-system";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
-import { resampleWaveform } from "../../utils/waveform";
+import { resampleWaveform, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
 import { audioPlaybackService } from "./AudioPlaybackService";
 
 export interface RecordingStatus {
@@ -275,7 +275,7 @@ class AudioRecordingService {
 
     const waveformData =
       this.recordedSamples.length > 0
-        ? resampleWaveform(this.recordedSamples, 75)
+        ? resampleWaveform(this.recordedSamples, WAVEFORM_BAR_COUNT)
         : undefined;
 
     this.activeRecorder = null;

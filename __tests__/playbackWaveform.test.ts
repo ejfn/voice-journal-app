@@ -1,6 +1,7 @@
 import { audioPlaybackService } from "../src/services/audio/AudioPlaybackService";
 import { entriesDao } from "../src/db/dao/entriesDao";
 import { createAudioPlayer } from "expo-audio";
+import { WAVEFORM_BAR_COUNT } from "../src/utils/waveform";
 
 jest.mock("../src/db/dao/entriesDao", () => ({
   entriesDao: {
@@ -71,13 +72,13 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
     );
 
     const state = audioPlaybackService.getState();
-    expect(state.waveformBars).toHaveLength(75);
+    expect(state.waveformBars).toHaveLength(WAVEFORM_BAR_COUNT);
     expect(state.waveformBars?.every((v) => v === 0)).toBe(true);
   });
 
   it("recognizes partially generated waveform, keeps populated bars, and samples missing gap", async () => {
     // Waveform where first 20 bars are populated, rest are 0
-    const partialWaveform = new Array(75).fill(0);
+    const partialWaveform = new Array(WAVEFORM_BAR_COUNT).fill(0);
     for (let i = 0; i < 20; i++) {
       partialWaveform[i] = 0.5;
     }
@@ -108,8 +109,10 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
   });
 
   it("skips audio sampling and database saving if clip is already fully generated", async () => {
-    // Complete waveform with 75 real amplitude values (>= 0.08)
-    const completeWaveform = new Array(75).fill(0.45);
+    // Complete authentic waveform with dynamic amplitude values
+    const completeWaveform = new Array(WAVEFORM_BAR_COUNT)
+      .fill(0)
+      .map((_, i) => 0.2 + (i % 10) * 0.05);
 
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
       id: "entry-complete",
@@ -136,9 +139,9 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
   });
 
   it("detects when waveform becomes completely filled during playback and stops sampling", async () => {
-    // 74 bars filled, only index 74 remaining (0)
-    const almostDone = new Array(75).fill(0.5);
-    almostDone[74] = 0;
+    // WAVEFORM_BAR_COUNT - 1 bars filled, only last index remaining (0)
+    const almostDone = new Array(WAVEFORM_BAR_COUNT).fill(0.5);
+    almostDone[WAVEFORM_BAR_COUNT - 1] = 0;
 
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
       id: "entry-almost-done",
@@ -154,7 +157,7 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
 
     expect(mockPlayer.setAudioSamplingEnabled).toHaveBeenCalledWith(true);
 
-    // Now audio samples at timestamp 9.9s (index 74)
+    // Now audio samples at timestamp 9.9s (last index)
     expect(sampleListener).toBeTruthy();
     sampleListener!({
       timestamp: 9.9,
@@ -175,7 +178,7 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
   });
 
   it("jumps gaps when scrubbing/seeking and captures new positions correctly", async () => {
-    const emptyWaveform = new Array(75).fill(0);
+    const emptyWaveform = new Array(WAVEFORM_BAR_COUNT).fill(0);
 
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
       id: "entry-scrub",
@@ -212,8 +215,8 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
   });
 
   it("does not re-save when playing an already-sampled section of a partially generated clip", async () => {
-    // Waveform where bars 0..10 are already sampled (> 0) and bars 11..74 are 0
-    const partialWaveform = new Array(75).fill(0);
+    // Waveform where bars 0..10 are already sampled (> 0) and rest are 0
+    const partialWaveform = new Array(WAVEFORM_BAR_COUNT).fill(0);
     for (let i = 0; i < 10; i++) {
       partialWaveform[i] = 0.6;
     }
@@ -244,5 +247,154 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
     // Stop playback: still no write
     await audioPlaybackService.stop();
     expect(entriesDao.updateWaveform).not.toHaveBeenCalled();
+  });
+
+  it("normalizes Android milliseconds timestamps to bar indices correctly", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-android-ts",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-android-ts", "file:///test.m4a", 10);
+
+    // Android ExoPlayer emits timestamp in milliseconds (5000 ms for 5.0s)
+    sampleListener!({
+      timestamp: 5000,
+      channels: [{ frames: [0.5, 0.6] }],
+    });
+
+    const state = audioPlaybackService.getState();
+    // 5.0s / 10s * 75 = bar 37
+    expect(state.waveformBars?.[37]).toBeGreaterThan(0.08);
+  });
+
+  it("normalizes iOS 0.0 timestamp by falling back to activePlayer.currentTime", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-ios-ts",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-ios-ts", "file:///test.m4a", 10);
+    mockPlayer.currentTime = 4.0; // 4.0s / 10s * 75 = bar 30
+
+    // iOS AudioTapProcessor emits 0.0 timestamp
+    sampleListener!({
+      timestamp: 0.0,
+      channels: [{ frames: [0.4, 0.5] }],
+    });
+
+    const state = audioPlaybackService.getState();
+    expect(state.waveformBars?.[30]).toBeGreaterThan(0.08);
+  });
+
+  it("persists authentic sampled bars without corrupting gaps with synthetic data", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-completion",
+      waveform_data: null,
+      duration_sec: 5,
+    });
+
+    const notifiedStates: unknown[] = [];
+    const unsubscribe = audioPlaybackService.addListener((s) => {
+      notifiedStates.push(s);
+    });
+
+    await audioPlaybackService.play("entry-completion", "file:///test.m4a", 5);
+
+    // Simulate native sampling emitted 1 sample at 1.0s (bar 15)
+    sampleListener!({
+      timestamp: 1.0,
+      channels: [{ frames: [0.5] }],
+    });
+
+    await audioPlaybackService.stop();
+    unsubscribe();
+
+    // Verify sampled bar is populated, while un-sampled gaps remain 0 (half state)
+    expect(entriesDao.updateWaveform).toHaveBeenCalledWith(
+      "entry-completion",
+      expect.any(Array),
+    );
+    const savedBars = (entriesDao.updateWaveform as jest.Mock).mock.calls[0][1];
+    expect(savedBars).toHaveLength(WAVEFORM_BAR_COUNT);
+    expect(savedBars[15]).toBeGreaterThan(0.08);
+    expect(savedBars[0]).toBe(0); // Un-sampled gap preserved as 0 (not synthetic)
+
+    // Verify stop notification delivered bars and entryId
+    const lastState = notifiedStates[notifiedStates.length - 1] as {
+      isPlaying: boolean;
+      entryId: string;
+      waveformBars: number[];
+    };
+    expect(lastState.isPlaying).toBe(false);
+    expect(lastState.entryId).toBe("entry-completion");
+    expect(lastState.waveformBars).toHaveLength(WAVEFORM_BAR_COUNT);
+    expect(lastState.waveformBars[15]).toBeGreaterThan(0.08);
+  });
+
+  it("serializes concurrent stop calls with the same in-flight promise", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-concurrent",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-concurrent", "file:///test.m4a", 10);
+
+    const stop1 = audioPlaybackService.stop();
+    const stop2 = audioPlaybackService.stop();
+
+    await Promise.all([stop1, stop2]);
+
+    expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it("awaits in-flight persistence request before stop completes cleanup", async () => {
+    let resolvePersistence: () => void = () => {};
+    const persistencePromise = new Promise<void>((res) => {
+      resolvePersistence = res;
+    });
+
+    (entriesDao.updateWaveform as jest.Mock).mockReturnValue(
+      persistencePromise,
+    );
+
+    const almostDone = new Array(WAVEFORM_BAR_COUNT).fill(0.5);
+    almostDone[WAVEFORM_BAR_COUNT - 1] = 0;
+
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-inflight",
+      waveform_data: almostDone,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-inflight", "file:///test.m4a", 10);
+
+    // Sample final bar to trigger completion write
+    sampleListener!({
+      timestamp: 9.9,
+      channels: [{ frames: [0.3, 0.3] }],
+    });
+
+    // Immediate stop while persistence is still in-flight
+    let stopResolved = false;
+    const stopPromise = audioPlaybackService.stop().then(() => {
+      stopResolved = true;
+    });
+
+    // stop() must NOT resolve until the in-flight database write completes
+    expect(stopResolved).toBe(false);
+
+    // Resolve the in-flight persistence
+    resolvePersistence();
+    await stopPromise;
+
+    expect(stopResolved).toBe(true);
+    expect(entriesDao.updateWaveform).toHaveBeenCalledWith(
+      "entry-inflight",
+      expect.any(Array),
+    );
   });
 });

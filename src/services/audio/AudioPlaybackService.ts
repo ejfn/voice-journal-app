@@ -1,5 +1,7 @@
-import { createAudioPlayer } from "expo-audio";
+import { AudioModule, createAudioPlayer } from "expo-audio";
+import { Platform } from "react-native";
 import { entriesDao } from "../../db/dao/entriesDao";
+import { getWaveformState, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -25,6 +27,8 @@ export interface AudioSampleData {
 
 interface AudioPlayerInstance {
   playing?: boolean;
+  status?: { isPlaying?: boolean };
+  currentStatus?: { playing?: boolean };
   currentTime?: number;
   duration?: number;
   isAudioSamplingSupported?: boolean;
@@ -35,23 +39,27 @@ interface AudioPlayerInstance {
   remove?: () => void;
   addListener?: (
     event: string,
-    listener: (data: AudioPlayerStatusUpdate | AudioSampleData) => void,
+    listener: (data: unknown) => void,
   ) => { remove: () => void };
 }
 
 class AudioPlaybackService {
   private activePlayer: AudioPlayerInstance | null = null;
-  private playerSubscription: { remove: () => void } | null = null;
-  private sampleSubscription: { remove: () => void } | null = null;
   private currentEntryId: string | null = null;
-  private listeners: Set<PlaybackListener> = new Set();
-  private progressInterval: NodeJS.Timeout | null = null;
   private currentTimeSec: number = 0;
   private durationSec: number = 0;
+  private listeners: Set<PlaybackListener> = new Set();
+  private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private playerSubscription: { remove: () => void } | null = null;
+  private sampleSubscription: { remove: () => void } | null = null;
   private playbackWaveformBars: number[] | null = null;
   private hasMissingWaveform: boolean = false;
   private isDirtyWaveform: boolean = false;
   private newlySampledIndices: Set<number> = new Set();
+  private receivedSampleCount: number = 0;
+  private stopPromise: Promise<void> | null = null;
+  private persistPromise: Promise<void> | null = null;
+  private isCompleted: boolean = false;
 
   addListener(listener: PlaybackListener): () => void {
     this.listeners.add(listener);
@@ -109,34 +117,46 @@ class AudioPlaybackService {
     this.hasMissingWaveform = false;
     this.isDirtyWaveform = false;
     this.newlySampledIndices.clear();
+    this.receivedSampleCount = 0;
+    this.isCompleted = false;
 
-    // Check if entry is missing waveform data or partially generated:
-    // - Missing (no array at all): rawWaveform is empty or not length 75
-    // - Legacy dummy: all 75 bars are 0.2
-    // - Partially generated (half-regened): some bars are 0 (un-sampled placeholder)
-    // - Fully generated: length 75, all bars have real amplitudes (no 0 values and not legacy dummy)
+    // Check if entry waveform is missing, half, or done:
+    // - "missing": null/undefined, wrong length, all 0s, all 0.2, flat uniform, or synthetic fallback envelope
+    // - "half": partially sampled (some bars are 0 un-sampled placeholders)
+    // - "done": 75 authentic, non-zero, dynamic audio amplitudes
     try {
       const existing = await entriesDao.getEntryById(entryId);
       const raw = existing?.waveform_data;
-      const isMissing = !raw || raw.length !== 75;
-      const isLegacyDummy = !isMissing && raw.every((val) => val === 0.2);
-      const isPartiallyGenerated =
-        !isMissing && !isLegacyDummy && raw.some((val) => val === 0);
+      const waveformState = getWaveformState(entryId, raw);
 
-      if (isMissing || isLegacyDummy) {
+      if (waveformState === "missing") {
         this.hasMissingWaveform = true;
-        this.playbackWaveformBars = new Array(75).fill(0);
-      } else if (isPartiallyGenerated) {
+        this.playbackWaveformBars = new Array(WAVEFORM_BAR_COUNT).fill(0);
+      } else if (waveformState === "half") {
         this.hasMissingWaveform = true;
-        this.playbackWaveformBars = [...raw];
+        this.playbackWaveformBars = [...(raw as number[])];
       } else {
-        // Fully generated: skip audio sampling and skip database saves
+        // Fully generated ("done"): skip audio sampling and skip database saves
         this.hasMissingWaveform = false;
-        this.playbackWaveformBars = [...raw];
+        this.playbackWaveformBars = [...(raw as number[])];
       }
-    } catch {
+    } catch (err) {
+      console.warn("Error reading entry from DB:", err);
       this.playbackWaveformBars = null;
       this.hasMissingWaveform = false;
+    }
+
+    // If waveform is missing, ensure recording permissions on Android so setAudioSamplingEnabled doesn't silently fail
+    if (this.hasMissingWaveform && Platform.OS === "android") {
+      try {
+        if (
+          typeof AudioModule?.requestRecordingPermissionsAsync === "function"
+        ) {
+          await AudioModule.requestRecordingPermissionsAsync();
+        }
+      } catch (err) {
+        console.warn("Permission request failed:", err);
+      }
     }
 
     try {
@@ -147,14 +167,16 @@ class AudioPlaybackService {
         // Only enable audio sampling if this clip has missing/un-sampled waveform bars
         if (
           this.hasMissingWaveform &&
-          this.activePlayer.isAudioSamplingSupported
+          this.activePlayer.isAudioSamplingSupported !== false &&
+          typeof this.activePlayer.setAudioSamplingEnabled === "function"
         ) {
           try {
-            this.activePlayer.setAudioSamplingEnabled?.(true);
+            this.activePlayer.setAudioSamplingEnabled(true);
             if (this.activePlayer.addListener) {
               this.sampleSubscription = this.activePlayer.addListener(
                 "audioSampleUpdate",
                 (data: unknown) => {
+                  this.receivedSampleCount++;
                   const sample = data as AudioSampleData;
                   if (
                     !sample ||
@@ -185,8 +207,38 @@ class AudioPlaybackService {
                     this.durationSec > 0
                       ? this.durationSec
                       : initialDurationSec || 1;
-                  const targetIdx = Math.floor((sample.timestamp / dur) * 75);
-                  if (targetIdx >= 0 && targetIdx < 75) {
+
+                  // Normalize timestamp across platforms:
+                  // - Android ExoPlayer returns currentPosition in milliseconds
+                  // - iOS AudioTapProcessor hardcodes timestamp to 0.0
+                  // - Fall back to player's actual currentTimeSec
+                  let sampleTimeSec =
+                    this.activePlayer?.currentTime ?? this.currentTimeSec;
+                  if (
+                    typeof sample.timestamp === "number" &&
+                    sample.timestamp > 0
+                  ) {
+                    if (Platform.OS === "android") {
+                      sampleTimeSec = sample.timestamp / 1000;
+                    } else if (
+                      sample.timestamp > 100 &&
+                      sample.timestamp > dur * 1.5
+                    ) {
+                      sampleTimeSec = sample.timestamp / 1000;
+                    } else if (sample.timestamp <= dur) {
+                      sampleTimeSec = sample.timestamp;
+                    }
+                  }
+
+                  const targetIdx = Math.max(
+                    0,
+                    Math.min(
+                      WAVEFORM_BAR_COUNT - 1,
+                      Math.floor((sampleTimeSec / dur) * WAVEFORM_BAR_COUNT),
+                    ),
+                  );
+
+                  if (targetIdx >= 0 && targetIdx < WAVEFORM_BAR_COUNT) {
                     const currentVal = this.playbackWaveformBars[targetIdx];
                     const isUnsampled = currentVal === 0;
                     const isNewlySampled =
@@ -249,9 +301,10 @@ class AudioPlaybackService {
                   status?.duration !== undefined &&
                   status.duration > 0 &&
                   status?.currentTime !== undefined &&
-                  status.currentTime >= status.duration)
+                  status.currentTime >= status.duration - 0.5)
               ) {
-                this.stop();
+                this.isCompleted = true;
+                void this.stop();
               }
             },
           );
@@ -283,6 +336,7 @@ class AudioPlaybackService {
         if (this.activePlayer.duration) {
           this.durationSec = Math.round(this.activePlayer.duration);
         }
+
         // If native player stopped or reached duration
         if (
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
@@ -290,13 +344,15 @@ class AudioPlaybackService {
             this.currentTimeSec > 0 &&
             this.currentTimeSec >= this.durationSec - 0.5)
         ) {
-          this.stop();
+          this.isCompleted = true;
+          void this.stop();
           return;
         }
       } else {
         this.currentTimeSec += 0.25;
         if (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) {
-          this.stop();
+          this.isCompleted = true;
+          void this.stop();
           return;
         }
       }
@@ -312,24 +368,35 @@ class AudioPlaybackService {
   }
 
   private async persistRegeneratedWaveform(): Promise<void> {
+    if (this.persistPromise) {
+      try {
+        await this.persistPromise;
+      } catch {
+        // Handled in existing promise
+      }
+    }
     if (
       !this.isDirtyWaveform ||
       !this.currentEntryId ||
       !this.playbackWaveformBars ||
-      this.playbackWaveformBars.length !== 75
+      this.playbackWaveformBars.length !== WAVEFORM_BAR_COUNT
     ) {
       return;
     }
     this.isDirtyWaveform = false;
-    try {
-      await entriesDao.updateWaveform(
-        this.currentEntryId,
-        this.playbackWaveformBars,
-      );
-    } catch (err) {
-      this.isDirtyWaveform = true;
-      console.warn("Could not save regenerated waveform to database:", err);
-    }
+    const entryId = this.currentEntryId;
+    const bars = [...this.playbackWaveformBars];
+    this.persistPromise = (async () => {
+      try {
+        await entriesDao.updateWaveform(entryId, bars);
+      } catch (err) {
+        this.isDirtyWaveform = true;
+        console.warn("Could not save regenerated waveform to database:", err);
+      } finally {
+        this.persistPromise = null;
+      }
+    })();
+    await this.persistPromise;
   }
 
   async pause(): Promise<void> {
@@ -364,8 +431,22 @@ class AudioPlaybackService {
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) {
+      return this.stopPromise;
+    }
+    this.stopPromise = this.performStop();
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
+  }
+
+  private async performStop(): Promise<void> {
     this.stopProgressTracker();
-    await this.persistRegeneratedWaveform();
+
+    // Detach sample subscription and disable audio sampling first,
+    // ensuring no late samples arrive while persistence is in-flight.
     if (this.sampleSubscription) {
       try {
         this.sampleSubscription.remove();
@@ -374,6 +455,14 @@ class AudioPlaybackService {
       }
       this.sampleSubscription = null;
     }
+    try {
+      this.activePlayer?.setAudioSamplingEnabled?.(false);
+    } catch {
+      // Ignore
+    }
+
+    await this.persistRegeneratedWaveform();
+
     if (this.playerSubscription) {
       try {
         this.playerSubscription.remove();
@@ -394,6 +483,12 @@ class AudioPlaybackService {
         // Ignore cleanup errors
       }
     }
+
+    const stoppedEntryId = this.currentEntryId;
+    const finalWaveform = this.playbackWaveformBars
+      ? [...this.playbackWaveformBars]
+      : undefined;
+
     this.activePlayer = null;
     this.currentEntryId = null;
     this.currentTimeSec = 0;
@@ -401,7 +496,17 @@ class AudioPlaybackService {
     this.hasMissingWaveform = false;
     this.isDirtyWaveform = false;
     this.newlySampledIndices.clear();
-    this.notify();
+    this.receivedSampleCount = 0;
+    this.isCompleted = false;
+
+    const state: PlaybackState = {
+      isPlaying: false,
+      currentTimeSec: 0,
+      durationSec: this.durationSec,
+      entryId: stoppedEntryId,
+      waveformBars: finalWaveform,
+    };
+    this.listeners.forEach((l) => l(state));
   }
 }
 

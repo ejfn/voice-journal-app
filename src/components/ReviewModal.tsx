@@ -28,6 +28,7 @@ import {
   computeStorageStatus,
   getStorageBadgeConfig,
 } from "../utils/storageStatus";
+import { WAVEFORM_BAR_COUNT } from "../utils/waveform";
 import { useToast } from "./common/Toast";
 
 interface ReviewModalProps {
@@ -123,10 +124,29 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     const unsubscribe = audioPlaybackService.addListener((state) => {
       if (entry && state.entryId === entry.id) {
         setPlaybackState(state);
-        if (state.waveformBars && state.waveformBars.length === 75) {
+        if (
+          state.waveformBars &&
+          state.waveformBars.length === WAVEFORM_BAR_COUNT
+        ) {
           setCurrentEntry((prev) =>
             prev ? { ...prev, waveform_data: state.waveformBars } : prev,
           );
+        }
+        if (!state.isPlaying) {
+          void entriesDao
+            .getEntryById(entry.id)
+            .then((refreshed) => {
+              if (refreshed?.waveform_data) {
+                setCurrentEntry((prev) =>
+                  prev
+                    ? { ...prev, waveform_data: refreshed.waveform_data }
+                    : refreshed,
+                );
+              }
+            })
+            .catch(() => {
+              // Ignore refresh error
+            });
         }
       } else {
         setPlaybackState({
@@ -232,12 +252,22 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     setTags(tags.filter((t) => t !== tagToRemove));
   };
 
-  const handleSaveAndClose = () => {
+  const handleSaveAndClose = async () => {
     const active = currentEntry || entry;
     if (!active) return;
-    audioPlaybackService.stop();
+    await audioPlaybackService.stop();
+    let latestWaveform = active.waveform_data;
+    try {
+      const refreshed = await entriesDao.getEntryById(active.id);
+      if (refreshed?.waveform_data) {
+        latestWaveform = refreshed.waveform_data;
+      }
+    } catch {
+      // Ignore
+    }
     onSave({
       ...active,
+      waveform_data: latestWaveform,
       title: title.trim() || "Untitled Voice Entry",
       summary: summary.trim(),
       transcript: transcript.trim(),
@@ -331,7 +361,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             currentTimeSec={playbackState.currentTimeSec}
             durationSec={durationSec}
             waveformData={
-              activeEntry.waveform_data || playbackState.waveformBars
+              playbackState.entryId === activeEntry.id &&
+              playbackState.waveformBars &&
+              playbackState.waveformBars.length === WAVEFORM_BAR_COUNT
+                ? playbackState.waveformBars
+                : activeEntry.waveform_data
             }
             isDownloading={isDownloadingAudio}
             onPlayPause={handlePlayPause}
