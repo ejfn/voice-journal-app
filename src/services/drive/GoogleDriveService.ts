@@ -30,9 +30,20 @@ export type DriveTransferEvent = {
 
 export type DriveTransferListener = (event: DriveTransferEvent) => void;
 
+type MonthFolderRequest = {
+  sessionVersion: number;
+  request: Promise<string>;
+};
+
+class DriveSessionChangedError extends Error {
+  constructor() {
+    super("Google Drive session changed during operation");
+  }
+}
+
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
-  private monthFolderRequests: Map<string, Promise<string>> = new Map();
+  private monthFolderRequests: Map<string, MonthFolderRequest> = new Map();
   private driveCacheSessionVersion: number = 0;
   private uploadRequests: Map<
     string,
@@ -59,6 +70,12 @@ export class GoogleDriveService {
       } catch (err) {
         console.warn("Drive transfer listener error:", err);
       }
+    }
+  }
+
+  private assertCurrentSession(sessionVersion: number): void {
+    if (this.driveCacheSessionVersion !== sessionVersion) {
+      throw new DriveSessionChangedError();
     }
   }
 
@@ -115,7 +132,6 @@ export class GoogleDriveService {
 
   async signOut(): Promise<void> {
     this.driveCacheSessionVersion += 1;
-    this.monthFolderRequests.clear();
     this.uploadRequests.clear();
     this.folderIdCache.clear();
     try {
@@ -132,8 +148,9 @@ export class GoogleDriveService {
     name: string,
     parentId: string = "root",
     token: string,
+    sessionVersion: number = this.driveCacheSessionVersion,
   ): Promise<string> {
-    const sessionVersion = this.driveCacheSessionVersion;
+    this.assertCurrentSession(sessionVersion);
     const cacheKey = `${parentId}:${name}`;
     if (this.folderIdCache.has(cacheKey)) {
       return this.folderIdCache.get(cacheKey)!;
@@ -148,18 +165,19 @@ export class GoogleDriveService {
       headers: { Authorization: `Bearer ${token}` },
     });
 
+    this.assertCurrentSession(sessionVersion);
     if (searchRes.ok) {
       const data = await searchRes.json();
       if (data.files && data.files.length > 0) {
         const id = data.files[0].id;
-        if (this.driveCacheSessionVersion === sessionVersion) {
-          this.folderIdCache.set(cacheKey, id);
-        }
+        this.assertCurrentSession(sessionVersion);
+        this.folderIdCache.set(cacheKey, id);
         return id;
       }
     }
 
     // Create folder if not found
+    this.assertCurrentSession(sessionVersion);
     const createUrl = "https://www.googleapis.com/drive/v3/files";
     const createRes = await fetch(createUrl, {
       method: "POST",
@@ -180,9 +198,8 @@ export class GoogleDriveService {
     }
 
     const created = await createRes.json();
-    if (this.driveCacheSessionVersion === sessionVersion) {
-      this.folderIdCache.set(cacheKey, created.id);
-    }
+    this.assertCurrentSession(sessionVersion);
+    this.folderIdCache.set(cacheKey, created.id);
     return created.id;
   }
 
@@ -193,27 +210,37 @@ export class GoogleDriveService {
     year: number | string,
     month: number | string,
     token: string,
+    sessionVersion: number = this.driveCacheSessionVersion,
   ): Promise<string> {
-    const sessionVersion = this.driveCacheSessionVersion;
     const normalizedYear = String(year);
     const normalizedMonth = String(month).padStart(2, "0");
-    const cacheKey = `${sessionVersion}:${normalizedYear}:${normalizedMonth}`;
-    const pendingRequest = this.monthFolderRequests.get(cacheKey);
-    if (pendingRequest) {
-      return pendingRequest;
-    }
+    const cacheKey = `${normalizedYear}:${normalizedMonth}`;
 
-    const request = this.resolveMonthFolderUncached(
-      normalizedYear,
-      normalizedMonth,
-      token,
-    );
-    this.monthFolderRequests.set(cacheKey, request);
-    try {
-      return await request;
-    } finally {
-      if (this.monthFolderRequests.get(cacheKey) === request) {
-        this.monthFolderRequests.delete(cacheKey);
+    while (true) {
+      this.assertCurrentSession(sessionVersion);
+      const pendingRequest = this.monthFolderRequests.get(cacheKey);
+      if (pendingRequest) {
+        if (pendingRequest.sessionVersion === sessionVersion) {
+          return pendingRequest.request;
+        }
+        await pendingRequest.request.catch(() => undefined);
+        continue;
+      }
+
+      const request = this.resolveMonthFolderUncached(
+        normalizedYear,
+        normalizedMonth,
+        token,
+        sessionVersion,
+      );
+      const requestInfo = { sessionVersion, request };
+      this.monthFolderRequests.set(cacheKey, requestInfo);
+      try {
+        return await request;
+      } finally {
+        if (this.monthFolderRequests.get(cacheKey) === requestInfo) {
+          this.monthFolderRequests.delete(cacheKey);
+        }
       }
     }
   }
@@ -222,11 +249,22 @@ export class GoogleDriveService {
     year: number | string,
     month: number | string,
     token: string,
+    sessionVersion: number,
   ): Promise<string> {
-    const rootId = await this.getOrCreateFolder("VoiceJournal", "root", token);
-    const yearId = await this.getOrCreateFolder(String(year), rootId, token);
+    const rootId = await this.getOrCreateFolder(
+      "VoiceJournal",
+      "root",
+      token,
+      sessionVersion,
+    );
+    const yearId = await this.getOrCreateFolder(
+      String(year),
+      rootId,
+      token,
+      sessionVersion,
+    );
     const mStr = String(month).padStart(2, "0");
-    return this.getOrCreateFolder(mStr, yearId, token);
+    return this.getOrCreateFolder(mStr, yearId, token, sessionVersion);
   }
 
   private async findFileId(
@@ -314,13 +352,14 @@ export class GoogleDriveService {
     sidecarFileId: string;
     raceDetected?: boolean;
   }> {
-    const requestKey = `${this.driveCacheSessionVersion}:${entry.id}`;
+    const sessionVersion = this.driveCacheSessionVersion;
+    const requestKey = `${sessionVersion}:${entry.id}`;
     const pendingRequest = this.uploadRequests.get(requestKey);
     if (pendingRequest) {
       return pendingRequest;
     }
 
-    const request = this.uploadEntryInternal(entry);
+    const request = this.uploadEntryInternal(entry, sessionVersion);
     this.uploadRequests.set(requestKey, request);
     try {
       return await request;
@@ -331,11 +370,15 @@ export class GoogleDriveService {
     }
   }
 
-  private async uploadEntryInternal(entry: JournalEntry): Promise<{
+  private async uploadEntryInternal(
+    entry: JournalEntry,
+    sessionVersion: number,
+  ): Promise<{
     audioFileId: string | null;
     sidecarFileId: string;
     raceDetected?: boolean;
   }> {
+    this.assertCurrentSession(sessionVersion);
     // Notify only for this entry's real upload — not the broader scan/check pass
     this.notifyTransferListeners({
       entryId: entry.id,
@@ -345,11 +388,17 @@ export class GoogleDriveService {
 
     try {
       const token = await this.getAccessToken();
+      this.assertCurrentSession(sessionVersion);
       const date = new Date(entry.created_at);
       const year = date.getFullYear();
       const month = date.getMonth() + 1;
 
-      const monthFolderId = await this.resolveMonthFolder(year, month, token);
+      const monthFolderId = await this.resolveMonthFolder(
+        year,
+        month,
+        token,
+        sessionVersion,
+      );
 
       // 1. Upload Audio File first if locally available and not yet uploaded
       let audioFileId = entry.drive_audio_file_id;
@@ -513,6 +562,7 @@ export class GoogleDriveService {
 
       // Check if local entry changed while sidecar upload was in flight
       const postUploadEntry = await entriesDao.getEntryById(entry.id);
+      this.assertCurrentSession(sessionVersion);
       const postUploadUpdatedAt =
         postUploadEntry?.updated_at != null
           ? postUploadEntry.updated_at
@@ -525,12 +575,14 @@ export class GoogleDriveService {
         // Local metadata changed during upload (e.g. transcript finished or user edited notes).
         // Record Drive file IDs, but set drive_synced_at to snapshotUpdatedAt so postUploadUpdatedAt > drive_synced_at
         // ensures the entry remains flagged as unsynced in SQLite.
+        this.assertCurrentSession(sessionVersion);
         await entriesDao.updateSyncStatus(
           entry.id,
           sidecarFileId,
           audioFileId,
           snapshotUpdatedAt,
         );
+        this.assertCurrentSession(sessionVersion);
         this.notifyTransferListeners({
           entryId: entry.id,
           direction: "upload",
@@ -540,6 +592,7 @@ export class GoogleDriveService {
       }
 
       // Update entry sync status in SQLite with current timestamp
+      this.assertCurrentSession(sessionVersion);
       await entriesDao.updateSyncStatus(
         entry.id,
         sidecarFileId,
@@ -547,6 +600,7 @@ export class GoogleDriveService {
         Date.now(),
       );
 
+      this.assertCurrentSession(sessionVersion);
       this.notifyTransferListeners({
         entryId: entry.id,
         direction: "upload",
@@ -554,11 +608,13 @@ export class GoogleDriveService {
       });
       return { audioFileId, sidecarFileId, raceDetected: false };
     } catch (error) {
-      this.notifyTransferListeners({
-        entryId: entry.id,
-        direction: "upload",
-        status: "failed",
-      });
+      if (this.driveCacheSessionVersion === sessionVersion) {
+        this.notifyTransferListeners({
+          entryId: entry.id,
+          direction: "upload",
+          status: "failed",
+        });
+      }
       throw error;
     }
   }
