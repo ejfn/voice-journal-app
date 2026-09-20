@@ -18,6 +18,7 @@ import {
 interface EntryCardProps {
   entry: JournalEntry;
   isPlaying: boolean;
+  isDownloading?: boolean;
   isItemSyncing?: boolean;
   onPlayPress: () => void;
   onPress: () => void;
@@ -27,6 +28,7 @@ interface EntryCardProps {
 export const EntryCard: React.FC<EntryCardProps> = ({
   entry,
   isPlaying,
+  isDownloading,
   isItemSyncing = false,
   onPlayPress,
   onPress,
@@ -98,15 +100,26 @@ export const EntryCard: React.FC<EntryCardProps> = ({
             },
           ]}
           onPress={onPlayPress}
+          disabled={isDownloading}
           activeOpacity={0.7}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          accessibilityLabel={isPlaying ? "Pause Audio" : "Play Audio"}
+          accessibilityLabel={
+            isDownloading
+              ? "Downloading Audio"
+              : isPlaying
+                ? "Pause Audio"
+                : "Play Audio"
+          }
         >
-          <MaterialIcons
-            name={isPlaying ? "pause" : "play-arrow"}
-            size={20}
-            color={isPlaying ? "#FFFFFF" : colors.primary}
-          />
+          {isDownloading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <MaterialIcons
+              name={isPlaying ? "pause" : "play-arrow"}
+              size={20}
+              color={isPlaying ? "#FFFFFF" : colors.primary}
+            />
+          )}
         </TouchableOpacity>
       </View>
 

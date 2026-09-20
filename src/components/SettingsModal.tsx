@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
+import { uploadQueueService } from "../services/drive/UploadQueueService";
 import { geminiService } from "../services/ai/GeminiService";
 import { transcriptionQueueService } from "../services/ai/TranscriptionQueueService";
 import { useTheme } from "../theme/ThemeContext";
@@ -214,6 +215,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         icon: "cloud-done",
         type: "success",
       });
+      // Automatically queue all local entries for cloud backup upon connecting
+      uploadQueueService.enqueueAllUnsynced().catch((err) => {
+        console.warn("Upload queue error after sign in:", err);
+      });
     } catch (err) {
       showToast({
         message: (err as Error).message || "Google Sign-In failed",
@@ -249,6 +254,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const result = await googleDriveService.syncTwoWay();
       await googleDriveService.runLruEviction();
+      uploadQueueService.processQueue().catch((err) => {
+        console.warn("Upload queue error after manual sync:", err);
+      });
       await refreshStatus();
       if (onSyncCompleted) {
         onSyncCompleted();

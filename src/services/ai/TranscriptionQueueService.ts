@@ -1,8 +1,7 @@
 import { entriesDao } from "../../db/dao/entriesDao";
-import { syncQueueDao } from "../../db/dao/syncQueueDao";
 import { TranscriptionStatus } from "../../db/schema";
 import { geminiService } from "./GeminiService";
-import { googleDriveService } from "../drive/GoogleDriveService";
+import { uploadQueueService } from "../drive/UploadQueueService";
 import * as FileSystem from "expo-file-system/legacy";
 
 export type TranscriptionEvent = {
@@ -133,27 +132,8 @@ export class TranscriptionQueueService {
 
           this.notifyListeners({ entryId: entry.id, status: "completed" });
 
-          // If connected to Google Drive, upload with updated title/summary/tags
-          if (googleDriveService.getCurrentUser()) {
-            const updated = await entriesDao.getEntryById(entry.id);
-            if (updated) {
-              await syncQueueDao.enqueue({
-                entry_id: entry.id,
-                action: "ANALYZE_AND_UPLOAD",
-              });
-              googleDriveService
-                .uploadEntry(updated)
-                .then(async () => {
-                  await syncQueueDao.deleteByEntryId(entry.id);
-                })
-                .catch((uploadErr) => {
-                  console.warn(
-                    "Deferred background Drive upload after transcription:",
-                    uploadErr,
-                  );
-                });
-            }
-          }
+          // Enqueue for background Google Drive upload with updated title/summary/tags
+          uploadQueueService.enqueueUpload(entry.id, "METADATA_ONLY");
         } catch (error) {
           const errMessage = (error as Error).message || "";
           const isInvalidKey =
