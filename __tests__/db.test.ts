@@ -446,4 +446,50 @@ describe("Database & FTS5 DAO", () => {
     queued = await entriesDao.getQueuedEntries();
     expect(queued.some((e) => e.id === entryId)).toBe(false);
   });
+
+  it("records retry failure with backoff timestamp and resets on manual retry", async () => {
+    const entryId = "entry-backoff-db-test";
+    const now = 1000000;
+    await entriesDao.insertEntry({
+      id: entryId,
+      title: "Retry Entry",
+      summary: "Queued...",
+      transcript: "",
+      tags: ["retry"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/retry.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: now,
+      last_accessed_at: now,
+      transcription_status: "queued",
+    });
+
+    const nextRetryAt = now + 15000;
+    await entriesDao.recordTranscriptionFailure(
+      entryId,
+      1,
+      nextRetryAt,
+      "queued",
+    );
+
+    // When querying queued at 'now', it should NOT be returned yet (waiting for backoff)
+    let ready = await entriesDao.getQueuedEntries(now);
+    expect(ready.some((e) => e.id === entryId)).toBe(false);
+
+    // When querying queued at 'nextRetryAt', it SHOULD be returned
+    ready = await entriesDao.getQueuedEntries(nextRetryAt);
+    expect(ready.some((e) => e.id === entryId)).toBe(true);
+
+    const nextScheduled = await entriesDao.getNextScheduledRetryTime(now);
+    expect(nextScheduled).toBe(nextRetryAt);
+
+    // Reset retry on manual trigger
+    await entriesDao.resetTranscriptionRetry(entryId);
+    const resetEntry = await entriesDao.getEntryById(entryId);
+    expect(resetEntry?.transcription_retry_count).toBe(0);
+    expect(resetEntry?.transcription_next_retry_at).toBeNull();
+  });
 });

@@ -12,9 +12,27 @@ export type TranscriptionEvent = {
 
 export type TranscriptionListener = (event: TranscriptionEvent) => void;
 
+/**
+ * Graduated backoff intervals for failed transcriptions:
+ * Attempt 1: 5s
+ * Attempt 2: 15s
+ * Attempt 3: 45s
+ * Attempt 4: 2m (120s)
+ * Attempt 5: 5m (300s)
+ */
+export const BACKOFF_DELAYS_MS = [5_000, 15_000, 45_000, 120_000, 300_000];
+
+export const MAX_TRANSCRIPTION_RETRIES = BACKOFF_DELAYS_MS.length;
+
+export function getBackoffDelayMs(retryCount: number): number {
+  const index = Math.min(Math.max(0, retryCount), BACKOFF_DELAYS_MS.length - 1);
+  return BACKOFF_DELAYS_MS[index];
+}
+
 export class TranscriptionQueueService {
   private isProcessing = false;
   private listeners: Set<TranscriptionListener> = new Set();
+  private retryTimeout: ReturnType<typeof setTimeout> | null = null;
 
   addListener(listener: TranscriptionListener): () => void {
     this.listeners.add(listener);
@@ -37,6 +55,27 @@ export class TranscriptionQueueService {
     return this.isProcessing;
   }
 
+  scheduleNextRetry(targetTime: number): void {
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+      this.retryTimeout = null;
+    }
+
+    const delay = Math.max(100, targetTime - Date.now());
+    this.retryTimeout = setTimeout(() => {
+      this.processQueue().catch((err) => {
+        console.warn("Scheduled queue retry error:", err);
+      });
+    }, delay);
+  }
+
+  cancelScheduledRetry(): void {
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+      this.retryTimeout = null;
+    }
+  }
+
   async processQueue(): Promise<void> {
     if (this.isProcessing) {
       return;
@@ -45,7 +84,9 @@ export class TranscriptionQueueService {
     this.isProcessing = true;
 
     try {
-      const queuedEntries = await entriesDao.getQueuedEntries();
+      const now = Date.now();
+      const queuedEntries = await entriesDao.getQueuedEntries(now);
+
       for (const entry of queuedEntries) {
         // If entry has no local audio or file does not exist, mark failed
         if (!entry.local_audio_path) {
@@ -108,6 +149,32 @@ export class TranscriptionQueueService {
             }
           }
         } catch (error) {
+          const currentRetries = entry.transcription_retry_count ?? 0;
+          const hasMoreRetries = currentRetries < MAX_TRANSCRIPTION_RETRIES;
+
+          if (hasMoreRetries) {
+            const backoffMs = getBackoffDelayMs(currentRetries);
+            const nextRetryAt = Date.now() + backoffMs;
+
+            await entriesDao.recordTranscriptionFailure(
+              entry.id,
+              currentRetries + 1,
+              nextRetryAt,
+              "queued",
+            );
+            this.notifyListeners({ entryId: entry.id, status: "queued" });
+            this.scheduleNextRetry(nextRetryAt);
+          } else {
+            // Exceeded maximum retry attempts; mark as failed
+            await entriesDao.recordTranscriptionFailure(
+              entry.id,
+              currentRetries,
+              null,
+              "failed",
+            );
+            this.notifyListeners({ entryId: entry.id, status: "failed" });
+          }
+
           const errMessage = (error as Error).message || "";
           const isNetworkError =
             errMessage.includes("Network request failed") ||
@@ -116,15 +183,7 @@ export class TranscriptionQueueService {
             errMessage.includes("503") ||
             errMessage.includes("429");
 
-          // Keep as queued if offline/network error so it can retry later
-          const nextStatus: TranscriptionStatus = isNetworkError
-            ? "queued"
-            : "failed";
-
-          await entriesDao.updateTranscriptionStatus(entry.id, nextStatus);
-          this.notifyListeners({ entryId: entry.id, status: nextStatus });
-
-          // If network error, stop processing further items in this run
+          // Stop processing remaining items in this batch if network is unreachable
           if (isNetworkError) {
             break;
           }
@@ -132,11 +191,23 @@ export class TranscriptionQueueService {
       }
     } finally {
       this.isProcessing = false;
+
+      // Check if there are other scheduled items pending in the future
+      try {
+        const nextScheduledTime = await entriesDao.getNextScheduledRetryTime(
+          Date.now(),
+        );
+        if (nextScheduledTime) {
+          this.scheduleNextRetry(nextScheduledTime);
+        }
+      } catch {
+        // Ignore DB check error
+      }
     }
   }
 
   async retryEntry(entryId: string): Promise<void> {
-    await entriesDao.updateTranscriptionStatus(entryId, "queued");
+    await entriesDao.resetTranscriptionRetry(entryId);
     this.notifyListeners({ entryId, status: "queued" });
     this.processQueue().catch((err) => {
       console.warn("Error processing queue on retry:", err);

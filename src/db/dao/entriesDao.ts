@@ -58,6 +58,8 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
     last_accessed_at: row.last_accessed_at,
     transcription_status:
       (row.transcription_status as TranscriptionStatus) || "completed",
+    transcription_retry_count: row.transcription_retry_count ?? 0,
+    transcription_next_retry_at: row.transcription_next_retry_at ?? null,
   };
 };
 
@@ -80,13 +82,15 @@ export const entriesDao = {
     );
     const updatedAt = entry.updated_at || entry.created_at;
     const transcriptionStatus = entry.transcription_status || "completed";
+    const retryCount = entry.transcription_retry_count ?? 0;
+    const nextRetryAt = entry.transcription_next_retry_at ?? null;
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
         is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
-        transcription_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        transcription_status, transcription_retry_count, transcription_next_retry_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -104,6 +108,8 @@ export const entriesDao = {
         entry.drive_synced_at ?? null,
         entry.last_accessed_at || entry.created_at,
         transcriptionStatus,
+        retryCount,
+        nextRetryAt,
       ],
     );
   },
@@ -185,12 +191,60 @@ export const entriesDao = {
     );
   },
 
-  async getQueuedEntries(): Promise<JournalEntry[]> {
+  async getQueuedEntries(now: number = Date.now()): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
-      `SELECT * FROM entries WHERE transcription_status IN ('queued', 'processing') ORDER BY created_at ASC`,
+      `SELECT * FROM entries
+       WHERE (transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
+          OR transcription_status = 'processing'
+       ORDER BY created_at ASC`,
+      [now],
     );
     return rows.map(rowToEntry);
+  },
+
+  async recordTranscriptionFailure(
+    id: string,
+    retryCount: number,
+    nextRetryAt: number | null,
+    status: TranscriptionStatus = "queued",
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE entries SET
+        transcription_status = ?,
+        transcription_retry_count = ?,
+        transcription_next_retry_at = ?,
+        updated_at = ?
+       WHERE id = ?`,
+      [status, retryCount, nextRetryAt, Date.now(), id],
+    );
+  },
+
+  async resetTranscriptionRetry(id: string): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE entries SET
+        transcription_status = 'queued',
+        transcription_retry_count = 0,
+        transcription_next_retry_at = NULL,
+        updated_at = ?
+       WHERE id = ?`,
+      [Date.now(), id],
+    );
+  },
+
+  async getNextScheduledRetryTime(
+    now: number = Date.now(),
+  ): Promise<number | null> {
+    const db = getDatabase();
+    const row = await db.getFirstAsync<{ nextTime: number | null }>(
+      `SELECT MIN(transcription_next_retry_at) as nextTime
+       FROM entries
+       WHERE transcription_status = 'queued' AND transcription_next_retry_at > ?`,
+      [now],
+    );
+    return row?.nextTime ?? null;
   },
 
   async deleteEntry(id: string): Promise<JournalEntry | null> {
