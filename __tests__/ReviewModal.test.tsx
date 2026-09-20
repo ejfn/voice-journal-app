@@ -62,14 +62,14 @@ describe("ReviewModal", () => {
         updated_at: 1500,
       } as JournalEntry,
       expectedLabel: "Synced",
-      expectedShort: "Backed up",
+      removedShort: "Backed up",
       forbiddenText: "Safely backed up in Google Drive",
     },
     {
       name: "local-only",
       entry: baseEntry,
       expectedLabel: "On device",
-      expectedShort: "Pending backup",
+      removedShort: "Pending backup",
       forbiddenText: "Stored on device only",
     },
     {
@@ -83,12 +83,12 @@ describe("ReviewModal", () => {
         local_audio_path: null,
       } as JournalEntry,
       expectedLabel: "Cloud only",
-      expectedShort: "Tap to download",
+      removedShort: "Tap to download",
       forbiddenText: "Tap to stream or download",
     },
   ])(
-    "renders concise label and short description for $name status",
-    ({ expectedLabel, expectedShort, forbiddenText, entry }) => {
+    "renders label-only status row for $name status",
+    ({ expectedLabel, removedShort, forbiddenText, entry }) => {
       const tree = renderModal(entry);
       // The local react-test-renderer declaration does not expose
       // findAllByType; cast root to access it for test introspection.
@@ -100,7 +100,7 @@ describe("ReviewModal", () => {
         .join(" ");
 
       expect(renderedText).toContain(expectedLabel);
-      expect(renderedText).toContain(expectedShort);
+      expect(renderedText).not.toContain(removedShort);
       expect(renderedText).not.toContain(forbiddenText);
     },
   );
