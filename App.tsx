@@ -347,10 +347,6 @@ const MainScreen: React.FC = () => {
 
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
-    if (downloadingEntryIds.has(entry.id)) {
-      return;
-    }
-
     if (playingEntryId === entry.id) {
       await audioPlaybackService.pause();
       return;
