@@ -1,14 +1,7 @@
-import {
-  createAudioPlayer,
-  requestRecordingPermissionsAsync,
-} from "expo-audio";
+import { AudioModule, createAudioPlayer } from "expo-audio";
 import { Platform } from "react-native";
 import { entriesDao } from "../../db/dao/entriesDao";
-import {
-  generateDeterministicWaveform,
-  getWaveformState,
-  WAVEFORM_BAR_COUNT,
-} from "../../utils/waveform";
+import { getWaveformState, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -46,26 +39,25 @@ interface AudioPlayerInstance {
   remove?: () => void;
   addListener?: (
     event: string,
-    listener: (data: AudioPlayerStatusUpdate | AudioSampleData) => void,
+    listener: (data: unknown) => void,
   ) => { remove: () => void };
 }
 
 class AudioPlaybackService {
   private activePlayer: AudioPlayerInstance | null = null;
-  private playerSubscription: { remove: () => void } | null = null;
-  private sampleSubscription: { remove: () => void } | null = null;
   private currentEntryId: string | null = null;
-  private listeners: Set<PlaybackListener> = new Set();
-  private progressInterval: NodeJS.Timeout | null = null;
   private currentTimeSec: number = 0;
   private durationSec: number = 0;
+  private listeners: Set<PlaybackListener> = new Set();
+  private progressInterval: ReturnType<typeof setInterval> | null = null;
+  private playerSubscription: { remove: () => void } | null = null;
+  private sampleSubscription: { remove: () => void } | null = null;
   private playbackWaveformBars: number[] | null = null;
   private hasMissingWaveform: boolean = false;
   private isDirtyWaveform: boolean = false;
   private newlySampledIndices: Set<number> = new Set();
   private receivedSampleCount: number = 0;
-  private fallbackEnvelope: number[] | null = null;
-  private isStopping: boolean = false;
+  private stopPromise: Promise<void> | null = null;
   private isCompleted: boolean = false;
 
   addListener(listener: PlaybackListener): () => void {
@@ -125,7 +117,6 @@ class AudioPlaybackService {
     this.isDirtyWaveform = false;
     this.newlySampledIndices.clear();
     this.receivedSampleCount = 0;
-    this.fallbackEnvelope = null;
     this.isCompleted = false;
 
     // Check if entry waveform is missing, half, or done:
@@ -157,8 +148,10 @@ class AudioPlaybackService {
     // If waveform is missing, ensure recording permissions on Android so setAudioSamplingEnabled doesn't silently fail
     if (this.hasMissingWaveform) {
       try {
-        if (typeof requestRecordingPermissionsAsync === "function") {
-          await requestRecordingPermissionsAsync();
+        if (
+          typeof AudioModule?.requestRecordingPermissionsAsync === "function"
+        ) {
+          await AudioModule.requestRecordingPermissionsAsync();
         }
       } catch (err) {
         console.warn("Permission request failed:", err);
@@ -343,38 +336,6 @@ class AudioPlaybackService {
           this.durationSec = Math.round(this.activePlayer.duration);
         }
 
-        // Progressive waveform fallback:
-        // If native audioSampleUpdate is not emitting samples (unsupported device/emulator or permission denied),
-        // progressively fill waveform bars along with playback position
-        if (
-          this.hasMissingWaveform &&
-          this.playbackWaveformBars &&
-          this.receivedSampleCount === 0 &&
-          this.currentTimeSec > 0.3
-        ) {
-          const dur = this.durationSec > 0 ? this.durationSec : 1;
-          const targetIdx = Math.max(
-            0,
-            Math.min(
-              WAVEFORM_BAR_COUNT - 1,
-              Math.floor((this.currentTimeSec / dur) * WAVEFORM_BAR_COUNT),
-            ),
-          );
-          if (!this.fallbackEnvelope) {
-            this.fallbackEnvelope = generateDeterministicWaveform(
-              this.currentEntryId || "fallback",
-              WAVEFORM_BAR_COUNT,
-            );
-          }
-          for (let i = 0; i <= targetIdx; i++) {
-            if (this.playbackWaveformBars[i] === 0) {
-              this.playbackWaveformBars[i] = this.fallbackEnvelope[i] ?? 0.35;
-              this.newlySampledIndices.add(i);
-              this.isDirtyWaveform = true;
-            }
-          }
-        }
-
         // If native player stopped or reached duration
         if (
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
@@ -458,109 +419,73 @@ class AudioPlaybackService {
   }
 
   async stop(): Promise<void> {
-    if (this.isStopping) return;
-    this.isStopping = true;
-    try {
-      this.stopProgressTracker();
-
-      const effectiveCurrentTime =
-        typeof this.activePlayer?.currentTime === "number" &&
-        this.activePlayer.currentTime > 0
-          ? this.activePlayer.currentTime
-          : this.currentTimeSec;
-      const effectiveDuration =
-        typeof this.activePlayer?.duration === "number" &&
-        this.activePlayer.duration > 0
-          ? this.activePlayer.duration
-          : this.durationSec;
-
-      const wasCompleted =
-        this.isCompleted ||
-        (effectiveDuration > 0 &&
-          effectiveCurrentTime >= effectiveDuration - 0.5);
-
-      // If clip had missing waveform and playback completed to the end:
-      // ensure any remaining un-sampled bars are filled and persisted
-      if (
-        this.hasMissingWaveform &&
-        this.playbackWaveformBars &&
-        this.currentEntryId &&
-        (wasCompleted || this.isDirtyWaveform)
-      ) {
-        if (wasCompleted && this.playbackWaveformBars.some((v) => v === 0)) {
-          if (!this.fallbackEnvelope) {
-            this.fallbackEnvelope = generateDeterministicWaveform(
-              this.currentEntryId,
-              WAVEFORM_BAR_COUNT,
-            );
-          }
-          for (let i = 0; i < WAVEFORM_BAR_COUNT; i++) {
-            if (this.playbackWaveformBars[i] === 0) {
-              this.playbackWaveformBars[i] = this.fallbackEnvelope[i] ?? 0.35;
-              this.newlySampledIndices.add(i);
-              this.isDirtyWaveform = true;
-            }
-          }
-        }
-      }
-
-      await this.persistRegeneratedWaveform();
-      if (this.sampleSubscription) {
-        try {
-          this.sampleSubscription.remove();
-        } catch {
-          // Ignore unbind error
-        }
-        this.sampleSubscription = null;
-      }
-      if (this.playerSubscription) {
-        try {
-          this.playerSubscription.remove();
-        } catch {
-          // Ignore unbind error
-        }
-        this.playerSubscription = null;
-      }
-      if (this.activePlayer) {
-        try {
-          if (this.activePlayer.pause) {
-            this.activePlayer.pause();
-          }
-          if (this.activePlayer.remove) {
-            this.activePlayer.remove();
-          }
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-
-      const stoppedEntryId = this.currentEntryId;
-      const finalWaveform = this.playbackWaveformBars
-        ? [...this.playbackWaveformBars]
-        : undefined;
-
-      this.activePlayer = null;
-      this.currentEntryId = null;
-      this.currentTimeSec = 0;
-      this.playbackWaveformBars = null;
-      this.hasMissingWaveform = false;
-      this.isDirtyWaveform = false;
-      this.newlySampledIndices.clear();
-      this.receivedSampleCount = 0;
-      this.fallbackEnvelope = null;
-      this.isCompleted = false;
-
-      const state: PlaybackState = {
-        isPlaying: false,
-        currentTimeSec: 0,
-        durationSec: this.durationSec,
-        entryId: stoppedEntryId,
-        waveformBars: finalWaveform,
-      };
-      this.listeners.forEach((l) => l(state));
-    } finally {
-      this.isStopping = false;
+    if (this.stopPromise) {
+      return this.stopPromise;
     }
+    this.stopPromise = this.performStop();
+    try {
+      await this.stopPromise;
+    } finally {
+      this.stopPromise = null;
+    }
+  }
+
+  private async performStop(): Promise<void> {
+    this.stopProgressTracker();
+
+    await this.persistRegeneratedWaveform();
+    if (this.sampleSubscription) {
+      try {
+        this.sampleSubscription.remove();
+      } catch {
+        // Ignore unbind error
+      }
+      this.sampleSubscription = null;
+    }
+    if (this.playerSubscription) {
+      try {
+        this.playerSubscription.remove();
+      } catch {
+        // Ignore unbind error
+      }
+      this.playerSubscription = null;
+    }
+    if (this.activePlayer) {
+      try {
+        if (this.activePlayer.pause) {
+          this.activePlayer.pause();
+        }
+        if (this.activePlayer.remove) {
+          this.activePlayer.remove();
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    const stoppedEntryId = this.currentEntryId;
+    const finalWaveform = this.playbackWaveformBars
+      ? [...this.playbackWaveformBars]
+      : undefined;
+
+    this.activePlayer = null;
+    this.currentEntryId = null;
+    this.currentTimeSec = 0;
+    this.playbackWaveformBars = null;
+    this.hasMissingWaveform = false;
+    this.isDirtyWaveform = false;
+    this.newlySampledIndices.clear();
+    this.receivedSampleCount = 0;
+    this.isCompleted = false;
+
+    const state: PlaybackState = {
+      isPlaying: false,
+      currentTimeSec: 0,
+      durationSec: this.durationSec,
+      entryId: stoppedEntryId,
+      waveformBars: finalWaveform,
+    };
+    this.listeners.forEach((l) => l(state));
   }
 }
 

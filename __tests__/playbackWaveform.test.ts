@@ -289,7 +289,7 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
     expect(state.waveformBars?.[30]).toBeGreaterThan(0.08);
   });
 
-  it("fills un-sampled bars with fallback envelope and persists on playback completion", async () => {
+  it("persists authentic sampled bars without corrupting gaps with synthetic data", async () => {
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
       id: "entry-completion",
       waveform_data: null,
@@ -303,29 +303,26 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
 
     await audioPlaybackService.play("entry-completion", "file:///test.m4a", 5);
 
-    // Simulate native sampling emitted 1 sample at start
+    // Simulate native sampling emitted 1 sample at 1.0s (bar 15)
     sampleListener!({
       timestamp: 1.0,
       channels: [{ frames: [0.5] }],
     });
 
-    // Advance player to completion (currentTime >= duration)
-    mockPlayer.currentTime = 5.0;
-    mockPlayer.duration = 5.0;
-
     await audioPlaybackService.stop();
     unsubscribe();
 
-    // Verify all bars are populated (none are 0)
+    // Verify sampled bar is populated, while un-sampled gaps remain 0 (half state)
     expect(entriesDao.updateWaveform).toHaveBeenCalledWith(
       "entry-completion",
       expect.any(Array),
     );
     const savedBars = (entriesDao.updateWaveform as jest.Mock).mock.calls[0][1];
     expect(savedBars).toHaveLength(WAVEFORM_BAR_COUNT);
-    expect(savedBars.every((v: number) => v > 0)).toBe(true);
+    expect(savedBars[15]).toBeGreaterThan(0.08);
+    expect(savedBars[0]).toBe(0); // Un-sampled gap preserved as 0 (not synthetic)
 
-    // Verify stop notification delivered completed bars and entryId
+    // Verify stop notification delivered bars and entryId
     const lastState = notifiedStates[notifiedStates.length - 1] as {
       isPlaying: boolean;
       entryId: string;
@@ -334,6 +331,23 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
     expect(lastState.isPlaying).toBe(false);
     expect(lastState.entryId).toBe("entry-completion");
     expect(lastState.waveformBars).toHaveLength(WAVEFORM_BAR_COUNT);
-    expect(lastState.waveformBars.every((v: number) => v > 0)).toBe(true);
+    expect(lastState.waveformBars[15]).toBeGreaterThan(0.08);
+  });
+
+  it("serializes concurrent stop calls with the same in-flight promise", async () => {
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-concurrent",
+      waveform_data: null,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-concurrent", "file:///test.m4a", 10);
+
+    const stop1 = audioPlaybackService.stop();
+    const stop2 = audioPlaybackService.stop();
+
+    await Promise.all([stop1, stop2]);
+
+    expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
   });
 });

@@ -137,7 +137,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             .getEntryById(entry.id)
             .then((refreshed) => {
               if (refreshed?.waveform_data) {
-                setCurrentEntry(refreshed);
+                setCurrentEntry((prev) =>
+                  prev
+                    ? { ...prev, waveform_data: refreshed.waveform_data }
+                    : refreshed,
+                );
               }
             })
             .catch(() => {
