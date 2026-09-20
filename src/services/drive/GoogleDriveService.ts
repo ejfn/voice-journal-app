@@ -12,9 +12,38 @@ export interface DriveFolderInfo {
   name: string;
 }
 
+/**
+ * Per-entry transfer events fired only around real Drive I/O
+ * (uploadEntry / downloadAudioOnDemand). Scan/list passes do not emit these.
+ */
+export type DriveTransferEvent = {
+  entryId: string;
+  status: "uploading" | "downloading" | "synced" | "failed";
+};
+
+export type DriveTransferListener = (event: DriveTransferEvent) => void;
+
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
   private isConfigured: boolean = false;
+  private transferListeners: Set<DriveTransferListener> = new Set();
+
+  addTransferListener(listener: DriveTransferListener): () => void {
+    this.transferListeners.add(listener);
+    return () => {
+      this.transferListeners.delete(listener);
+    };
+  }
+
+  private notifyTransferListeners(event: DriveTransferEvent): void {
+    for (const listener of this.transferListeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        console.warn("Drive transfer listener error:", err);
+      }
+    }
+  }
 
   configure(webClientId?: string): void {
     if (this.isConfigured) return;
@@ -154,6 +183,13 @@ export class GoogleDriveService {
     sidecarFileId: string;
     raceDetected?: boolean;
   }> {
+    // Notify only for this entry's real upload — not the broader scan/check pass
+    this.notifyTransferListeners({
+      entryId: entry.id,
+      status: "uploading",
+    });
+
+    try {
     const token = await this.getAccessToken();
     const date = new Date(entry.created_at);
     const year = date.getFullYear();
@@ -309,6 +345,10 @@ export class GoogleDriveService {
         audioFileId,
         snapshotUpdatedAt,
       );
+      this.notifyTransferListeners({
+        entryId: entry.id,
+        status: "synced",
+      });
       return { audioFileId, sidecarFileId, raceDetected: true };
     }
 
@@ -320,7 +360,18 @@ export class GoogleDriveService {
       Date.now(),
     );
 
+    this.notifyTransferListeners({
+      entryId: entry.id,
+      status: "synced",
+    });
     return { audioFileId, sidecarFileId, raceDetected: false };
+    } catch (error) {
+      this.notifyTransferListeners({
+        entryId: entry.id,
+        status: "failed",
+      });
+      throw error;
+    }
   }
 
   /**
