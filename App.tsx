@@ -160,16 +160,7 @@ const MainScreen: React.FC = () => {
       },
     );
     const unsubscribeUpload = uploadQueueService.addListener((event) => {
-      if (
-        event.status === "uploading" &&
-        uploadQueueService.isEntryUploading(event.entryId)
-      ) {
-        incrementUploadingEntry(event.entryId);
-        return;
-      }
-
       if (event.status !== "uploading") {
-        decrementUploadingEntry(event.entryId);
         loadData();
       }
     });
