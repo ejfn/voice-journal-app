@@ -33,6 +33,7 @@ import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
 import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
+import { getRefreshedReviewEntry } from "./src/utils/reviewEntryRefresh";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -63,6 +64,7 @@ const MainScreen: React.FC = () => {
   // Review Modal State
   const [reviewEntry, setReviewEntry] = useState<JournalEntry | null>(null);
   const [isReviewVisible, setIsReviewVisible] = useState<boolean>(false);
+  const reviewEntryRef = useRef<JournalEntry | null>(null);
 
   // Settings Modal State
   const [isSettingsVisible, setIsSettingsVisible] = useState<boolean>(false);
@@ -128,6 +130,16 @@ const MainScreen: React.FC = () => {
         tag: selectedTag === "all" ? undefined : selectedTag,
       });
       setSections(grouped);
+      const currentReviewEntry = reviewEntryRef.current;
+      if (currentReviewEntry) {
+        const refreshedReviewEntry =
+          await getRefreshedReviewEntry(currentReviewEntry);
+        setReviewEntry((current) =>
+          current?.id === currentReviewEntry.id
+            ? refreshedReviewEntry
+            : current,
+        );
+      }
 
       const allTags = await entriesDao.getAllTags();
       setTags(allTags);
@@ -135,6 +147,10 @@ const MainScreen: React.FC = () => {
       console.warn("Error loading timeline data:", err);
     }
   }, [searchQuery, selectedTag]);
+
+  useEffect(() => {
+    reviewEntryRef.current = reviewEntry;
+  }, [reviewEntry]);
 
   useEffect(() => {
     initDatabase()

@@ -67,6 +67,13 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   const scrollViewRef = useRef<ScrollView>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const previousEntryIdRef = useRef<string | null>(null);
+  const dirtyFieldsRef = useRef({
+    title: false,
+    summary: false,
+    transcript: false,
+    tags: false,
+  });
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -111,13 +118,34 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   };
 
   useEffect(() => {
+    const isNewEntry = entry?.id !== previousEntryIdRef.current;
     setCurrentEntry(entry);
+
     if (entry) {
-      setTitle(entry.title);
-      setSummary(entry.summary);
-      setTranscript(entry.transcript);
-      setTags(entry.tags || []);
+      if (isNewEntry || !dirtyFieldsRef.current.title) {
+        setTitle(entry.title);
+      }
+      if (isNewEntry || !dirtyFieldsRef.current.summary) {
+        setSummary(entry.summary);
+      }
+      if (isNewEntry || !dirtyFieldsRef.current.transcript) {
+        setTranscript(entry.transcript);
+      }
+      if (isNewEntry || !dirtyFieldsRef.current.tags) {
+        setTags(entry.tags || []);
+      }
     }
+
+    if (isNewEntry) {
+      dirtyFieldsRef.current = {
+        title: false,
+        summary: false,
+        transcript: false,
+        tags: false,
+      };
+    }
+
+    previousEntryIdRef.current = entry?.id ?? null;
   }, [entry]);
 
   useEffect(() => {
@@ -242,6 +270,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const handleAddTag = () => {
     const clean = newTagInput.trim().toLowerCase().replace(/^#+/, "");
     if (clean && !tags.includes(clean)) {
+      dirtyFieldsRef.current.tags = true;
       setTags([...tags, clean]);
       setNewTagInput("");
       handleTagFocus();
@@ -249,6 +278,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
+    dirtyFieldsRef.current.tags = true;
     setTags(tags.filter((t) => t !== tagToRemove));
   };
 
@@ -486,7 +516,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={title}
-              onChangeText={setTitle}
+              onChangeText={(value) => {
+                dirtyFieldsRef.current.title = true;
+                setTitle(value);
+              }}
               placeholder="Headline..."
               placeholderTextColor={colors.textMuted}
             />
@@ -508,7 +541,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={summary}
-              onChangeText={setSummary}
+              onChangeText={(value) => {
+                dirtyFieldsRef.current.summary = true;
+                setSummary(value);
+              }}
               onFocus={handleSummaryFocus}
               multiline
               placeholder="Key takeaway..."
@@ -605,7 +641,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={transcript}
-              onChangeText={setTranscript}
+              onChangeText={(value) => {
+                dirtyFieldsRef.current.transcript = true;
+                setTranscript(value);
+              }}
               onFocus={handleTranscriptFocus}
               multiline={true}
               scrollEnabled={true}

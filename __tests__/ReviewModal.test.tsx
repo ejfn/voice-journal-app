@@ -53,7 +53,10 @@ describe("ReviewModal", () => {
     last_accessed_at: 1000,
   };
 
-  const renderModal = (entry: JournalEntry | null) => {
+  const renderModal = (
+    entry: JournalEntry | null,
+    onSave: (updatedEntry: JournalEntry) => void = jest.fn(),
+  ) => {
     let tree: ReactTestRenderer;
     void act(() => {
       tree = renderer.create(
@@ -62,7 +65,7 @@ describe("ReviewModal", () => {
             <ReviewModal
               visible
               entry={entry}
-              onSave={jest.fn()}
+              onSave={onSave}
               onDelete={jest.fn()}
               onClose={jest.fn()}
             />
@@ -145,5 +148,131 @@ describe("ReviewModal", () => {
       forwardNodes[0].props.onPress();
     });
     expect(audioPlaybackService.skip).toHaveBeenCalledWith(10);
+  });
+
+  it("preserves dirty fields and updates untouched fields on same-entry refresh", async () => {
+    const onSave = jest.fn();
+    const tree = renderModal(baseEntry, onSave);
+    const textInputs = tree.root.findAllByProps({
+      placeholder: "Headline...",
+    }) as { props: { onChangeText: (value: string) => void } }[];
+    const addTagInputs = tree.root.findAllByProps({
+      placeholder: "Add new tag...",
+    }) as {
+      props: {
+        onChangeText: (value: string) => void;
+        onSubmitEditing: () => void;
+      };
+    }[];
+    const removeLegacyTagButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Remove tag test",
+    }) as { props: { onPress: () => void } }[];
+
+    void act(() => {
+      textInputs[0].props.onChangeText("Manual title");
+    });
+    void act(() => {
+      addTagInputs[0].props.onChangeText("manual");
+    });
+    void act(() => {
+      addTagInputs[0].props.onSubmitEditing();
+    });
+    void act(() => {
+      removeLegacyTagButtons[0].props.onPress();
+    });
+
+    void act(() => {
+      tree.update(
+        <ThemeProvider>
+          <ToastProvider>
+            <ReviewModal
+              visible
+              entry={{
+                ...baseEntry,
+                title: "AI title",
+                summary: "AI summary",
+                transcript: "AI transcript",
+                tags: ["test", "ai", "fresh"],
+                transcription_status: "completed",
+              }}
+              onSave={onSave}
+              onDelete={jest.fn()}
+              onClose={jest.fn()}
+            />
+          </ToastProvider>
+        </ThemeProvider>,
+      );
+    });
+
+    const saveButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Save Changes",
+    }) as { props: { onPress: () => void } }[];
+    await act(async () => {
+      await saveButtons[0].props.onPress();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Manual title",
+        summary: "AI summary",
+        transcript: "AI transcript",
+        tags: ["manual"],
+      }),
+    );
+  });
+
+  it("resets dirty fields when switching to a different entry id", async () => {
+    const onSave = jest.fn();
+    const tree = renderModal(baseEntry, onSave);
+    const textInputs = tree.root.findAllByProps({
+      placeholder: "Headline...",
+    }) as { props: { onChangeText: (value: string) => void } }[];
+
+    void act(() => {
+      textInputs[0].props.onChangeText("Manual title");
+    });
+
+    const secondEntry: JournalEntry = {
+      ...baseEntry,
+      id: "test-entry-2",
+      title: "Second title",
+      summary: "Second summary",
+      transcript: "Second transcript",
+      tags: ["second"],
+      updated_at: 2000,
+    };
+
+    void act(() => {
+      tree.update(
+        <ThemeProvider>
+          <ToastProvider>
+            <ReviewModal
+              visible
+              entry={secondEntry}
+              onSave={onSave}
+              onDelete={jest.fn()}
+              onClose={jest.fn()}
+            />
+          </ToastProvider>
+        </ThemeProvider>,
+      );
+    });
+
+    const saveButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Save Changes",
+    }) as { props: { onPress: () => void } }[];
+    await act(async () => {
+      await saveButtons[0].props.onPress();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "test-entry-2",
+        title: "Second title",
+        summary: "Second summary",
+        transcript: "Second transcript",
+        tags: ["second"],
+      }),
+    );
   });
 });
