@@ -309,10 +309,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           ref={scrollViewRef}
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 40 },
+            {
+              paddingBottom:
+                Platform.OS === "ios"
+                  ? 40
+                  : keyboardHeight > 0
+                    ? keyboardHeight + 40
+                    : 40,
+            },
           ]}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          keyboardDismissMode="none"
           showsVerticalScrollIndicator={true}
         >
           {/* Audio Player Bar */}
