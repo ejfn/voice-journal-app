@@ -162,11 +162,11 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
               {/* Status Hint */}
               <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
-                  ? durationSec < 3
-                    ? "Recording paused (< 3s). Tap resume to continue, or discard."
+                  ? durationSec < MIN_RECORDING_DURATION_SEC
+                    ? `Recording paused (< ${MIN_RECORDING_DURATION_SEC}s). Tap resume to continue, or discard.`
                     : "Recording paused. Tap resume to continue, or stop to save."
-                  : durationSec < 3
-                    ? "Speak naturally. Minimum 3 seconds to save."
+                  : durationSec < MIN_RECORDING_DURATION_SEC
+                    ? `Speak naturally. Minimum ${MIN_RECORDING_DURATION_SEC} seconds to save.`
                     : "Speak naturally. Tap pause to take a break, or stop when finished."}
               </Text>
 
@@ -233,7 +233,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                         {
                           backgroundColor: colors.danger,
                           shadowColor: colors.danger,
-                          opacity: durationSec < 3 ? 0.45 : 1,
+                          opacity:
+                            durationSec < MIN_RECORDING_DURATION_SEC ? 0.45 : 1,
                         },
                       ]}
                       onPress={onStop}
@@ -248,7 +249,10 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       styles.actionLabel,
                       styles.doneLabel,
                       {
-                        color: durationSec < 3 ? colors.textMuted : colors.text,
+                        color:
+                          durationSec < MIN_RECORDING_DURATION_SEC
+                            ? colors.textMuted
+                            : colors.text,
                       },
                     ]}
                   >
