@@ -38,7 +38,11 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   const storageStatus = computeStorageStatus(entry, {
     isItemSyncing,
   });
-  const storageBadge = getStorageBadgeConfig(storageStatus, colors);
+  const storageBadge = getStorageBadgeConfig(
+    storageStatus,
+    colors,
+    isDownloading ? "download" : "upload",
+  );
   const isUntranscribed =
     entry.transcription_status && entry.transcription_status !== "completed";
 

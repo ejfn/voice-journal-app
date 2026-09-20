@@ -20,8 +20,164 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
   });
 
   afterEach(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = true;
     setDatabaseConnection(null);
     global.fetch = originalFetch;
+  });
+
+  it("emits upload transfer notifications for success and failure paths", async () => {
+    const t0 = 1758290000000;
+    const entry: JournalEntry = {
+      id: "entry-upload-events",
+      title: "Upload Events",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path:
+        "file:///mock/document/audio/2026/09/entry-upload-events.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0,
+    };
+    await entriesDao.insertEntry(entry);
+
+    const events: { direction: string; status: string }[] = [];
+    const unsubscribe = driveService.addTransferListener((event) => {
+      events.push({ direction: event.direction, status: event.status });
+    });
+
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        if (
+          urlStr.includes("mimeType = 'application/vnd.google-apps.folder'")
+        ) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "folder-id" }] }),
+            {
+              status: 200,
+            },
+          );
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr === "https://www.googleapis.com/drive/v3/files"
+        ) {
+          return new Response(JSON.stringify({ id: "audio-id" }), {
+            status: 200,
+          });
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr.includes("/upload/drive/v3/files?uploadType=multipart")
+        ) {
+          return new Response(JSON.stringify({ id: "sidecar-id" }), {
+            status: 200,
+          });
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    await driveService.uploadEntry(entry);
+    expect(events).toEqual([
+      { direction: "upload", status: "uploading" },
+      { direction: "upload", status: "synced" },
+    ]);
+
+    global.fetch = jest.fn(
+      async () => new Response("folder error", { status: 500 }),
+    );
+    await expect(driveService.uploadEntry(entry)).rejects.toThrow();
+    expect(events.slice(-2)).toEqual([
+      { direction: "upload", status: "uploading" },
+      { direction: "upload", status: "failed" },
+    ]);
+
+    unsubscribe();
+  });
+
+  it("emits download transfer notifications for success and failure paths", async () => {
+    const t0 = 1758290100000;
+    const downloadableEntry: JournalEntry = {
+      id: "entry-download-events-ok",
+      title: "Download Events",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 9,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: "drive-audio-ok",
+      drive_sidecar_file_id: "sidecar-ok",
+      is_audio_cached: 0,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: t0,
+      last_accessed_at: t0,
+    };
+    const failingEntry: JournalEntry = {
+      ...downloadableEntry,
+      id: "entry-download-events-fail",
+      drive_audio_file_id: "drive-audio-fail",
+      drive_sidecar_file_id: "sidecar-fail",
+    };
+    await entriesDao.insertEntry(downloadableEntry);
+    await entriesDao.insertEntry(failingEntry);
+
+    const events: { direction: string; status: string; entryId: string }[] = [];
+    const unsubscribe = driveService.addTransferListener((event) => {
+      events.push({
+        direction: event.direction,
+        status: event.status,
+        entryId: event.entryId,
+      });
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+    await driveService.downloadAudioOnDemand(downloadableEntry.id);
+    expect(events.slice(-2)).toEqual([
+      {
+        entryId: downloadableEntry.id,
+        direction: "download",
+        status: "downloading",
+      },
+      {
+        entryId: downloadableEntry.id,
+        direction: "download",
+        status: "downloaded",
+      },
+    ]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockDownload.mockRejectedValueOnce(
+      new Error("download failed"),
+    );
+    await expect(
+      driveService.downloadAudioOnDemand(failingEntry.id),
+    ).rejects.toThrow("download failed");
+    expect(events.slice(-2)).toEqual([
+      {
+        entryId: failingEntry.id,
+        direction: "download",
+        status: "downloading",
+      },
+      {
+        entryId: failingEntry.id,
+        direction: "download",
+        status: "failed",
+      },
+    ]);
+
+    unsubscribe();
   });
 
   it("Rule 1: Always upload if local is newer (updated) or missing in Drive", async () => {

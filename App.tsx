@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -32,6 +32,7 @@ import { uploadQueueService } from "./src/services/drive/UploadQueueService";
 import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
+import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -45,7 +46,6 @@ const MainScreen: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   // Recording Modal State
@@ -67,12 +67,57 @@ const MainScreen: React.FC = () => {
 
   // Playback State
   const [playingEntryId, setPlayingEntryId] = useState<string | null>(null);
-  const [downloadingEntryId, setDownloadingEntryId] = useState<string | null>(
-    null,
+  const [downloadingEntryIds, setDownloadingEntryIds] = useState<Set<string>>(
+    new Set(),
   );
   const [uploadingEntryIds, setUploadingEntryIds] = useState<Set<string>>(
     new Set(),
   );
+  const uploadingTransferCountRef = useRef<Map<string, number>>(new Map());
+  const downloadingTransferCountRef = useRef<Map<string, number>>(new Map());
+  const pendingDownloadRequestsRef = useRef<Set<string>>(new Set());
+
+  const incrementUploadingEntry = useCallback((entryId: string) => {
+    const currentCount = uploadingTransferCountRef.current.get(entryId) ?? 0;
+    uploadingTransferCountRef.current.set(entryId, currentCount + 1);
+    setUploadingEntryIds((prev) => new Set(prev).add(entryId));
+  }, []);
+
+  const decrementUploadingEntry = useCallback((entryId: string) => {
+    const currentCount = uploadingTransferCountRef.current.get(entryId) ?? 0;
+    const nextCount = currentCount - 1;
+    if (nextCount <= 0) {
+      uploadingTransferCountRef.current.delete(entryId);
+      setUploadingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entryId);
+        return next;
+      });
+      return;
+    }
+    uploadingTransferCountRef.current.set(entryId, nextCount);
+  }, []);
+
+  const incrementDownloadingEntry = useCallback((entryId: string) => {
+    const currentCount = downloadingTransferCountRef.current.get(entryId) ?? 0;
+    downloadingTransferCountRef.current.set(entryId, currentCount + 1);
+    setDownloadingEntryIds((prev) => new Set(prev).add(entryId));
+  }, []);
+
+  const decrementDownloadingEntry = useCallback((entryId: string) => {
+    const currentCount = downloadingTransferCountRef.current.get(entryId) ?? 0;
+    const nextCount = currentCount - 1;
+    if (nextCount <= 0) {
+      downloadingTransferCountRef.current.delete(entryId);
+      setDownloadingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entryId);
+        return next;
+      });
+      return;
+    }
+    downloadingTransferCountRef.current.set(entryId, nextCount);
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -114,36 +159,47 @@ const MainScreen: React.FC = () => {
         loadData();
       },
     );
-    const unsubscribeUpload = uploadQueueService.addListener((event) => {
-      if (event.status === "uploading") {
-        setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
-      } else {
-        setUploadingEntryIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.entryId);
-          return next;
-        });
+    const unsubscribeDriveTransfer = googleDriveService.addTransferListener(
+      (event) => {
+        if (event.status === "uploading") {
+          incrementUploadingEntry(event.entryId);
+          return;
+        }
+        if (event.status === "downloading") {
+          incrementDownloadingEntry(event.entryId);
+          return;
+        }
+
+        if (event.direction === "upload") {
+          decrementUploadingEntry(event.entryId);
+        } else {
+          decrementDownloadingEntry(event.entryId);
+        }
+
         loadData();
-      }
-    });
+      },
+    );
+    // SmartSync "syncing" is a top-level reconciliation/scan status and must
+    // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
-      if (event.status === "syncing") {
-        setIsSyncing(true);
-      } else if (event.status === "synced") {
-        setIsSyncing(false);
+      if (event.status === "synced") {
         loadData();
-      } else {
-        setIsSyncing(false);
       }
     });
 
     return () => {
       unsubscribePlayback();
       unsubscribeTranscription();
-      unsubscribeUpload();
+      unsubscribeDriveTransfer();
       unsubscribeSmartSync();
     };
-  }, [loadData]);
+  }, [
+    decrementDownloadingEntry,
+    decrementUploadingEntry,
+    incrementDownloadingEntry,
+    incrementUploadingEntry,
+    loadData,
+  ]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -322,9 +378,11 @@ const MainScreen: React.FC = () => {
 
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
-    if (downloadingEntryId === entry.id) {
+    if (pendingDownloadRequestsRef.current.has(entry.id)) {
       return;
     }
+
+    let startedDownloadRequest = false;
 
     if (playingEntryId === entry.id) {
       await audioPlaybackService.pause();
@@ -354,7 +412,8 @@ const MainScreen: React.FC = () => {
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
-        setDownloadingEntryId(entry.id);
+        pendingDownloadRequestsRef.current.add(entry.id);
+        startedDownloadRequest = true;
         showToast({
           message: "Downloading audio from Google Drive...",
           icon: "cloud-download",
@@ -384,7 +443,9 @@ const MainScreen: React.FC = () => {
         type: "error",
       });
     } finally {
-      setDownloadingEntryId(null);
+      if (startedDownloadRequest) {
+        pendingDownloadRequestsRef.current.delete(entry.id);
+      }
     }
   };
 
@@ -503,8 +564,11 @@ const MainScreen: React.FC = () => {
                   key={clip.id}
                   entry={clip}
                   isPlaying={playingEntryId === clip.id}
-                  isDownloading={downloadingEntryId === clip.id}
-                  isItemSyncing={isSyncing || uploadingEntryIds.has(clip.id)}
+                  isDownloading={downloadingEntryIds.has(clip.id)}
+                  isItemSyncing={isEntryActivelyTransferring(clip.id, {
+                    uploadingEntryIds,
+                    downloadingEntryIds,
+                  })}
                   onPlayPress={() => handlePlayClip(clip)}
                   onPress={() => handleOpenReview(clip)}
                   onRetryTranscription={(id) =>

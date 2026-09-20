@@ -12,9 +12,45 @@ export interface DriveFolderInfo {
   name: string;
 }
 
+/**
+ * Per-entry transfer events fired only around real Drive I/O
+ * (uploadEntry / downloadAudioOnDemand). Scan/list passes do not emit these.
+ */
+export type DriveTransferEvent = {
+  entryId: string;
+  direction: "upload" | "download";
+  status:
+    | "uploading"
+    | "downloading"
+    | "uploaded"
+    | "downloaded"
+    | "synced"
+    | "failed";
+};
+
+export type DriveTransferListener = (event: DriveTransferEvent) => void;
+
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
   private isConfigured: boolean = false;
+  private transferListeners: Set<DriveTransferListener> = new Set();
+
+  addTransferListener(listener: DriveTransferListener): () => void {
+    this.transferListeners.add(listener);
+    return () => {
+      this.transferListeners.delete(listener);
+    };
+  }
+
+  private notifyTransferListeners(event: DriveTransferEvent): void {
+    for (const listener of this.transferListeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        console.warn("Drive transfer listener error:", err);
+      }
+    }
+  }
 
   configure(webClientId?: string): void {
     if (this.isConfigured) return;
@@ -154,173 +190,199 @@ export class GoogleDriveService {
     sidecarFileId: string;
     raceDetected?: boolean;
   }> {
-    const token = await this.getAccessToken();
-    const date = new Date(entry.created_at);
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
+    // Notify only for this entry's real upload — not the broader scan/check pass
+    this.notifyTransferListeners({
+      entryId: entry.id,
+      direction: "upload",
+      status: "uploading",
+    });
 
-    const monthFolderId = await this.resolveMonthFolder(year, month, token);
+    try {
+      const token = await this.getAccessToken();
+      const date = new Date(entry.created_at);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
 
-    // 1. Upload Audio File first if locally available and not yet uploaded
-    let audioFileId = entry.drive_audio_file_id;
-    const localAudioUri =
-      entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
+      const monthFolderId = await this.resolveMonthFolder(year, month, token);
 
-    if (localAudioUri) {
-      const audioFile = new File(localAudioUri);
-      if (audioFile.exists && !audioFileId) {
-        // Create audio file placeholder with metadata in Drive
-        const createAudioRes = await fetch(
-          "https://www.googleapis.com/drive/v3/files",
+      // 1. Upload Audio File first if locally available and not yet uploaded
+      let audioFileId = entry.drive_audio_file_id;
+      const localAudioUri =
+        entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
+
+      if (localAudioUri) {
+        const audioFile = new File(localAudioUri);
+        if (audioFile.exists && !audioFileId) {
+          // Create audio file placeholder with metadata in Drive
+          const createAudioRes = await fetch(
+            "https://www.googleapis.com/drive/v3/files",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                name: `${entry.id}.m4a`,
+                parents: [monthFolderId],
+                mimeType: "audio/mp4",
+              }),
+            },
+          );
+
+          if (createAudioRes.ok) {
+            const audioData = await createAudioRes.json();
+            audioFileId = audioData.id;
+
+            // Stream binary audio file directly to Drive via audioFile.upload
+            await audioFile.upload(
+              `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
+              {
+                httpMethod: "PATCH",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "audio/mp4",
+                },
+                uploadType: UploadType.BINARY_CONTENT,
+              },
+            );
+          }
+        }
+      }
+
+      // 2. Upload / Update Sidecar JSON (contains up-to-date audioFileId, machine-agnostic path)
+      // Re-query latest entry from SQLite so any transcript, summary, or user edits
+      // that completed during the audio upload step are captured in this payload
+      const freshEntry = (await entriesDao.getEntryById(entry.id)) || entry;
+      const snapshotUpdatedAt =
+        freshEntry.updated_at != null
+          ? freshEntry.updated_at
+          : freshEntry.created_at;
+
+      const entryToUpload: JournalEntry = {
+        ...freshEntry,
+        drive_audio_file_id: audioFileId,
+        local_audio_path: null, // Device-specific absolute sandbox paths should NOT be stored in cloud sidecars
+      };
+      const sidecarPayload = JSON.stringify(entryToUpload, null, 2);
+
+      let sidecarFileId =
+        freshEntry.drive_sidecar_file_id || entry.drive_sidecar_file_id;
+      if (sidecarFileId) {
+        // Update existing sidecar file on Drive
+        const updateRes = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${sidecarFileId}?uploadType=media`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json; charset=UTF-8",
+            },
+            body: sidecarPayload,
+          },
+        );
+
+        if (!updateRes.ok) {
+          if (updateRes.status === 404) {
+            sidecarFileId = null;
+          } else {
+            throw new Error(
+              `Failed to update sidecar JSON for entry ${entry.id}: ${await updateRes.text()}`,
+            );
+          }
+        }
+      }
+
+      if (!sidecarFileId) {
+        const sidecarMetadata = {
+          name: `${entry.id}.json`,
+          parents: [monthFolderId],
+          mimeType: "application/json",
+        };
+
+        const sidecarRes = await fetch(
+          "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
           {
             method: "POST",
             headers: {
               Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
+              "Content-Type": "multipart/related; boundary=boundary_separator",
             },
-            body: JSON.stringify({
-              name: `${entry.id}.m4a`,
-              parents: [monthFolderId],
-              mimeType: "audio/mp4",
-            }),
+            body:
+              `--boundary_separator\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
+                sidecarMetadata,
+              )}\r\n` +
+              `--boundary_separator\r\nContent-Type: application/json\r\n\r\n${sidecarPayload}\r\n` +
+              `--boundary_separator--`,
           },
         );
 
-        if (createAudioRes.ok) {
-          const audioData = await createAudioRes.json();
-          audioFileId = audioData.id;
-
-          // Stream binary audio file directly to Drive via audioFile.upload
-          await audioFile.upload(
-            `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
-            {
-              httpMethod: "PATCH",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "audio/mp4",
-              },
-              uploadType: UploadType.BINARY_CONTENT,
-            },
-          );
-        }
-      }
-    }
-
-    // 2. Upload / Update Sidecar JSON (contains up-to-date audioFileId, machine-agnostic path)
-    // Re-query latest entry from SQLite so any transcript, summary, or user edits
-    // that completed during the audio upload step are captured in this payload
-    const freshEntry = (await entriesDao.getEntryById(entry.id)) || entry;
-    const snapshotUpdatedAt =
-      freshEntry.updated_at != null
-        ? freshEntry.updated_at
-        : freshEntry.created_at;
-
-    const entryToUpload: JournalEntry = {
-      ...freshEntry,
-      drive_audio_file_id: audioFileId,
-      local_audio_path: null, // Device-specific absolute sandbox paths should NOT be stored in cloud sidecars
-    };
-    const sidecarPayload = JSON.stringify(entryToUpload, null, 2);
-
-    let sidecarFileId =
-      freshEntry.drive_sidecar_file_id || entry.drive_sidecar_file_id;
-    if (sidecarFileId) {
-      // Update existing sidecar file on Drive
-      const updateRes = await fetch(
-        `https://www.googleapis.com/upload/drive/v3/files/${sidecarFileId}?uploadType=media`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json; charset=UTF-8",
-          },
-          body: sidecarPayload,
-        },
-      );
-
-      if (!updateRes.ok) {
-        if (updateRes.status === 404) {
-          sidecarFileId = null;
-        } else {
+        if (!sidecarRes.ok) {
           throw new Error(
-            `Failed to update sidecar JSON for entry ${entry.id}: ${await updateRes.text()}`,
+            `Failed to upload sidecar JSON for entry ${entry.id}: ${await sidecarRes.text()}`,
           );
         }
+
+        const sidecarData = await sidecarRes.json();
+        sidecarFileId = sidecarData.id;
       }
-    }
 
-    if (!sidecarFileId) {
-      const sidecarMetadata = {
-        name: `${entry.id}.json`,
-        parents: [monthFolderId],
-        mimeType: "application/json",
-      };
-
-      const sidecarRes = await fetch(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "multipart/related; boundary=boundary_separator",
-          },
-          body:
-            `--boundary_separator\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
-              sidecarMetadata,
-            )}\r\n` +
-            `--boundary_separator\r\nContent-Type: application/json\r\n\r\n${sidecarPayload}\r\n` +
-            `--boundary_separator--`,
-        },
-      );
-
-      if (!sidecarRes.ok) {
+      if (!sidecarFileId) {
         throw new Error(
-          `Failed to upload sidecar JSON for entry ${entry.id}: ${await sidecarRes.text()}`,
+          `Failed to obtain Drive sidecar file ID for entry ${entry.id}`,
         );
       }
 
-      const sidecarData = await sidecarRes.json();
-      sidecarFileId = sidecarData.id;
-    }
-
-    if (!sidecarFileId) {
-      throw new Error(
-        `Failed to obtain Drive sidecar file ID for entry ${entry.id}`,
+      // Check if local entry changed while sidecar upload was in flight
+      const postUploadEntry = await entriesDao.getEntryById(entry.id);
+      const postUploadUpdatedAt =
+        postUploadEntry?.updated_at != null
+          ? postUploadEntry.updated_at
+          : (postUploadEntry?.created_at ?? 0);
+      const raceDetected = Boolean(
+        postUploadEntry && postUploadUpdatedAt > snapshotUpdatedAt,
       );
-    }
 
-    // Check if local entry changed while sidecar upload was in flight
-    const postUploadEntry = await entriesDao.getEntryById(entry.id);
-    const postUploadUpdatedAt =
-      postUploadEntry?.updated_at != null
-        ? postUploadEntry.updated_at
-        : (postUploadEntry?.created_at ?? 0);
-    const raceDetected = Boolean(
-      postUploadEntry && postUploadUpdatedAt > snapshotUpdatedAt,
-    );
+      if (raceDetected) {
+        // Local metadata changed during upload (e.g. transcript finished or user edited notes).
+        // Record Drive file IDs, but set drive_synced_at to snapshotUpdatedAt so postUploadUpdatedAt > drive_synced_at
+        // ensures the entry remains flagged as unsynced in SQLite.
+        await entriesDao.updateSyncStatus(
+          entry.id,
+          sidecarFileId,
+          audioFileId,
+          snapshotUpdatedAt,
+        );
+        this.notifyTransferListeners({
+          entryId: entry.id,
+          direction: "upload",
+          status: "uploaded",
+        });
+        return { audioFileId, sidecarFileId, raceDetected: true };
+      }
 
-    if (raceDetected) {
-      // Local metadata changed during upload (e.g. transcript finished or user edited notes).
-      // Record Drive file IDs, but set drive_synced_at to snapshotUpdatedAt so postUploadUpdatedAt > drive_synced_at
-      // ensures the entry remains flagged as unsynced in SQLite.
+      // Update entry sync status in SQLite with current timestamp
       await entriesDao.updateSyncStatus(
         entry.id,
         sidecarFileId,
         audioFileId,
-        snapshotUpdatedAt,
+        Date.now(),
       );
-      return { audioFileId, sidecarFileId, raceDetected: true };
+
+      this.notifyTransferListeners({
+        entryId: entry.id,
+        direction: "upload",
+        status: "synced",
+      });
+      return { audioFileId, sidecarFileId, raceDetected: false };
+    } catch (error) {
+      this.notifyTransferListeners({
+        entryId: entry.id,
+        direction: "upload",
+        status: "failed",
+      });
+      throw error;
     }
-
-    // Update entry sync status in SQLite with current timestamp
-    await entriesDao.updateSyncStatus(
-      entry.id,
-      sidecarFileId,
-      audioFileId,
-      Date.now(),
-    );
-
-    return { audioFileId, sidecarFileId, raceDetected: false };
   }
 
   /**
@@ -620,29 +682,49 @@ export class GoogleDriveService {
       throw new Error(`Entry ${entryId} has no cloud audio file ID`);
     }
 
-    const token = await this.getAccessToken();
-    const downloadUrl = `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?alt=media`;
+    this.notifyTransferListeners({
+      entryId,
+      direction: "download",
+      status: "downloading",
+    });
 
-    const dir = localPath.substring(0, localPath.lastIndexOf("/") + 1);
-    const directory = new Directory(dir);
-    if (!directory.exists) {
-      directory.create({ intermediates: true, idempotent: true });
+    try {
+      const token = await this.getAccessToken();
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?alt=media`;
+
+      const dir = localPath.substring(0, localPath.lastIndexOf("/") + 1);
+      const directory = new Directory(dir);
+      if (!directory.exists) {
+        directory.create({ intermediates: true, idempotent: true });
+      }
+
+      await File.downloadFileAsync(downloadUrl, localFile, {
+        headers: { Authorization: "Bearer " + token },
+        idempotent: true,
+      });
+
+      await entriesDao.setAudioCached(entryId, true, localPath);
+      await entriesDao.markAudioAccessed(entryId);
+      this.notifyTransferListeners({
+        entryId,
+        direction: "download",
+        status: "downloaded",
+      });
+
+      // Auto-maintain storage threshold in background after downloading new audio
+      this.runLruEviction().catch((err) => {
+        console.warn("Auto LRU eviction after download warning:", err);
+      });
+
+      return localPath;
+    } catch (error) {
+      this.notifyTransferListeners({
+        entryId,
+        direction: "download",
+        status: "failed",
+      });
+      throw error;
     }
-
-    await File.downloadFileAsync(downloadUrl, localFile, {
-      headers: { Authorization: `Bearer ${token}` },
-      idempotent: true,
-    });
-
-    await entriesDao.setAudioCached(entryId, true, localPath);
-    await entriesDao.markAudioAccessed(entryId);
-
-    // Auto-maintain storage threshold in background after downloading new audio
-    this.runLruEviction().catch((err) => {
-      console.warn("Auto LRU eviction after download warning:", err);
-    });
-
-    return localPath;
   }
 
   /**
