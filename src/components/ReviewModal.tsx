@@ -98,6 +98,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     }, 150);
   };
 
+  const [tagSectionY, setTagSectionY] = useState(260);
+
+  const handleTagFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, tagSectionY - 20),
+        animated: true,
+      });
+    }, 150);
+  };
+
   useEffect(() => {
     setCurrentEntry(entry);
     if (entry) {
@@ -207,6 +218,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (clean && !tags.includes(clean)) {
       setTags([...tags, clean]);
       setNewTagInput("");
+      handleTagFocus();
     }
   };
 
@@ -519,7 +531,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </View>
 
           {/* Tags Editor */}
-          <View style={styles.section}>
+          <View
+            style={styles.section}
+            onLayout={(e) => setTagSectionY(e.nativeEvent.layout.y)}
+          >
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
               TAGS
             </Text>
@@ -569,6 +584,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleAddTag}
                 returnKeyType="done"
+                onFocus={handleTagFocus}
               />
               <TouchableOpacity
                 style={[styles.addTagBtn, { backgroundColor: colors.primary }]}
