@@ -51,39 +51,26 @@ describe("ReviewModal", () => {
     return tree!;
   };
 
-  it("renders a concise sync-status label without the long description", () => {
-    const syncedEntry: JournalEntry = {
-      ...baseEntry,
-      drive_audio_file_id: "audio-file-123",
-      drive_sidecar_file_id: "sidecar-file-456",
-      drive_synced_at: 2000,
-      updated_at: 1500,
-    };
-
-    const tree = renderModal(syncedEntry);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const root = tree.root as any;
-    const texts = root.findAllByType("Text");
-    const statusText = texts.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (t: any) => String(t.props.children) === "Synced",
-    );
-
-    expect(statusText).toBeDefined();
-    expect(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      texts.some((t: any) =>
-        String(t.props.children).includes("Safely backed up in Google Drive"),
-      ),
-    ).toBe(false);
-  });
-
   it.each([
+    {
+      name: "synced",
+      entry: {
+        ...baseEntry,
+        drive_audio_file_id: "audio-file-123",
+        drive_sidecar_file_id: "sidecar-file-456",
+        drive_synced_at: 2000,
+        updated_at: 1500,
+      } as JournalEntry,
+      expectedLabel: "Synced",
+      expectedShort: "Backed up",
+      forbiddenText: "Safely backed up in Google Drive",
+    },
     {
       name: "local-only",
       entry: baseEntry,
       expectedLabel: "On device",
-      forbiddenText: "Pending cloud backup",
+      expectedShort: "Pending backup",
+      forbiddenText: "Stored on device only",
     },
     {
       name: "cloud-only",
@@ -96,26 +83,22 @@ describe("ReviewModal", () => {
         local_audio_path: null,
       } as JournalEntry,
       expectedLabel: "Cloud only",
+      expectedShort: "Tap to download",
       forbiddenText: "Tap to stream or download",
     },
   ])(
-    "renders concise label for $name status",
-    ({ expectedLabel, forbiddenText, entry }) => {
+    "renders concise label and short description for $name status",
+    ({ expectedLabel, expectedShort, forbiddenText, entry }) => {
       const tree = renderModal(entry);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const root = tree.root as any;
       const texts = root.findAllByType("Text");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const renderedText = texts.map((t: any) => String(t.props.children)).join(" ");
 
-      expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        texts.some((t: any) => String(t.props.children) === expectedLabel),
-      ).toBe(true);
-      expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        texts.some((t: any) =>
-          String(t.props.children).includes(forbiddenText),
-        ),
-      ).toBe(false);
+      expect(renderedText).toContain(expectedLabel);
+      expect(renderedText).toContain(expectedShort);
+      expect(renderedText).not.toContain(forbiddenText);
     },
   );
 });

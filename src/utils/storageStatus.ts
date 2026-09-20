@@ -66,6 +66,7 @@ export interface StorageBadgeConfig {
   label: string;
   color: string;
   description: string;
+  shortDescription: string;
 }
 
 export function getStorageBadgeConfig(
@@ -80,6 +81,7 @@ export function getStorageBadgeConfig(
         label: "Synced",
         color: colors.success,
         description: "Safely backed up in Google Drive & cached locally",
+        shortDescription: "Backed up",
       };
     case "syncing":
       return {
@@ -88,6 +90,7 @@ export function getStorageBadgeConfig(
         label: "Syncing",
         color: colors.primary,
         description: "Uploading to Google Drive",
+        shortDescription: "Uploading",
       };
     case "cloud-only":
       return {
@@ -96,6 +99,7 @@ export function getStorageBadgeConfig(
         label: "Cloud only",
         color: colors.accent,
         description: "Stored in Google Drive • Tap to stream or download",
+        shortDescription: "Tap to download",
       };
     case "local-only":
     default:
@@ -105,6 +109,7 @@ export function getStorageBadgeConfig(
         label: "On device",
         color: colors.textMuted,
         description: "Stored on device only • Pending cloud backup",
+        shortDescription: "Pending backup",
       };
   }
 }
