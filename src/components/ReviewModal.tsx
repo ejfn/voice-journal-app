@@ -345,11 +345,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             <View style={styles.statusRow}>
               <MaterialIcons
                 name={storageBadge.iconName}
-                size={18}
+                size={15}
                 color={storageBadge.color}
-                style={{ marginRight: 8 }}
+                style={{ marginRight: 6 }}
               />
-              <View style={{ flex: 1 }}>
+              <Text style={{ flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
                 <Text
                   style={[styles.statusTitle, { color: storageBadge.color }]}
                 >
@@ -361,9 +361,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     { color: colors.textMuted },
                   ]}
                 >
+                  {" • "}
                   {storageBadge.description}
                 </Text>
-              </View>
+              </Text>
             </View>
 
             {isUntranscribed && (
@@ -539,25 +540,41 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
           {/* Verbatim Transcript */}
           <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-              VERBATIM TRANSCRIPT
-            </Text>
-            <TextInput
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
+                VERBATIM TRANSCRIPT
+              </Text>
+              {transcript.trim().length > 0 && (
+                <Text
+                  style={[styles.wordCountText, { color: colors.textMuted }]}
+                >
+                  {transcript.trim().split(/\s+/).length} words
+                </Text>
+              )}
+            </View>
+            <ScrollView
               style={[
-                styles.textArea,
+                styles.transcriptScrollContainer,
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
-                  color: colors.text,
-                  minHeight: 130,
                 },
               ]}
-              value={transcript}
-              onChangeText={setTranscript}
-              multiline
-              placeholder="Audio transcript..."
-              placeholderTextColor={colors.textMuted}
-            />
+              nestedScrollEnabled={true}
+              showsVerticalScrollIndicator={true}
+              keyboardShouldPersistTaps="handled"
+            >
+              <TextInput
+                style={[styles.transcriptInput, { color: colors.text }]}
+                value={transcript}
+                onChangeText={setTranscript}
+                multiline
+                scrollEnabled={false}
+                textAlignVertical="top"
+                placeholder="Audio transcript..."
+                placeholderTextColor={colors.textMuted}
+              />
+            </ScrollView>
           </View>
 
           {/* Bottom Actions: Cancel & Delete aligned together */}
@@ -653,10 +670,10 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   playerContainer: {
-    padding: 16,
+    padding: 14,
     borderRadius: 16,
     borderWidth: 1,
-    marginBottom: 20,
+    marginBottom: 14,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
@@ -700,11 +717,20 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 18,
   },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 7,
+  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.8,
-    marginBottom: 7,
+  },
+  wordCountText: {
+    fontSize: 11,
+    fontWeight: "500",
   },
   input: {
     borderWidth: 1,
@@ -722,6 +748,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     textAlignVertical: "top",
+  },
+  transcriptScrollContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    minHeight: 200,
+    maxHeight: 320,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  transcriptInput: {
+    fontSize: 14.5,
+    lineHeight: 22,
+    textAlignVertical: "top",
+    padding: 0,
+    minHeight: 180,
   },
   tagWrap: {
     flexDirection: "row",
@@ -804,29 +845,29 @@ const styles = StyleSheet.create({
   },
   statusBarContainer: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginBottom: 14,
   },
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
   },
   statusTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   statusDescription: {
-    fontSize: 12,
-    marginTop: 1,
+    fontSize: 11.5,
   },
   reviewTranscriptionRow: {
-    marginTop: 8,
-    paddingTop: 8,
+    marginTop: 6,
+    paddingTop: 6,
     borderTopWidth: 1,
   },
   reviewTranscriptionText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "600",
   },
 });
