@@ -347,9 +347,9 @@ describe("RecordGestureFab", () => {
       });
     });
 
-    // When dragging away, tooltip reverts to "Slide to Import" and button returns to surface
+    // When dragging away, tooltip reverts to "Slide up to Import" and button returns to surface
     const tooltipTextNode = findByTestId(tree!, "import-tooltip-text");
-    expect(tooltipTextNode.props.children).toBe("Slide to Import");
+    expect(tooltipTextNode.props.children).toBe("Slide up to Import");
     const importButton = findByTestId(tree!, "import-button");
     const unhoveredStyle = flattenStyles(importButton.props.style);
     expect(unhoveredStyle.backgroundColor).toBe(darkColors.surface);
