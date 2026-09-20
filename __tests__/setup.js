@@ -43,33 +43,87 @@ jest.mock("expo-audio", () => ({
   setAudioModeAsync: jest.fn(async () => {}),
 }));
 
+class MockFile {
+  constructor(...uris) {
+    const raw = uris
+      .map((u) => (u && typeof u === "object" && u.uri ? u.uri : String(u)))
+      .join("/")
+      .replace(/\/+/g, "/");
+    this.uri = raw.startsWith("file:/")
+      ? raw
+      : `file:///${raw.replace(/^\/+/, "")}`;
+    this.exists =
+      MockFile.defaultExists !== undefined ? MockFile.defaultExists : true;
+    this.size =
+      MockFile.defaultSize !== undefined ? MockFile.defaultSize : 1024;
+  }
+  async base64() {
+    return "mock_base64_data";
+  }
+  async copy(destination) {
+    MockFile.mockCopy(this, destination);
+    return Promise.resolve();
+  }
+  delete() {
+    MockFile.mockDelete(this.uri);
+  }
+  async upload(url, options) {
+    return MockFile.mockUpload(url, options);
+  }
+  static async downloadFileAsync(url, destination, options) {
+    return MockFile.mockDownload(url, destination, options);
+  }
+}
+
+MockFile.mockCopy = jest.fn();
+MockFile.mockDelete = jest.fn();
+MockFile.mockUpload = jest.fn(async () => ({
+  status: 200,
+  body: "",
+  headers: {},
+}));
+MockFile.mockDownload = jest.fn(
+  async (_url, destination) => new MockFile(destination),
+);
+MockFile.defaultExists = true;
+MockFile.defaultSize = 1024;
+
+class MockDirectory {
+  constructor(...uris) {
+    const raw = uris
+      .map((u) => (u && typeof u === "object" && u.uri ? u.uri : String(u)))
+      .join("/")
+      .replace(/\/+/g, "/");
+    const formatted = raw.startsWith("file:/")
+      ? raw
+      : `file:///${raw.replace(/^\/+/, "")}`;
+    this.uri = formatted.endsWith("/") ? formatted : `${formatted}/`;
+    this.exists = true;
+  }
+  create(options) {
+    MockDirectory.mockCreate(this.uri, options);
+  }
+  delete() {
+    MockDirectory.mockDelete(this.uri);
+  }
+}
+MockDirectory.mockCreate = jest.fn();
+MockDirectory.mockDelete = jest.fn();
+
 const mockFileSystem = {
-  documentDirectory: "file:///mock/document/",
-  cacheDirectory: "file:///mock/cache/",
-  makeDirectoryAsync: jest.fn(async () => {}),
-  copyAsync: jest.fn(async () => {}),
-  deleteAsync: jest.fn(async () => {}),
-  getInfoAsync: jest.fn(async () => ({ exists: true, size: 1024 })),
-  readAsStringAsync: jest.fn(async () => "mock_base64_data"),
-  writeAsStringAsync: jest.fn(async () => {}),
-  uploadAsync: jest.fn(async () => ({ status: 200 })),
-  downloadAsync: jest.fn(async () => ({ status: 200 })),
-  FileSystemUploadType: {
+  File: MockFile,
+  Directory: MockDirectory,
+  Paths: {
+    document: new MockDirectory("file:///mock/document/"),
+    cache: new MockDirectory("file:///mock/cache/"),
+  },
+  UploadType: {
     BINARY_CONTENT: 0,
     MULTIPART: 1,
-  },
-  EncodingType: {
-    Base64: "base64",
-    UTF8: "utf8",
-  },
-  Paths: {
-    document: { uri: "file:///mock/document/" },
-    cache: { uri: "file:///mock/cache/" },
   },
 };
 
 jest.mock("expo-file-system", () => mockFileSystem);
-jest.mock("expo-file-system/legacy", () => mockFileSystem);
 
 jest.mock("@react-native-google-signin/google-signin", () => ({
   GoogleSignin: {

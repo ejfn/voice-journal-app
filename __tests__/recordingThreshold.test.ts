@@ -2,7 +2,7 @@ import {
   audioRecordingService,
   MIN_RECORDING_DURATION_SEC,
 } from "../src/services/audio/AudioRecordingService";
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 
 describe("Recording Minimum Duration Threshold", () => {
   beforeEach(() => {
@@ -22,7 +22,8 @@ describe("Recording Minimum Duration Threshold", () => {
     expect(result.durationSec).toBeLessThan(MIN_RECORDING_DURATION_SEC);
     expect(result.localUri).toBe("");
     // Should not copy to destination path
-    expect(FileSystem.copyAsync).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockCopy).not.toHaveBeenCalled();
   });
 
   it("saves and copies recordings that meet or exceed 3 seconds", async () => {

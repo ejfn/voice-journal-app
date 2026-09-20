@@ -7,14 +7,13 @@ import { entriesDao } from "../src/db/dao/entriesDao";
 import { geminiService } from "../src/services/ai/GeminiService";
 import { googleDriveService } from "../src/services/drive/GoogleDriveService";
 import { JournalEntry } from "../src/db/schema";
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 
 jest.mock("../src/db/dao/entriesDao");
 jest.mock("../src/db/dao/syncQueueDao");
 jest.mock("../src/services/ai/GeminiService");
 jest.mock("../src/services/drive/GoogleDriveService");
 jest.mock("../src/services/drive/UploadQueueService");
-jest.mock("expo-file-system/legacy");
 
 describe("TranscriptionQueueService", () => {
   let service: TranscriptionQueueService;
@@ -39,7 +38,8 @@ describe("TranscriptionQueueService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new TranscriptionQueueService();
-    (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: true });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = true;
     (geminiService.hasKeyConfigured as jest.Mock).mockResolvedValue(true);
   });
 
@@ -153,7 +153,8 @@ describe("TranscriptionQueueService", () => {
 
   it("marks as failed when file does not exist", async () => {
     (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([mockEntry]);
-    (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
 
     await service.processQueue();
 

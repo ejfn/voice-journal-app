@@ -1,16 +1,18 @@
-import * as FileSystem from "expo-file-system/legacy";
+import { Paths } from "expo-file-system";
 
 /**
  * Returns the sandboxed directory path for a given year and month.
- * e.g., FileSystem.documentDirectory + "audio/2026/09/"
+ * e.g., Paths.document.uri + "audio/2026/09/"
  */
 export const getAudioDirectory = (
   year: number | string,
   month: number | string,
 ): string => {
-  const baseDir =
-    FileSystem.documentDirectory ||
-    "file:///data/user/0/com.personal.voicejournal/files/";
+  let baseDir =
+    Paths.document?.uri || "file:///data/user/0/com.voicejournal.app/files/";
+  if (!baseDir.endsWith("/")) {
+    baseDir += "/";
+  }
   const mStr = String(month).padStart(2, "0");
   return `${baseDir}audio/${year}/${mStr}/`;
 };

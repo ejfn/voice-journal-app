@@ -1,5 +1,5 @@
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import { Directory, File } from "expo-file-system";
 import { entriesDao } from "../../db/dao/entriesDao";
 import { uploadQueueService } from "../drive/UploadQueueService";
 import { JournalEntry } from "../../db/schema";
@@ -42,16 +42,13 @@ export class AudioImportService {
         0,
         destinationPath.lastIndexOf("/") + 1,
       );
-      const dirInfo = await FileSystem.getInfoAsync(dir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+      const directory = new Directory(dir);
+      if (!directory.exists) {
+        directory.create({ intermediates: true, idempotent: true });
       }
 
       // Copy from temporary cache to sandbox
-      await FileSystem.copyAsync({
-        from: asset.uri,
-        to: destinationPath,
-      });
+      await new File(asset.uri).copy(new File(destinationPath));
 
       const title =
         asset.name.replace(/\.[^/.]+$/, "").trim() || "Imported Audio";

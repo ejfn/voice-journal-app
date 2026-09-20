@@ -54,7 +54,7 @@ jobs:
         id: build-url
         run: |
           # Get the latest SUCCESSFUL build for this project
-          BUILD_URL=$(eas build:list --platform android --profile ${{ steps.version.outputs.eas-branch }} --status finished --limit 1 --json | jq -r '.[0].artifacts | .buildUrl // .applicationArchiveUrl // empty')
+          BUILD_URL=$(eas build:list --platform android --profile ${{ steps.version.outputs.eas-branch }} --status finished --limit 1 --json | jq -r '.[0].artifacts | .applicationArchiveUrl // .buildUrl // empty')
           echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
           echo "Build URL: $BUILD_URL"
         env:

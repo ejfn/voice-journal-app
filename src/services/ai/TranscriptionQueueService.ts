@@ -2,7 +2,7 @@ import { entriesDao } from "../../db/dao/entriesDao";
 import { TranscriptionStatus } from "../../db/schema";
 import { geminiService } from "./GeminiService";
 import { uploadQueueService } from "../drive/UploadQueueService";
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 
 export type TranscriptionEvent = {
   entryId: string;
@@ -101,10 +101,8 @@ export class TranscriptionQueueService {
         }
 
         try {
-          const fileInfo = await FileSystem.getInfoAsync(
-            entry.local_audio_path,
-          );
-          if (!fileInfo.exists) {
+          const audioFile = new File(entry.local_audio_path);
+          if (!audioFile.exists) {
             await entriesDao.updateTranscriptionStatus(entry.id, "failed");
             this.notifyListeners({ entryId: entry.id, status: "failed" });
             continue;

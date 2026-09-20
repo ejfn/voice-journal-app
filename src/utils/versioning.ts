@@ -24,7 +24,7 @@ export const getAppVersion = (): string => {
     const version =
       Constants.expoConfig?.extra?.version || Constants.expoConfig?.version;
     if (version) {
-      return version;
+      return version.startsWith("v") ? version : `v${version}`;
     }
   } catch {
     // Fallback if Constants is unavailable

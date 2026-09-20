@@ -4,6 +4,7 @@ import { initDatabase, setDatabaseConnection } from "../src/db/database";
 import { JournalEntry } from "../src/db/schema";
 import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
 import { createTestDb } from "./helpers/testDb";
+import { File } from "expo-file-system";
 
 describe("GoogleDriveService Two-Way Sync Rules", () => {
   let driveService: GoogleDriveService;
@@ -305,9 +306,6 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
   });
 
   it("enforces storage threshold via LRU eviction (least accessed first, only backed-up)", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const FileSystem = require("expo-file-system/legacy");
-
     // Clip 1: accessed long ago (t = 100), backed up to Drive, size = 1000 bytes
     await entriesDao.insertEntry({
       id: "clip-old-backedup",
@@ -361,8 +359,9 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       last_accessed_at: 50,
     });
 
-    // Mock getInfoAsync to return 1000 bytes for each file
-    FileSystem.getInfoAsync.mockResolvedValue({ exists: true, size: 1000 });
+    // Each MockFile has size = 1000 bytes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultSize = 1000;
 
     // With maxBytes = 1500: total prunable is 2000 bytes (clip-old + clip-new).
     // It should evict 1 clip (clip-old-backedup, because last_accessed_at is 100 vs 500).
@@ -385,9 +384,6 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
   });
 
   it("deleting an entry deletes it from Drive and syncTwoWay deletes pending deletions without resurrecting", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const FileSystem = require("expo-file-system/legacy");
-
     const t0 = 1758290000000;
     const entryToDelete: JournalEntry = {
       id: "entry-to-delete",
@@ -412,9 +408,9 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     // 1. Calling entriesDao.deleteEntry deletes the local file and records a tombstone
     const deleted = await entriesDao.deleteEntry("entry-to-delete");
     expect(deleted).not.toBeNull();
-    expect(FileSystem.deleteAsync).toHaveBeenCalledWith(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockDelete).toHaveBeenCalledWith(
       expect.stringContaining("entry-to-delete.m4a"),
-      { idempotent: true },
     );
 
     const isMarkedDeleted =

@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 import { getDatabase } from "../database";
 import { JournalEntry, JournalEntryRow, TranscriptionStatus } from "../schema";
 import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
@@ -66,8 +66,8 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
 export const sanitizeFtsQuery = (query: string): string => {
   const trimmed = query.trim();
   if (!trimmed) return "";
-  // Remove SQLite FTS special characters except letters, numbers, and spaces
-  const clean = trimmed.replace(/[^\w\s]/g, " ").trim();
+  // Remove SQLite FTS special characters except letters, numbers, and spaces (Unicode-aware)
+  const clean = trimmed.replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
   if (!clean) return "";
   // Append wildcard to each term for prefix matching
   const words = clean.split(/\s+/).filter(Boolean);
@@ -78,7 +78,9 @@ export const entriesDao = {
   async insertEntry(entry: JournalEntry): Promise<void> {
     const db = getDatabase();
     const tagsJson = JSON.stringify(
-      entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
+      (Array.isArray(entry.tags) ? entry.tags : []).map((t) =>
+        t.toLowerCase().replace(/^#/, "").trim(),
+      ),
     );
     const updatedAt = entry.updated_at || entry.created_at;
     const transcriptionStatus = entry.transcription_status || "completed";
@@ -117,7 +119,9 @@ export const entriesDao = {
   async updateEntry(entry: JournalEntry): Promise<void> {
     const db = getDatabase();
     const tagsJson = JSON.stringify(
-      entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
+      (Array.isArray(entry.tags) ? entry.tags : []).map((t) =>
+        t.toLowerCase().replace(/^#/, "").trim(),
+      ),
     );
     const updatedAt = entry.updated_at || Date.now();
     const transcriptionStatus = entry.transcription_status || "completed";
@@ -263,7 +267,10 @@ export const entriesDao = {
         entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
       if (localAudioUri) {
         try {
-          await FileSystem.deleteAsync(localAudioUri, { idempotent: true });
+          const file = new File(localAudioUri);
+          if (file.exists) {
+            file.delete();
+          }
         } catch {
           // Ignore
         }
@@ -300,7 +307,7 @@ export const entriesDao = {
       sql = `
         SELECT e.* FROM entries e
         JOIN entries_fts fts ON e.id = fts.id,
-        json_each(e.tags)
+        json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END)
         WHERE entries_fts MATCH ? AND json_each.value = ?
         ORDER BY e.created_at DESC
       `;
@@ -315,7 +322,8 @@ export const entriesDao = {
       params.push(ftsQuery);
     } else if (tag && tag !== "all") {
       sql = `
-        SELECT e.* FROM entries e, json_each(e.tags)
+        SELECT e.* FROM entries e,
+        json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END)
         WHERE json_each.value = ?
         ORDER BY e.created_at DESC
       `;
@@ -416,7 +424,7 @@ export const entriesDao = {
   async getAllTags(): Promise<string[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<{ tag: string }>(
-      `SELECT DISTINCT json_each.value as tag FROM entries, json_each(entries.tags) WHERE json_each.value IS NOT NULL AND json_each.value != '' ORDER BY tag ASC`,
+      `SELECT DISTINCT json_each.value as tag FROM entries, json_each(CASE WHEN json_valid(entries.tags) THEN entries.tags ELSE '[]' END) WHERE json_each.value IS NOT NULL AND json_each.value != '' ORDER BY tag ASC`,
     );
     return rows.map((r) => r.tag);
   },

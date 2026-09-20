@@ -45,7 +45,7 @@
     "start": "node scripts/inject-dev-version.js && expo start",
     "android": "node scripts/inject-dev-version.js && expo start --android",
     "ios": "node scripts/inject-dev-version.js && expo start --ios",
-    "lint": "expo lint src/ __tests__/",
+    "lint": "expo lint src/ __tests__/ App.tsx index.ts",
     "test": "jest",
     "test:silent": "jest --silent",
     "typecheck": "tsc --noEmit",
