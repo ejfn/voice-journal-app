@@ -297,7 +297,7 @@ export const RecordGestureFab: React.FC<RecordGestureFabProps> = ({
             ]}
             testID="import-tooltip-text"
           >
-            {isTargetHovered ? "Release to Import" : "Slide to Import"}
+            {isTargetHovered ? "Release to Import" : "Slide up to Import"}
           </Text>
         </View>
 
