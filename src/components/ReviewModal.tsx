@@ -73,13 +73,20 @@ export function sampleAmplitudeData(
   for (let i = 0; i < count; i++) {
     const startIdx = Math.floor(i * step);
     const endIdx = Math.min(data.length, Math.floor((i + 1) * step));
-    let maxVal = 0.15;
-    for (let j = startIdx; j < endIdx; j++) {
-      if (data[j] > maxVal) {
-        maxVal = data[j];
+
+    if (startIdx === endIdx) {
+      // If the window is empty, interpolate/repeat the nearest sample
+      const sampleIdx = Math.min(data.length - 1, startIdx);
+      result.push(Math.max(0.15, data[sampleIdx]));
+    } else {
+      let maxVal = 0.15;
+      for (let j = startIdx; j < endIdx; j++) {
+        if (data[j] > maxVal) {
+          maxVal = data[j];
+        }
       }
+      result.push(maxVal);
     }
-    result.push(maxVal);
   }
   return result;
 }
@@ -105,7 +112,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (activeEntry.amplitude_data && activeEntry.amplitude_data.length > 0) {
       return sampleAmplitudeData(activeEntry.amplitude_data, 35);
     }
-    return getDeterministicWaveform(activeEntry.id, 35);
+    return new Array(35).fill(0.35);
   }, [activeEntry]);
 
   const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
@@ -413,52 +420,49 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 )}
               </TouchableOpacity>
 
-              <View style={styles.playerTimeInfo}>
-                <Text style={[styles.timerText, { color: colors.text }]}>
-                  {formatTimer(playbackState.currentTimeSec)} /{" "}
-                  {formatDuration(durationSec)}
-                </Text>
-                {/* Waveform Scrubber */}
-                <TouchableOpacity
-                  style={[
-                    styles.waveformScrubberBg,
-                    { backgroundColor: colors.surfaceAlt },
-                  ]}
-                  activeOpacity={0.9}
-                  onLayout={(e) => {
-                    setContainerWidth(e.nativeEvent.layout.width || 200);
-                  }}
-                  onPress={(e) => {
-                    const { locationX } = e.nativeEvent;
-                    const ratio = Math.max(
-                      0,
-                      Math.min(1, locationX / containerWidth),
+              {/* Waveform Scrubber - transparent/no-box */}
+              <TouchableOpacity
+                style={styles.waveformScrubberTransparent}
+                activeOpacity={0.9}
+                onLayout={(e) => {
+                  setContainerWidth(e.nativeEvent.layout.width || 150);
+                }}
+                onPress={(e) => {
+                  const { locationX } = e.nativeEvent;
+                  const ratio = Math.max(
+                    0,
+                    Math.min(1, locationX / containerWidth),
+                  );
+                  handleSeek(ratio);
+                }}
+              >
+                <View style={styles.waveformScrubberBars}>
+                  {waveformBars.map((heightFactor, index) => {
+                    const isActive =
+                      index / waveformBars.length < progressRatio;
+                    return (
+                      <View
+                        key={index}
+                        style={[
+                          styles.waveformScrubberBar,
+                          {
+                            height: Math.max(4, heightFactor * 26),
+                            backgroundColor: isActive
+                              ? colors.waveformActive
+                              : colors.waveformBar,
+                          },
+                        ]}
+                      />
                     );
-                    handleSeek(ratio);
-                  }}
-                >
-                  <View style={styles.waveformScrubberBars}>
-                    {waveformBars.map((heightFactor, index) => {
-                      const isActive =
-                        index / waveformBars.length < progressRatio;
-                      return (
-                        <View
-                          key={index}
-                          style={[
-                            styles.waveformScrubberBar,
-                            {
-                              height: Math.max(4, heightFactor * 26),
-                              backgroundColor: isActive
-                                ? colors.waveformActive
-                                : colors.waveformBar,
-                            },
-                          ]}
-                        />
-                      );
-                    })}
-                  </View>
-                </TouchableOpacity>
-              </View>
+                  })}
+                </View>
+              </TouchableOpacity>
+
+              {/* Timer Text on same row */}
+              <Text style={[styles.timerTextRow, { color: colors.text }]}>
+                {formatTimer(playbackState.currentTimeSec)}/
+                {formatDuration(durationSec)}
+              </Text>
             </View>
           </View>
 
@@ -803,21 +807,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginLeft: 2,
   },
-  playerTimeInfo: {
+  waveformScrubberTransparent: {
     flex: 1,
-  },
-  timerText: {
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 6,
-  },
-  waveformScrubberBg: {
     height: 36,
-    borderRadius: 8,
     justifyContent: "center",
-    paddingHorizontal: 8,
-    marginTop: 4,
-    width: "100%",
+    paddingHorizontal: 4,
+  },
+  timerTextRow: {
+    fontSize: 12,
+    fontWeight: "600",
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+    minWidth: 70,
   },
   waveformScrubberBars: {
     flexDirection: "row",

@@ -108,7 +108,7 @@ class AudioRecordingService {
 
   private startStatusTimer() {
     this.stopStatusTimer();
-    this.timerInterval = setInterval(() => {
+    this.timerInterval = setInterval(async () => {
       if (!this.isPaused) {
         this.durationMillis += 200;
       }
@@ -116,14 +116,12 @@ class AudioRecordingService {
         // Sample metering from recorder if available, or generate subtle simulated level
         let rawDb = -30;
         if (this.activeRecorder?.getStatusAsync) {
-          this.activeRecorder
-            .getStatusAsync()
-            .then((st: { metering?: number }) => {
-              if (st && typeof st.metering === "number") {
-                rawDb = st.metering;
-              }
-            })
-            .catch(() => {});
+          try {
+            const st = await this.activeRecorder.getStatusAsync();
+            if (st && typeof st.metering === "number") {
+              rawDb = st.metering;
+            }
+          } catch {}
         } else if (this.activeRecorder?.metering !== undefined) {
           rawDb = this.activeRecorder.metering;
         }

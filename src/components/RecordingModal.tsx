@@ -71,9 +71,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
       return;
     }
 
-    // Shift previous values and add current metering with subtle random variation for organic waveform feel
-    const jitter = (Math.random() - 0.5) * 0.12;
-    const barHeight = Math.max(0.12, Math.min(1.0, meteringLevel + jitter));
+    // Shift previous values and add current metering
+    const barHeight = Math.max(0.1, Math.min(1.0, meteringLevel));
     setWaveformBars((prev) => [...prev.slice(1), barHeight]);
   }, [meteringLevel, visible, isPaused]);
 

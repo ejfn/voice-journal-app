@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -52,9 +52,7 @@ const MainScreen: React.FC = () => {
   const [isRecordingVisible, setIsRecordingVisible] = useState<boolean>(false);
   const [recordingDurationSec, setRecordingDurationSec] = useState<number>(0);
   const [recordingMetering, setRecordingMetering] = useState<number>(0);
-  const [recordingMeteringHistory, setRecordingMeteringHistory] = useState<
-    number[]
-  >([]);
+  const recordingMeteringHistoryRef = useRef<number[]>([]);
   const [isRecordingPaused, setIsRecordingPaused] = useState<boolean>(false);
   const [isProcessingAI, setIsProcessingAI] = useState<boolean>(false);
   const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(
@@ -181,7 +179,7 @@ const MainScreen: React.FC = () => {
     setCurrentRecordingId(newId);
     setRecordingDurationSec(0);
     setRecordingMetering(0);
-    setRecordingMeteringHistory([]);
+    recordingMeteringHistoryRef.current = [];
     setIsRecordingPaused(false);
     setIsProcessingAI(false);
     setIsRecordingVisible(true);
@@ -191,7 +189,7 @@ const MainScreen: React.FC = () => {
       setRecordingMetering(status.meteringLevel);
       setIsRecordingPaused(status.isPaused);
       if (!status.isPaused) {
-        setRecordingMeteringHistory((prev) => [...prev, status.meteringLevel]);
+        recordingMeteringHistoryRef.current.push(status.meteringLevel);
       }
     });
   };
@@ -260,7 +258,7 @@ const MainScreen: React.FC = () => {
         updated_at: now,
         last_accessed_at: now,
         transcription_status: "queued",
-        amplitude_data: recordingMeteringHistory,
+        amplitude_data: recordingMeteringHistoryRef.current,
       };
 
       await entriesDao.insertEntry(newEntry);
