@@ -51,7 +51,7 @@ index 9a76836..ec86bb3 100644
  
    fun stopRecording(): Bundle {
 diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
-index 2c92303..bf1ea48 100644
+index 2c92303..372b357 100644
 --- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
 +++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
 @@ -28,6 +28,9 @@ class AudioRecordingService : Service() {
@@ -77,8 +77,20 @@ index 2c92303..bf1ea48 100644
        ACTION_STOP_RECORDING -> {
          stopRecordingAndService()
        }
-@@ -69,13 +78,14 @@ class AudioRecordingService : Service() {
+@@ -61,21 +70,37 @@ class AudioRecordingService : Service() {
+       if (notificationManager.getNotificationChannel(CHANNEL_ID) == null) {
+         val channel = NotificationChannel(
+           CHANNEL_ID,
+-          "Audio Recording",
+-          NotificationManager.IMPORTANCE_LOW
++          "Voice Recording",
++          NotificationManager.IMPORTANCE_DEFAULT
+         ).apply {
+-          description = "Shows when audio is being recorded in the background"
++          description = "Displays recording indicator and background controls"
+           setShowBadge(false)
            enableVibration(false)
++          vibrationPattern = null
            enableLights(false)
            setSound(null, null)
 +          lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -89,11 +101,25 @@ index 2c92303..bf1ea48 100644
    }
  
 -  private fun buildNotification(): Notification {
++  private fun getSmallIconResId(): Int {
++    var id = resources.getIdentifier("notification_icon", "drawable", packageName)
++    if (id == 0) {
++      id = resources.getIdentifier("ic_launcher_monochrome", "drawable", packageName)
++    }
++    if (id == 0) {
++      id = applicationInfo.icon
++    }
++    if (id == 0) {
++      id = android.R.drawable.presence_audio_online
++    }
++    return id
++  }
++
 +  private fun buildNotification(paused: Boolean = false): Notification {
      val stopIntent = Intent(this, AudioRecordingService::class.java).apply {
        action = ACTION_STOP_RECORDING
      }
-@@ -86,6 +96,16 @@ class AudioRecordingService : Service() {
+@@ -86,6 +111,16 @@ class AudioRecordingService : Service() {
        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
      )
  
@@ -110,20 +136,23 @@ index 2c92303..bf1ea48 100644
      val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let { appIntent ->
        PendingIntent.getActivity(
          this,
-@@ -95,26 +115,45 @@ class AudioRecordingService : Service() {
+@@ -95,26 +130,53 @@ class AudioRecordingService : Service() {
        )
      }
  
 -    return NotificationCompat.Builder(this, CHANNEL_ID)
 -      .setContentTitle("Recording audio")
 -      .setContentText("Tap to return to app")
-+    val title = if (paused) "Recording Paused" else "Recording Audio"
-+    val content = if (paused) "Tap Resume to continue • Tap to return to app" else "Recording in background • Tap to return to app"
+-      .setSmallIcon(android.R.drawable.ic_btn_speak_now)
++    val title = if (paused) "Recording Paused" else "Recording Voice Journal"
++    val content = if (paused) "Tap Resume to continue recording" else "Recording audio in background • Tap to open"
 +
 +    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
 +      .setContentTitle(title)
 +      .setContentText(content)
-       .setSmallIcon(android.R.drawable.ic_btn_speak_now)
++      .setSmallIcon(getSmallIconResId())
++      .setColor(0xFFE53935.toInt()) // Red accent color for recording
++      .setColorized(true)
        .setOngoing(true)
        .setContentIntent(contentIntent)
 -      .addAction(
@@ -132,28 +161,35 @@ index 2c92303..bf1ea48 100644
 -        stopPendingIntent
 -      )
        .setCategory(NotificationCompat.CATEGORY_SERVICE)
++      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
        .setSilent(true)
-       .setShowWhen(false)
+-      .setShowWhen(false)
 -      .setVisibility(NotificationCompat.VISIBILITY_SECRET) // Hide from lock screen on secure devices
 -      .build()
++      .setShowWhen(true)
 +      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
++      .setStyle(
++        NotificationCompat.BigTextStyle()
++          .setBigContentTitle(title)
++          .bigText(content)
++      )
 +
 +    if (paused) {
 +      builder.addAction(
-+        android.R.drawable.ic_media_play,
++        androidx.media3.session.R.drawable.media3_icon_play,
 +        "Resume",
 +        togglePendingIntent
 +      )
 +    } else {
 +      builder.addAction(
-+        android.R.drawable.ic_media_pause,
++        androidx.media3.session.R.drawable.media3_icon_pause,
 +        "Pause",
 +        togglePendingIntent
 +      )
 +    }
 +
 +    builder.addAction(
-+      android.R.drawable.ic_delete,
++      android.R.drawable.ic_menu_close_clear_cancel,
 +      "Stop",
 +      stopPendingIntent
 +    )
@@ -167,7 +203,7 @@ index 2c92303..bf1ea48 100644
  
      try {
        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-@@ -141,6 +180,38 @@ class AudioRecordingService : Service() {
+@@ -141,6 +203,38 @@ class AudioRecordingService : Service() {
      isRunningForeground = false
    }
  
@@ -206,7 +242,7 @@ index 2c92303..bf1ea48 100644
    fun registerRecorder(recorder: AudioRecorder) {
      synchronized(recorderLock) {
        activeRecorders.removeAll { it.get() == null }
-@@ -151,8 +222,11 @@ class AudioRecordingService : Service() {
+@@ -151,8 +245,11 @@ class AudioRecordingService : Service() {
  
        activeRecorders.add(WeakReference(recorder))
  
@@ -218,8 +254,12 @@ index 2c92303..bf1ea48 100644
        }
      }
    }
-@@ -197,6 +271,8 @@ class AudioRecordingService : Service() {
-     private const val CHANNEL_ID = "expo_audio_recording_channel"
+@@ -194,9 +291,11 @@ class AudioRecordingService : Service() {
+   }
+ 
+   companion object {
+-    private const val CHANNEL_ID = "expo_audio_recording_channel"
++    private const val CHANNEL_ID = "voice_journal_recording_v2"
      private const val NOTIFICATION_ID = 2001
      internal const val ACTION_START_RECORDING = "expo.modules.audio.action.START_RECORDING"
 +    internal const val ACTION_PAUSE_RECORDING = "expo.modules.audio.action.PAUSE_RECORDING"
