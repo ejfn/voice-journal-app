@@ -146,7 +146,7 @@ class AudioPlaybackService {
     }
 
     // If waveform is missing, ensure recording permissions on Android so setAudioSamplingEnabled doesn't silently fail
-    if (this.hasMissingWaveform) {
+    if (this.hasMissingWaveform && Platform.OS === "android") {
       try {
         if (
           typeof AudioModule?.requestRecordingPermissionsAsync === "function"

@@ -126,15 +126,24 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
     onSeek(target);
   };
 
-  // Dynamic auto-gain: scales quiet recordings (whispers) up while leaving normal/loud audio natural
+  // Dynamic auto-gain: scales quiet recordings (whispers) up while leaving normal/loud audio natural.
+  // Bypasses auto-gain for fallback (empty) or uniform baseline waveforms so placeholders stay neutral.
   const dynamicGain = useMemo(() => {
+    if (!waveformData || waveformData.length === 0) {
+      return 1.0;
+    }
+    // Check for uniform flat baseline (e.g. all 0.2 dummy bars)
+    if (audioBars.every((v) => Math.abs(v - audioBars[0]) < 0.001)) {
+      return 1.0;
+    }
+
     let peak = 0;
     for (const v of audioBars) {
       if (v > peak) peak = v;
     }
     if (peak <= 0.05) return 1.0;
     return Math.max(0.85, Math.min(3.0, 0.85 / peak));
-  }, [audioBars]);
+  }, [audioBars, waveformData]);
 
   return (
     <View
