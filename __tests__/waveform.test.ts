@@ -81,4 +81,10 @@ describe("sampleAmplitudeData", () => {
     expect(res[2]).toBeCloseTo(1.0, 3);
     expect(res[3]).toBeCloseTo(1.0, 3);
   });
+
+  it("does not amplify silent recordings to full height", () => {
+    const input = [0, 0, 0, 0];
+    const res = sampleAmplitudeData(input, 4);
+    expect(res).toEqual([0.15, 0.15, 0.15, 0.15]);
+  });
 });

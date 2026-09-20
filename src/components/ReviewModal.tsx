@@ -12,6 +12,8 @@ import {
   StatusBar,
   ActivityIndicator,
   Keyboard,
+  Animated,
+  Easing,
 } from "react-native";
 import { File } from "expo-file-system";
 import { JournalEntry } from "../db/schema";
@@ -95,7 +97,7 @@ export function sampleAmplitudeData(
 
   // If the peak is non-zero, scale/amplify all bars so the peak reaches 1.0.
   // We clamp each bar to a minimum height factor of 0.15 to keep it visually pleasing.
-  if (peak > 0) {
+  if (peak > 0.15) {
     const scaleFactor = 1.0 / peak;
     return result.map((val) =>
       Math.max(0.15, Math.min(1.0, val * scaleFactor)),
@@ -120,6 +122,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const activeEntry = currentEntry || entry;
 
   const [containerWidth, setContainerWidth] = useState(200);
+  const cursorPosition = useRef(new Animated.Value(0)).current;
 
   const waveformBars = useMemo(() => {
     if (!activeEntry) return [];
@@ -329,14 +332,30 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     onClose();
   };
 
-  if (!activeEntry) return null;
-
   const durationSec =
-    activeEntry.duration_sec || playbackState.durationSec || 1;
+    activeEntry?.duration_sec || playbackState.durationSec || 1;
   const progressRatio = Math.min(
     1,
     Math.max(0, playbackState.currentTimeSec / durationSec),
   );
+
+  useEffect(() => {
+    Animated.timing(cursorPosition, {
+      toValue: progressRatio * containerWidth,
+      duration: playbackState.isPlaying ? 120 : 0,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }).start();
+  }, [
+    containerWidth,
+    cursorPosition,
+    playbackState.isPlaying,
+    progressRatio,
+    waveformBars.length,
+  ]);
+
+  if (!activeEntry) return null;
+
   const storageStatus = computeStorageStatus(activeEntry);
   const storageBadge = getStorageBadgeConfig(storageStatus, colors);
   const isUntranscribed =
@@ -469,6 +488,24 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       />
                     );
                   })}
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.waveformCursor,
+                      {
+                        backgroundColor: colors.waveformActive,
+                        transform: [
+                          {
+                            translateX: cursorPosition.interpolate({
+                              inputRange: [0, containerWidth],
+                              outputRange: [-1, containerWidth - 1],
+                              extrapolate: "clamp",
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
                 </View>
               </TouchableOpacity>
 
@@ -840,10 +877,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     height: "100%",
     width: "100%",
+    position: "relative",
   },
   waveformScrubberBar: {
     width: 3.5,
     borderRadius: 1.75,
+  },
+  waveformCursor: {
+    position: "absolute",
+    width: 2,
+    height: "100%",
+    borderRadius: 1,
   },
   section: {
     marginBottom: 18,
