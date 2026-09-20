@@ -18,7 +18,13 @@ export interface DriveFolderInfo {
  */
 export type DriveTransferEvent = {
   entryId: string;
-  status: "uploading" | "downloading" | "uploaded" | "synced" | "failed";
+  status:
+    | "uploading"
+    | "downloading"
+    | "uploaded"
+    | "downloaded"
+    | "synced"
+    | "failed";
 };
 
 export type DriveTransferListener = (event: DriveTransferEvent) => void;
@@ -695,7 +701,7 @@ export class GoogleDriveService {
       await entriesDao.markAudioAccessed(entryId);
       this.notifyTransferListeners({
         entryId,
-        status: "synced",
+        status: "downloaded",
       });
 
       // Auto-maintain storage threshold in background after downloading new audio
