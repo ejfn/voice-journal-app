@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -39,6 +39,29 @@ interface ReviewModalProps {
   onRetryTranscription?: (id: string) => void;
 }
 
+export function getDeterministicWaveform(
+  id: string,
+  count: number = 35,
+): number[] {
+  const result: number[] = [];
+  let seed = 0;
+  for (let i = 0; i < id.length; i++) {
+    seed += id.charCodeAt(i);
+  }
+
+  for (let i = 0; i < count; i++) {
+    const t = i / (count - 1);
+    const taper = Math.sin(t * Math.PI); // 0 at ends, 1 in middle
+    const r =
+      Math.sin(seed + i * 17.3) * 0.4 +
+      Math.cos(seed * 2 + i * 31.7) * 0.2 +
+      0.6; // normalized around 0.6
+    const heightFactor = Math.max(0.15, Math.min(1.0, r * taper));
+    result.push(heightFactor);
+  }
+  return result;
+}
+
 export const ReviewModal: React.FC<ReviewModalProps> = ({
   visible,
   entry,
@@ -51,6 +74,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const { showToast } = useToast();
 
   const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(entry);
+  const activeEntry = currentEntry || entry;
+
+  const [containerWidth, setContainerWidth] = useState(200);
+
+  const waveformBars = useMemo(() => {
+    return activeEntry ? getDeterministicWaveform(activeEntry.id, 35) : [];
+  }, [activeEntry]);
+
   const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
@@ -251,7 +282,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     onClose();
   };
 
-  const activeEntry = currentEntry || entry;
   if (!activeEntry) return null;
 
   const durationSec =
@@ -362,33 +392,45 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   {formatTimer(playbackState.currentTimeSec)} /{" "}
                   {formatDuration(durationSec)}
                 </Text>
-                {/* Progress bar */}
+                {/* Waveform Scrubber */}
                 <TouchableOpacity
                   style={[
-                    styles.progressBarBg,
+                    styles.waveformScrubberBg,
                     { backgroundColor: colors.surfaceAlt },
                   ]}
-                  activeOpacity={1}
+                  activeOpacity={0.9}
+                  onLayout={(e) => {
+                    setContainerWidth(e.nativeEvent.layout.width || 200);
+                  }}
                   onPress={(e) => {
                     const { locationX } = e.nativeEvent;
-                    // Approximate full width of progress bar (parent width minus paddings)
-                    const totalWidth = 200;
                     const ratio = Math.max(
                       0,
-                      Math.min(1, locationX / totalWidth),
+                      Math.min(1, locationX / containerWidth),
                     );
                     handleSeek(ratio);
                   }}
                 >
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        backgroundColor: colors.primary,
-                        width: `${Math.round(progressRatio * 100)}%`,
-                      },
-                    ]}
-                  />
+                  <View style={styles.waveformScrubberBars}>
+                    {waveformBars.map((heightFactor, index) => {
+                      const isActive =
+                        index / waveformBars.length < progressRatio;
+                      return (
+                        <View
+                          key={index}
+                          style={[
+                            styles.waveformScrubberBar,
+                            {
+                              height: Math.max(4, heightFactor * 26),
+                              backgroundColor: isActive
+                                ? colors.waveformActive
+                                : colors.waveformBar,
+                            },
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
                 </TouchableOpacity>
               </View>
             </View>
@@ -743,14 +785,24 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 6,
   },
-  progressBarBg: {
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
+  waveformScrubberBg: {
+    height: 36,
+    borderRadius: 8,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    marginTop: 4,
+    width: "100%",
   },
-  progressBarFill: {
+  waveformScrubberBars: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     height: "100%",
-    borderRadius: 3,
+    width: "100%",
+  },
+  waveformScrubberBar: {
+    width: 3.5,
+    borderRadius: 1.75,
   },
   section: {
     marginBottom: 18,

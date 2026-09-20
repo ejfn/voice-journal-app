@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Animated,
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
 import { formatTimer } from "../utils/paths";
@@ -41,6 +42,23 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
   const [waveformBars, setWaveformBars] = useState<number[]>(
     new Array(19).fill(0.1),
   );
+
+  // Animated values for smooth transition
+  const animatedBars = useRef(
+    Array.from({ length: 19 }, () => new Animated.Value(0.1)),
+  ).current;
+
+  useEffect(() => {
+    const animations = animatedBars.map((animVal, idx) => {
+      return Animated.spring(animVal, {
+        toValue: waveformBars[idx] ?? 0.1,
+        useNativeDriver: false,
+        tension: 40,
+        friction: 7,
+      });
+    });
+    Animated.parallel(animations).start();
+  }, [waveformBars, animatedBars]);
 
   useEffect(() => {
     if (!visible) {
@@ -143,13 +161,17 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
 
               {/* Dynamic Waveform Bars */}
               <View style={styles.waveformContainer}>
-                {waveformBars.map((heightFactor, index) => (
-                  <View
+                {animatedBars.map((animVal, index) => (
+                  <Animated.View
                     key={index}
                     style={[
                       styles.waveformBar,
                       {
-                        height: Math.max(6, heightFactor * 54),
+                        height: animVal.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [6, 54],
+                          extrapolate: "clamp",
+                        }),
                         backgroundColor: isPaused
                           ? colors.waveformBar
                           : colors.waveformActive,
