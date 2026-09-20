@@ -1,4 +1,7 @@
-import { getDeterministicWaveform } from "../src/components/ReviewModal";
+import {
+  getDeterministicWaveform,
+  sampleAmplitudeData,
+} from "../src/components/ReviewModal";
 
 describe("Deterministic Waveform Generator", () => {
   it("generates the default number of bars", () => {
@@ -39,5 +42,39 @@ describe("Deterministic Waveform Generator", () => {
     // The middle should have some larger peak values
     const maxVal = Math.max(...bars);
     expect(maxVal).toBeGreaterThan(0.3);
+  });
+});
+
+describe("sampleAmplitudeData", () => {
+  it("returns filled default array when input is empty", () => {
+    const res = sampleAmplitudeData([], 10);
+    expect(res).toHaveLength(10);
+    expect(res.every((v) => v === 0.15)).toBe(true);
+  });
+
+  it("downsamples a larger array correctly", () => {
+    const input = [0.1, 0.8, 0.2, 0.9, 0.3, 0.5, 0.1, 0.2];
+    const res = sampleAmplitudeData(input, 4);
+    expect(res).toHaveLength(4);
+    // step size = 8 / 4 = 2.
+    // chunk 1: [0.1, 0.8] -> max is 0.8
+    // chunk 2: [0.2, 0.9] -> max is 0.9
+    // chunk 3: [0.3, 0.5] -> max is 0.5
+    // chunk 4: [0.1, 0.2] -> max is 0.2
+    expect(res).toEqual([0.8, 0.9, 0.5, 0.2]);
+  });
+
+  it("upsamples or handles short array correctly", () => {
+    const input = [0.5, 0.6];
+    const res = sampleAmplitudeData(input, 4);
+    expect(res).toHaveLength(4);
+    // step size = 2 / 4 = 0.5
+    // i=0: start=0, end=0 -> max is 0.15 (or input[0] since startIdx=0, endIdx=0 wait endIdx is floor(0.5)=0)
+    // Actually:
+    // i=0: startIdx = floor(0) = 0, endIdx = floor(0.5) = 0. loop empty, maxVal is 0.15
+    // i=1: startIdx = floor(0.5) = 0, endIdx = floor(1) = 1. loop j=0: data[0] is 0.5 -> maxVal is 0.5
+    // i=2: startIdx = floor(1) = 1, endIdx = floor(1.5) = 1. loop empty, maxVal is 0.15
+    // i=3: startIdx = floor(1.5) = 1, endIdx = floor(2) = 2. loop j=1: data[1] is 0.6 -> maxVal is 0.6
+    expect(res).toEqual([0.15, 0.5, 0.15, 0.6]);
   });
 });

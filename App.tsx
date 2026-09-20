@@ -52,6 +52,9 @@ const MainScreen: React.FC = () => {
   const [isRecordingVisible, setIsRecordingVisible] = useState<boolean>(false);
   const [recordingDurationSec, setRecordingDurationSec] = useState<number>(0);
   const [recordingMetering, setRecordingMetering] = useState<number>(0);
+  const [recordingMeteringHistory, setRecordingMeteringHistory] = useState<
+    number[]
+  >([]);
   const [isRecordingPaused, setIsRecordingPaused] = useState<boolean>(false);
   const [isProcessingAI, setIsProcessingAI] = useState<boolean>(false);
   const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(
@@ -178,6 +181,7 @@ const MainScreen: React.FC = () => {
     setCurrentRecordingId(newId);
     setRecordingDurationSec(0);
     setRecordingMetering(0);
+    setRecordingMeteringHistory([]);
     setIsRecordingPaused(false);
     setIsProcessingAI(false);
     setIsRecordingVisible(true);
@@ -186,6 +190,9 @@ const MainScreen: React.FC = () => {
       setRecordingDurationSec(Math.floor(status.durationMillis / 1000));
       setRecordingMetering(status.meteringLevel);
       setIsRecordingPaused(status.isPaused);
+      if (!status.isPaused) {
+        setRecordingMeteringHistory((prev) => [...prev, status.meteringLevel]);
+      }
     });
   };
 
@@ -253,6 +260,7 @@ const MainScreen: React.FC = () => {
         updated_at: now,
         last_accessed_at: now,
         transcription_status: "queued",
+        amplitude_data: recordingMeteringHistory,
       };
 
       await entriesDao.insertEntry(newEntry);

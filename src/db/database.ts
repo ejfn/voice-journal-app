@@ -51,5 +51,13 @@ export const initDatabase = async (
   }
   const db = getDatabase();
   await db.execAsync(SCHEMA_SQL);
+
+  // Migration to add amplitude_data column if it does not exist
+  try {
+    await db.execAsync("ALTER TABLE entries ADD COLUMN amplitude_data TEXT;");
+  } catch {
+    // Ignore error if column already exists or table isn't fully created
+  }
+
   return db;
 };

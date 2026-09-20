@@ -40,6 +40,18 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
   const localAudioPath =
     row.is_audio_cached === 1 ? canonicalPath : row.local_audio_path || null;
 
+  let parsedAmplitude: number[] | undefined;
+  if (row.amplitude_data) {
+    try {
+      const parsed = JSON.parse(row.amplitude_data);
+      if (Array.isArray(parsed)) {
+        parsedAmplitude = parsed.map(Number);
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
   return {
     id: row.id,
     title: row.title,
@@ -60,6 +72,7 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
       (row.transcription_status as TranscriptionStatus) || "completed",
     transcription_retry_count: row.transcription_retry_count ?? 0,
     transcription_next_retry_at: row.transcription_next_retry_at ?? null,
+    amplitude_data: parsedAmplitude,
   };
 };
 
@@ -86,13 +99,17 @@ export const entriesDao = {
     const transcriptionStatus = entry.transcription_status || "completed";
     const retryCount = entry.transcription_retry_count ?? 0;
     const nextRetryAt = entry.transcription_next_retry_at ?? null;
+    const amplitudeJson = entry.amplitude_data
+      ? JSON.stringify(entry.amplitude_data)
+      : null;
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
         is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
-        transcription_status, transcription_retry_count, transcription_next_retry_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        transcription_status, transcription_retry_count, transcription_next_retry_at,
+        amplitude_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -112,6 +129,7 @@ export const entriesDao = {
         transcriptionStatus,
         retryCount,
         nextRetryAt,
+        amplitudeJson,
       ],
     );
   },
@@ -125,12 +143,16 @@ export const entriesDao = {
     );
     const updatedAt = entry.updated_at || Date.now();
     const transcriptionStatus = entry.transcription_status || "completed";
+    const amplitudeJson = entry.amplitude_data
+      ? JSON.stringify(entry.amplitude_data)
+      : null;
     await db.runAsync(
       `UPDATE entries SET
         title = ?, summary = ?, transcript = ?, tags = ?, duration_sec = ?,
         source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
         drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
-        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?
+        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?,
+        amplitude_data = ?
       WHERE id = ?`,
       [
         entry.title,
@@ -147,6 +169,7 @@ export const entriesDao = {
         entry.drive_synced_at ?? null,
         entry.last_accessed_at || Date.now(),
         transcriptionStatus,
+        amplitudeJson,
         entry.id,
       ],
     );

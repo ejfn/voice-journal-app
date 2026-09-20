@@ -20,6 +20,7 @@ export interface JournalEntry {
   transcription_status?: TranscriptionStatus;
   transcription_retry_count?: number;
   transcription_next_retry_at?: number | null;
+  amplitude_data?: number[];
 }
 
 export interface JournalEntryRow {
@@ -41,6 +42,7 @@ export interface JournalEntryRow {
   transcription_status?: string | null;
   transcription_retry_count?: number | null;
   transcription_next_retry_at?: number | null;
+  amplitude_data?: string | null;
 }
 
 export interface SyncQueueItem {
@@ -71,7 +73,8 @@ CREATE TABLE IF NOT EXISTS entries (
   last_accessed_at INTEGER NOT NULL,
   transcription_status TEXT DEFAULT 'completed',
   transcription_retry_count INTEGER DEFAULT 0,
-  transcription_next_retry_at INTEGER
+  transcription_next_retry_at INTEGER,
+  amplitude_data TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(

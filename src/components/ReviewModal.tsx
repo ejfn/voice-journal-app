@@ -62,6 +62,28 @@ export function getDeterministicWaveform(
   return result;
 }
 
+export function sampleAmplitudeData(
+  data: number[],
+  count: number = 35,
+): number[] {
+  if (data.length === 0) return new Array(count).fill(0.15);
+
+  const result: number[] = [];
+  const step = data.length / count;
+  for (let i = 0; i < count; i++) {
+    const startIdx = Math.floor(i * step);
+    const endIdx = Math.min(data.length, Math.floor((i + 1) * step));
+    let maxVal = 0.15;
+    for (let j = startIdx; j < endIdx; j++) {
+      if (data[j] > maxVal) {
+        maxVal = data[j];
+      }
+    }
+    result.push(maxVal);
+  }
+  return result;
+}
+
 export const ReviewModal: React.FC<ReviewModalProps> = ({
   visible,
   entry,
@@ -79,7 +101,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const [containerWidth, setContainerWidth] = useState(200);
 
   const waveformBars = useMemo(() => {
-    return activeEntry ? getDeterministicWaveform(activeEntry.id, 35) : [];
+    if (!activeEntry) return [];
+    if (activeEntry.amplitude_data && activeEntry.amplitude_data.length > 0) {
+      return sampleAmplitudeData(activeEntry.amplitude_data, 35);
+    }
+    return getDeterministicWaveform(activeEntry.id, 35);
   }, [activeEntry]);
 
   const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);

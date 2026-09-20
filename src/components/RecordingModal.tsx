@@ -38,14 +38,14 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
 }) => {
   const { colors } = useTheme();
   const canCancel = durationSec < MIN_RECORDING_DURATION_SEC;
-  // Array of 19 bars for waveform visualization
+  // Array of 29 bars for waveform visualization
   const [waveformBars, setWaveformBars] = useState<number[]>(
-    new Array(19).fill(0.1),
+    new Array(29).fill(0.1),
   );
 
   // Animated values for smooth transition
   const animatedBars = useRef(
-    Array.from({ length: 19 }, () => new Animated.Value(0.1)),
+    Array.from({ length: 29 }, () => new Animated.Value(0.1)),
   ).current;
 
   useEffect(() => {
@@ -62,7 +62,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
 
   useEffect(() => {
     if (!visible) {
-      setWaveformBars(new Array(19).fill(0.1));
+      setWaveformBars(new Array(29).fill(0.1));
       return;
     }
 
@@ -169,7 +169,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       {
                         height: animVal.interpolate({
                           inputRange: [0, 1],
-                          outputRange: [6, 54],
+                          outputRange: [6, 74],
                           extrapolate: "clamp",
                         }),
                         backgroundColor: isPaused
@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 60,
+    height: 80,
     gap: 4,
     marginBottom: 16,
     width: "100%",
