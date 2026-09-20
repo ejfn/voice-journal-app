@@ -516,4 +516,13 @@ export const entriesDao = {
 
     return sections;
   },
+
+  async updateWaveform(id: string, waveform: number[]): Promise<void> {
+    const db = getDatabase();
+    const waveformJson = JSON.stringify(waveform);
+    await db.runAsync(`UPDATE entries SET waveform_data = ? WHERE id = ?`, [
+      waveformJson,
+      id,
+    ]);
+  },
 };
