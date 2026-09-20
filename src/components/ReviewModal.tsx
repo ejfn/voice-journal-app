@@ -66,7 +66,7 @@ export function sampleAmplitudeData(
   data: number[],
   count: number = 35,
 ): number[] {
-  if (data.length === 0) return new Array(count).fill(0.15);
+  if (data.length === 0) return new Array(count).fill(0.35);
 
   const result: number[] = [];
   const step = data.length / count;
@@ -88,7 +88,21 @@ export function sampleAmplitudeData(
       result.push(maxVal);
     }
   }
-  return result;
+
+  // --- AMPLIFIER (AMPLITUDE NORMALIZATION) ---
+  // Find the peak amplitude in the downsampled result
+  const peak = Math.max(...result);
+
+  // If the peak is non-zero, scale/amplify all bars so the peak reaches 1.0.
+  // We clamp each bar to a minimum height factor of 0.15 to keep it visually pleasing.
+  if (peak > 0) {
+    const scaleFactor = 1.0 / peak;
+    return result.map((val) =>
+      Math.max(0.15, Math.min(1.0, val * scaleFactor)),
+    );
+  }
+
+  return result.map((val) => Math.max(0.15, val));
 }
 
 export const ReviewModal: React.FC<ReviewModalProps> = ({
@@ -112,7 +126,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (activeEntry.amplitude_data && activeEntry.amplitude_data.length > 0) {
       return sampleAmplitudeData(activeEntry.amplitude_data, 35);
     }
-    return new Array(35).fill(0.35);
+    return getDeterministicWaveform(activeEntry.id, 35);
   }, [activeEntry]);
 
   const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
