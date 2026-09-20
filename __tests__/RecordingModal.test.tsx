@@ -74,8 +74,10 @@ describe("RecordingModal", () => {
       validRecordingTree!,
     )[0].props.onRequestClose as () => void;
 
-    beforeThresholdCloseHandler();
-    validRecordingCloseHandler();
+    void act(() => {
+      beforeThresholdCloseHandler();
+      validRecordingCloseHandler();
+    });
 
     expect(beforeThresholdCancel).toHaveBeenCalledTimes(1);
     expect(validRecordingCancel).not.toHaveBeenCalled();
