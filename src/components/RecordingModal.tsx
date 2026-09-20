@@ -70,8 +70,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
         }
       }}
     >
-      <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.6)" }]}> 
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}> 
+      <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
+        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
           {isProcessing ? (
             <View style={styles.processingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
@@ -160,10 +160,14 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
               </View>
 
               {/* Status Hint */}
-              <Text style={[styles.statusHint, { color: colors.textMuted }]}> 
+              <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
-                  ? "Recording paused. Tap resume to continue, or stop to save."
-                  : "Speak naturally. Tap pause to take a break, or stop when finished."}
+                  ? durationSec < MIN_RECORDING_DURATION_SEC
+                    ? `Recording paused (< ${MIN_RECORDING_DURATION_SEC}s). Tap resume to continue, or discard.`
+                    : "Recording paused. Tap resume to continue, or stop to save."
+                  : durationSec < MIN_RECORDING_DURATION_SEC
+                    ? `Speak naturally. Minimum ${MIN_RECORDING_DURATION_SEC} seconds to save.`
+                    : "Speak naturally. Tap pause to take a break, or stop when finished."}
               </Text>
 
               {/* Action Buttons */}
