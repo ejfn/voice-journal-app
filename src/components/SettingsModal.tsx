@@ -642,39 +642,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </Text>
             </View>
 
-            {/* Hint / AI Studio Link */}
-            <TouchableOpacity
-              style={[
-                styles.byokHintCard,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                },
-              ]}
-              onPress={handleOpenAIStudio}
-              activeOpacity={0.7}
-            >
-              <View style={styles.byokHintLeft}>
-                <MaterialIcons
-                  name="vpn-key"
-                  size={16}
-                  color={colors.primary}
-                  style={{ marginRight: 8 }}
-                />
-                <Text
-                  style={[styles.byokHintText, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  Need a key? Get one free at Google AI Studio
-                </Text>
-              </View>
-              <MaterialIcons
-                name="open-in-new"
-                size={14}
-                color={colors.primary}
-              />
-            </TouchableOpacity>
-
             {/* Input Row */}
             <View style={styles.inputContainer}>
               <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
@@ -739,6 +706,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* Hint / AI Studio Link */}
+            <TouchableOpacity
+              style={[
+                styles.byokHintCard,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                  marginTop: 10,
+                  marginBottom: 4,
+                },
+              ]}
+              onPress={handleOpenAIStudio}
+              activeOpacity={0.7}
+            >
+              <View style={styles.byokHintLeft}>
+                <MaterialIcons
+                  name="vpn-key"
+                  size={16}
+                  color={colors.primary}
+                  style={{ marginRight: 8 }}
+                />
+                <Text
+                  style={[styles.byokHintText, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  Need a key? Get one free at Google AI Studio
+                </Text>
+              </View>
+              <MaterialIcons
+                name="open-in-new"
+                size={14}
+                color={colors.primary}
+              />
+            </TouchableOpacity>
 
             {/* Action Buttons */}
             <View style={[styles.buttonRow, { marginTop: 12 }]}>
