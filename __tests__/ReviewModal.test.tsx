@@ -156,9 +156,29 @@ describe("ReviewModal", () => {
     const textInputs = tree.root.findAllByProps({
       placeholder: "Headline...",
     }) as { props: { onChangeText: (value: string) => void } }[];
+    const addTagInputs = tree.root.findAllByProps({
+      placeholder: "Add new tag...",
+    }) as {
+      props: {
+        onChangeText: (value: string) => void;
+        onSubmitEditing: () => void;
+      };
+    }[];
+    const removeLegacyTagButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Remove tag test",
+    }) as { props: { onPress: () => void } }[];
 
     void act(() => {
       textInputs[0].props.onChangeText("Manual title");
+    });
+    void act(() => {
+      addTagInputs[0].props.onChangeText("manual");
+    });
+    void act(() => {
+      addTagInputs[0].props.onSubmitEditing();
+    });
+    void act(() => {
+      removeLegacyTagButtons[0].props.onPress();
     });
 
     void act(() => {
@@ -172,7 +192,7 @@ describe("ReviewModal", () => {
                 title: "AI title",
                 summary: "AI summary",
                 transcript: "AI transcript",
-                tags: ["test", "ai"],
+                tags: ["test", "ai", "fresh"],
                 transcription_status: "completed",
               }}
               onSave={onSave}
@@ -196,7 +216,7 @@ describe("ReviewModal", () => {
         title: "Manual title",
         summary: "AI summary",
         transcript: "AI transcript",
-        tags: ["test", "ai"],
+        tags: ["manual"],
       }),
     );
   });
