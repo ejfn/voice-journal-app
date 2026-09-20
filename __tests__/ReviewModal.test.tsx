@@ -79,14 +79,14 @@ describe("ReviewModal", () => {
         updated_at: 1500,
       } as JournalEntry,
       expectedLabel: "Synced",
-      removedShort: "Backed up",
+      expectedDescription: "Backed up",
       forbiddenText: "Safely backed up in Google Drive",
     },
     {
       name: "local-only",
       entry: baseEntry,
       expectedLabel: "On device",
-      removedShort: "Pending backup",
+      expectedDescription: "Pending backup",
       forbiddenText: "Stored on device only",
     },
     {
@@ -100,12 +100,12 @@ describe("ReviewModal", () => {
         local_audio_path: null,
       } as JournalEntry,
       expectedLabel: "Cloud only",
-      removedShort: "Tap to download",
+      expectedDescription: "Tap to download",
       forbiddenText: "Tap to stream or download",
     },
   ])(
-    "renders label-only status row for $name status",
-    ({ expectedLabel, removedShort, forbiddenText, entry }) => {
+    "renders status row with short description for $name status",
+    ({ expectedLabel, expectedDescription, forbiddenText, entry }) => {
       const tree = renderModal(entry);
       const renderedText = tree.root
         .findAll(() => true)
@@ -113,7 +113,7 @@ describe("ReviewModal", () => {
         .join(" ");
 
       expect(renderedText).toContain(expectedLabel);
-      expect(renderedText).not.toContain(removedShort);
+      expect(renderedText).toContain(expectedDescription);
       expect(renderedText).not.toContain(forbiddenText);
     },
   );

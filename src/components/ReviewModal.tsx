@@ -408,15 +408,21 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 color={storageBadge.color}
                 style={{ marginRight: 6 }}
               />
-              <Text
-                style={[
-                  styles.statusTitle,
-                  { color: storageBadge.color, flex: 1 },
-                ]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {storageBadge.label}
+              <Text style={{ flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
+                <Text
+                  style={[styles.statusTitle, { color: storageBadge.color }]}
+                >
+                  {storageBadge.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.statusDescription,
+                    { color: colors.textMuted },
+                  ]}
+                >
+                  {" • "}
+                  {storageBadge.description}
+                </Text>
               </Text>
             </View>
 
