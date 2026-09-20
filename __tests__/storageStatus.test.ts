@@ -31,6 +31,7 @@ describe("Storage Status Computation (Issue #11)", () => {
     const badge = getStorageBadgeConfig(status, lightColors);
     expect(badge.iconName).toBe("cloud-off");
     expect(badge.label).toBe("On device");
+    expect(badge.description).toBe("Pending backup");
   });
 
   it("returns 'syncing' when options.isItemSyncing is true", () => {
@@ -40,6 +41,7 @@ describe("Storage Status Computation (Issue #11)", () => {
     const badge = getStorageBadgeConfig(status, lightColors);
     expect(badge.iconName).toBe("cloud-upload");
     expect(badge.label).toBe("Syncing");
+    expect(badge.description).toBe("Uploading");
   });
 
   it("returns 'synced' when audio and sidecar are in Drive and synced_at >= updated_at", () => {
@@ -59,6 +61,7 @@ describe("Storage Status Computation (Issue #11)", () => {
     expect(badge.iconName).toBe("cloud-done");
     expect(badge.label).toBe("Synced");
     expect(badge.color).toBe(lightColors.success);
+    expect(badge.description).toBe("Backed up");
   });
 
   it("returns 'local-only' if local entry was edited after Drive sync (pending re-upload)", () => {
@@ -91,5 +94,6 @@ describe("Storage Status Computation (Issue #11)", () => {
     const badge = getStorageBadgeConfig(status, lightColors);
     expect(badge.iconName).toBe("cloud-download");
     expect(badge.label).toBe("Cloud only");
+    expect(badge.description).toBe("Tap to download");
   });
 });

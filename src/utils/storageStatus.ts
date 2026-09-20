@@ -79,7 +79,7 @@ export function getStorageBadgeConfig(
         iconName: "cloud-done",
         label: "Synced",
         color: colors.success,
-        description: "Safely backed up in Google Drive & cached locally",
+        description: "Backed up",
       };
     case "syncing":
       return {
@@ -87,7 +87,7 @@ export function getStorageBadgeConfig(
         iconName: "cloud-upload",
         label: "Syncing",
         color: colors.primary,
-        description: "Uploading to Google Drive",
+        description: "Uploading",
       };
     case "cloud-only":
       return {
@@ -95,7 +95,7 @@ export function getStorageBadgeConfig(
         iconName: "cloud-download",
         label: "Cloud only",
         color: colors.accent,
-        description: "Stored in Google Drive • Tap to stream or download",
+        description: "Tap to download",
       };
     case "local-only":
     default:
@@ -104,7 +104,7 @@ export function getStorageBadgeConfig(
         iconName: "cloud-off",
         label: "On device",
         color: colors.textMuted,
-        description: "Stored on device only • Pending cloud backup",
+        description: "Pending backup",
       };
   }
 }
