@@ -384,6 +384,80 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     expect(createdFolders).toEqual(["VoiceJournal", "2026", "09"]);
   });
 
+  it("does not let pre-signout month resolution repopulate folder cache", async () => {
+    let releaseOldRootLookup!: () => void;
+    const oldRootLookupStarted = new Promise<void>((resolve) => {
+      releaseOldRootLookup = resolve;
+    });
+    let oldRootLookupBlocked = true;
+
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = decodeURIComponent(url.toString());
+        const authHeader =
+          typeof init?.headers === "object" &&
+          init.headers !== null &&
+          "Authorization" in init.headers
+            ? String(
+                (
+                  init.headers as {
+                    Authorization?: string;
+                  }
+                ).Authorization ?? "",
+              )
+            : "";
+        const tokenPrefix = authHeader.includes("old-token") ? "old" : "new";
+        const nameMatch = urlStr.match(/name = '([^']+)'/);
+        const folderName = nameMatch ? nameMatch[1] : "unknown";
+
+        if (
+          tokenPrefix === "old" &&
+          folderName === "VoiceJournal" &&
+          oldRootLookupBlocked
+        ) {
+          await oldRootLookupStarted;
+          oldRootLookupBlocked = false;
+        }
+
+        if (urlStr.includes("application/vnd.google-apps.folder")) {
+          return new Response(
+            JSON.stringify({
+              files: [{ id: `${tokenPrefix}-${folderName}` }],
+            }),
+            { status: 200 },
+          );
+        }
+
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const staleResolutionPromise = driveService.resolveMonthFolder(
+      2026,
+      9,
+      "old-token",
+    );
+    await Promise.resolve();
+    await driveService.signOut();
+
+    const freshFolderId = await driveService.resolveMonthFolder(
+      2026,
+      9,
+      "new-token",
+    );
+    expect(freshFolderId).toBe("new-09");
+
+    releaseOldRootLookup();
+    await staleResolutionPromise;
+
+    const postSignOutFolderId = await driveService.resolveMonthFolder(
+      2026,
+      9,
+      "new-token",
+    );
+    expect(postSignOutFolderId).toBe("new-09");
+  });
+
   it("emits download transfer notifications for success and failure paths", async () => {
     const t0 = 1758290100000;
     const downloadableEntry: JournalEntry = {

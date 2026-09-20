@@ -33,6 +33,7 @@ export type DriveTransferListener = (event: DriveTransferEvent) => void;
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
   private monthFolderRequests: Map<string, Promise<string>> = new Map();
+  private driveCacheSessionVersion: number = 0;
   private uploadRequests: Map<
     string,
     Promise<{
@@ -113,9 +114,11 @@ export class GoogleDriveService {
   }
 
   async signOut(): Promise<void> {
+    this.driveCacheSessionVersion += 1;
+    this.monthFolderRequests.clear();
+    this.folderIdCache.clear();
     try {
       await GoogleSignin.signOut();
-      this.folderIdCache.clear();
     } catch {
       // Ignore sign out error
     }
@@ -129,6 +132,7 @@ export class GoogleDriveService {
     parentId: string = "root",
     token: string,
   ): Promise<string> {
+    const sessionVersion = this.driveCacheSessionVersion;
     const cacheKey = `${parentId}:${name}`;
     if (this.folderIdCache.has(cacheKey)) {
       return this.folderIdCache.get(cacheKey)!;
@@ -147,7 +151,9 @@ export class GoogleDriveService {
       const data = await searchRes.json();
       if (data.files && data.files.length > 0) {
         const id = data.files[0].id;
-        this.folderIdCache.set(cacheKey, id);
+        if (this.driveCacheSessionVersion === sessionVersion) {
+          this.folderIdCache.set(cacheKey, id);
+        }
         return id;
       }
     }
@@ -173,7 +179,9 @@ export class GoogleDriveService {
     }
 
     const created = await createRes.json();
-    this.folderIdCache.set(cacheKey, created.id);
+    if (this.driveCacheSessionVersion === sessionVersion) {
+      this.folderIdCache.set(cacheKey, created.id);
+    }
     return created.id;
   }
 
@@ -185,9 +193,10 @@ export class GoogleDriveService {
     month: number | string,
     token: string,
   ): Promise<string> {
+    const sessionVersion = this.driveCacheSessionVersion;
     const normalizedYear = String(year);
     const normalizedMonth = String(month).padStart(2, "0");
-    const cacheKey = `${normalizedYear}:${normalizedMonth}`;
+    const cacheKey = `${sessionVersion}:${normalizedYear}:${normalizedMonth}`;
     const pendingRequest = this.monthFolderRequests.get(cacheKey);
     if (pendingRequest) {
       return pendingRequest;
@@ -202,7 +211,9 @@ export class GoogleDriveService {
     try {
       return await request;
     } finally {
-      this.monthFolderRequests.delete(cacheKey);
+      if (this.monthFolderRequests.get(cacheKey) === request) {
+        this.monthFolderRequests.delete(cacheKey);
+      }
     }
   }
 
