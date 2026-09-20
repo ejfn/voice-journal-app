@@ -32,6 +32,7 @@ import { uploadQueueService } from "./src/services/drive/UploadQueueService";
 import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
+import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -45,7 +46,6 @@ const MainScreen: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   // Recording Modal State
@@ -126,14 +126,11 @@ const MainScreen: React.FC = () => {
         loadData();
       }
     });
+    // SmartSync "syncing" is a top-level reconciliation/scan status and must
+    // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
-      if (event.status === "syncing") {
-        setIsSyncing(true);
-      } else if (event.status === "synced") {
-        setIsSyncing(false);
+      if (event.status === "synced") {
         loadData();
-      } else {
-        setIsSyncing(false);
       }
     });
 
@@ -504,7 +501,10 @@ const MainScreen: React.FC = () => {
                   entry={clip}
                   isPlaying={playingEntryId === clip.id}
                   isDownloading={downloadingEntryId === clip.id}
-                  isItemSyncing={isSyncing || uploadingEntryIds.has(clip.id)}
+                  isItemSyncing={isEntryActivelyTransferring(clip.id, {
+                    uploadingEntryIds,
+                    downloadingEntryId,
+                  })}
                   onPlayPress={() => handlePlayClip(clip)}
                   onPress={() => handleOpenReview(clip)}
                   onRetryTranscription={(id) =>

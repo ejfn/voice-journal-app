@@ -9,11 +9,32 @@ export interface StorageStatusOptions {
   isDriveConnected?: boolean;
 }
 
+export interface ActiveTransferState {
+  uploadingEntryIds: ReadonlySet<string>;
+  downloadingEntryId?: string | null;
+}
+
+/**
+ * True only when this specific entry has an in-flight upload or download.
+ *
+ * Global SmartSync reconciliation/scan status must NOT be treated as
+ * per-entry syncing — the startup check pass should leave badges unchanged.
+ */
+export function isEntryActivelyTransferring(
+  entryId: string,
+  active: ActiveTransferState,
+): boolean {
+  return (
+    active.uploadingEntryIds.has(entryId) ||
+    active.downloadingEntryId === entryId
+  );
+}
+
 /**
  * Computes the Google Photos-style storage / sync status for a voice entry.
  *
  * 1. Cloud-only: Audio was evicted locally from cache to save space, master copy in Drive.
- * 2. Syncing: Currently uploading audio/metadata to Drive.
+ * 2. Syncing: Currently uploading or downloading audio/metadata for this entry.
  * 3. Synced: Safely stored in Google Drive, up-to-date with local changes, and cached locally.
  * 4. Local-only: Recorded on device, not backed up to Drive (or pending upload).
  */
@@ -21,7 +42,7 @@ export function computeStorageStatus(
   entry: JournalEntry,
   options?: StorageStatusOptions,
 ): StorageSyncStatus {
-  // If actively uploading or syncing this specific entry
+  // Only when this specific entry has an in-flight transfer — not global scan
   if (options?.isItemSyncing) {
     return "syncing";
   }

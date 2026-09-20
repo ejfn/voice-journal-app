@@ -1,6 +1,7 @@
 import {
   computeStorageStatus,
   getStorageBadgeConfig,
+  isEntryActivelyTransferring,
 } from "../src/utils/storageStatus";
 import { JournalEntry } from "../src/db/schema";
 import { lightColors } from "../src/theme/colors";
@@ -42,6 +43,53 @@ describe("Storage Status Computation (Issue #11)", () => {
     expect(badge.iconName).toBe("cloud-upload");
     expect(badge.label).toBe("Syncing");
     expect(badge.description).toBe("Uploading");
+  });
+
+  it("does not treat a global SmartSync scan as per-entry syncing (issue #28)", () => {
+    // Startup/reconciliation only checks Drive — no entry-level transfer.
+    // isItemSyncing must stay false unless this entry is actively transferring.
+    const syncedEntry: JournalEntry = {
+      ...baseEntry,
+      drive_audio_file_id: "audio-file-123",
+      drive_sidecar_file_id: "sidecar-file-456",
+      drive_synced_at: 2000,
+      updated_at: 1500,
+      is_audio_cached: 1,
+    };
+
+    const isActivelyTransferring = isEntryActivelyTransferring(syncedEntry.id, {
+      uploadingEntryIds: new Set(), // nothing uploading
+      downloadingEntryId: null,
+    });
+    expect(isActivelyTransferring).toBe(false);
+
+    const status = computeStorageStatus(syncedEntry, {
+      isItemSyncing: isActivelyTransferring,
+    });
+    expect(status).toBe("synced");
+  });
+
+  it("marks an entry as actively transferring only when it is uploading or downloading", () => {
+    expect(
+      isEntryActivelyTransferring("entry-a", {
+        uploadingEntryIds: new Set(["entry-a"]),
+        downloadingEntryId: null,
+      }),
+    ).toBe(true);
+
+    expect(
+      isEntryActivelyTransferring("entry-b", {
+        uploadingEntryIds: new Set(["entry-a"]),
+        downloadingEntryId: "entry-b",
+      }),
+    ).toBe(true);
+
+    expect(
+      isEntryActivelyTransferring("entry-c", {
+        uploadingEntryIds: new Set(["entry-a"]),
+        downloadingEntryId: "entry-b",
+      }),
+    ).toBe(false);
   });
 
   it("returns 'synced' when audio and sidecar are in Drive and synced_at >= updated_at", () => {
