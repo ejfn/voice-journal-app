@@ -66,6 +66,26 @@ export const formatTimer = (seconds: number): string => {
 };
 
 /**
+ * Formats duration in milliseconds into high-precision MM:SS.s for recording timer (e.g., "00:04.2").
+ */
+export const formatPrecisionTimer = (millis: number): string => {
+  const totalTenths = Math.max(0, Math.floor(millis / 100));
+  const tenths = totalTenths % 10;
+  const totalSeconds = Math.floor(totalTenths / 10);
+  const mins = Math.floor(totalSeconds / 60);
+  const remSecs = totalSeconds % 60;
+  return `${String(mins).padStart(2, "0")}:${String(remSecs).padStart(2, "0")}.${tenths}`;
+};
+
+/**
+ * Formats remaining duration in seconds into negative countdown format (e.g., "-00:04").
+ */
+export const formatNegativeCountdown = (seconds: number): string => {
+  const rem = Math.max(0, Math.floor(seconds));
+  return `-${formatTimer(rem)}`;
+};
+
+/**
  * Formats timestamp into 12h time string (e.g. "9:15 AM" or "7:42 PM").
  */
 export const formatTime = (timestamp: number): string => {

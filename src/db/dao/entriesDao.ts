@@ -16,6 +16,21 @@ export interface MonthSection {
   dayGroups: DayGroup[];
 }
 
+export const sanitizeWaveform = (waveform: unknown): number[] | undefined => {
+  if (!Array.isArray(waveform) || waveform.length === 0) {
+    return undefined;
+  }
+  const result: number[] = [];
+  for (let i = 0; i < waveform.length; i++) {
+    const rawVal = waveform[i];
+    if (typeof rawVal !== "number" || !Number.isFinite(rawVal)) {
+      return undefined;
+    }
+    result.push(Math.max(0, Math.min(1, Number(rawVal.toFixed(2)))));
+  }
+  return result;
+};
+
 const rowToEntry = (row: JournalEntryRow): JournalEntry => {
   let parsedTags: string[] = [];
   try {
@@ -40,6 +55,16 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
   const localAudioPath =
     row.is_audio_cached === 1 ? canonicalPath : row.local_audio_path || null;
 
+  let parsedWaveform: number[] | undefined = undefined;
+  if (row.waveform_data) {
+    try {
+      const parsed = JSON.parse(row.waveform_data);
+      parsedWaveform = sanitizeWaveform(parsed);
+    } catch {
+      // Ignore malformed waveform data
+    }
+  }
+
   return {
     id: row.id,
     title: row.title,
@@ -60,6 +85,7 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
       (row.transcription_status as TranscriptionStatus) || "completed",
     transcription_retry_count: row.transcription_retry_count ?? 0,
     transcription_next_retry_at: row.transcription_next_retry_at ?? null,
+    waveform_data: parsedWaveform,
   };
 };
 
@@ -86,13 +112,20 @@ export const entriesDao = {
     const transcriptionStatus = entry.transcription_status || "completed";
     const retryCount = entry.transcription_retry_count ?? 0;
     const nextRetryAt = entry.transcription_next_retry_at ?? null;
+    const sanitizedWaveform = entry.waveform_data
+      ? sanitizeWaveform(entry.waveform_data)
+      : undefined;
+    const waveformJson = sanitizedWaveform
+      ? JSON.stringify(sanitizedWaveform)
+      : null;
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
         is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
-        transcription_status, transcription_retry_count, transcription_next_retry_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        transcription_status, transcription_retry_count, transcription_next_retry_at,
+        waveform_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -112,6 +145,7 @@ export const entriesDao = {
         transcriptionStatus,
         retryCount,
         nextRetryAt,
+        waveformJson,
       ],
     );
   },
@@ -125,12 +159,19 @@ export const entriesDao = {
     );
     const updatedAt = entry.updated_at || Date.now();
     const transcriptionStatus = entry.transcription_status || "completed";
+    const sanitizedWaveform = entry.waveform_data
+      ? sanitizeWaveform(entry.waveform_data)
+      : undefined;
+    const waveformJson = sanitizedWaveform
+      ? JSON.stringify(sanitizedWaveform)
+      : null;
     await db.runAsync(
       `UPDATE entries SET
         title = ?, summary = ?, transcript = ?, tags = ?, duration_sec = ?,
         source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
         drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
-        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?
+        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?,
+        waveform_data = COALESCE(?, waveform_data)
       WHERE id = ?`,
       [
         entry.title,
@@ -147,6 +188,7 @@ export const entriesDao = {
         entry.drive_synced_at ?? null,
         entry.last_accessed_at || Date.now(),
         transcriptionStatus,
+        waveformJson,
         entry.id,
       ],
     );
@@ -492,5 +534,18 @@ export const entriesDao = {
     }
 
     return sections;
+  },
+
+  async updateWaveform(id: string, waveform: number[]): Promise<void> {
+    const db = getDatabase();
+    const sanitized = sanitizeWaveform(waveform);
+    if (!sanitized) {
+      return;
+    }
+    const waveformJson = JSON.stringify(sanitized);
+    await db.runAsync(`UPDATE entries SET waveform_data = ? WHERE id = ?`, [
+      waveformJson,
+      id,
+    ]);
   },
 };

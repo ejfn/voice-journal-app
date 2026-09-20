@@ -104,17 +104,17 @@ describe("RecordingModal", () => {
       );
     });
 
-    // Check status hint when active and duration < min duration
+    // Check status hint when active
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const root = tree!.root as any;
     const texts = root.findAllByType("Text");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const statusTextBefore = texts.find((t: any) =>
-      String(t.props.children).includes("Speak naturally. Minimum"),
+      String(t.props.children).includes("Speak naturally."),
     );
     expect(statusTextBefore).toBeDefined();
     expect(statusTextBefore!.props.children).toContain(
-      `${MIN_RECORDING_DURATION_SEC} seconds to save.`,
+      "Speak naturally. Tap pause to take a break, or stop when finished.",
     );
 
     // Check stop-button opacity < 1 before threshold
@@ -130,7 +130,7 @@ describe("RecordingModal", () => {
       : stopButtonStyle;
     expect(flattenedStopStyle.opacity).toBe(0.45);
 
-    // Check status hint when paused and duration < min duration
+    // Check status hint when paused
     let pausedTree: ReactTestRenderer;
     void act(() => {
       pausedTree = renderer.create(
@@ -154,11 +154,66 @@ describe("RecordingModal", () => {
     const pausedTexts = pausedRoot.findAllByType("Text");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pausedStatusText = pausedTexts.find((t: any) =>
-      String(t.props.children).includes("Recording paused"),
+      String(t.props.children).includes("Recording paused."),
     );
     expect(pausedStatusText).toBeDefined();
     expect(pausedStatusText!.props.children).toContain(
-      `< ${MIN_RECORDING_DURATION_SEC}s`,
+      "Recording paused. Tap resume to continue, or stop to save.",
     );
+  });
+
+  it("renders high-precision digital timer in MM:SS.s format", () => {
+    let tree: ReactTestRenderer;
+    void act(() => {
+      tree = renderer.create(
+        <ThemeProvider>
+          <RecordingModal
+            visible
+            durationSec={4}
+            durationMillis={4200}
+            meteringLevel={0.6}
+            isPaused={false}
+            isProcessing={false}
+            onPause={jest.fn()}
+            onResume={jest.fn()}
+            onStop={jest.fn()}
+            onCancel={jest.fn()}
+          />
+        </ThemeProvider>,
+      );
+    });
+
+    const timerNodes = tree!.root.findAllByProps({
+      testID: "recording-precision-timer",
+    }) as { props: { children: unknown } }[];
+    expect(timerNodes.length).toBeGreaterThan(0);
+    expect(timerNodes[0].props.children).toBe("00:04.2");
+  });
+
+  it("renders live audio recording waveform visualizer", () => {
+    let tree: ReactTestRenderer;
+    void act(() => {
+      tree = renderer.create(
+        <ThemeProvider>
+          <RecordingModal
+            visible
+            durationSec={2}
+            durationMillis={2500}
+            meteringLevel={0.8}
+            isPaused={false}
+            isProcessing={false}
+            onPause={jest.fn()}
+            onResume={jest.fn()}
+            onStop={jest.fn()}
+            onCancel={jest.fn()}
+          />
+        </ThemeProvider>,
+      );
+    });
+
+    const visualizers = tree!.root.findAllByProps({
+      accessibilityLabel: "Live audio recording waveform visualizer",
+    });
+    expect(visualizers.length).toBeGreaterThan(0);
   });
 });

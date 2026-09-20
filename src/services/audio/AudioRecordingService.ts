@@ -2,6 +2,7 @@ import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { Directory, File } from "expo-file-system";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
+import { resampleWaveform } from "../../utils/waveform";
 import { audioPlaybackService } from "./AudioPlaybackService";
 
 export interface RecordingStatus {
@@ -22,6 +23,7 @@ interface AudioRecorderInstance {
   uri?: string | null;
   getURI?: () => string | null;
   metering?: number;
+  getStatus?: () => { metering?: number; isRecording?: boolean };
   getStatusAsync?: () => Promise<{ metering?: number }>;
 }
 
@@ -35,6 +37,7 @@ class AudioRecordingService {
   private isPaused: boolean = false;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
+  private recordedSamples: number[] = [];
 
   async requestPermissions(): Promise<boolean> {
     try {
@@ -61,6 +64,7 @@ class AudioRecordingService {
     this.statusCallback = onStatusUpdate || null;
     this.durationMillis = 0;
     this.isPaused = false;
+    this.recordedSamples = [];
 
     await setAudioModeAsync({
       allowsRecording: true,
@@ -73,14 +77,13 @@ class AudioRecordingService {
       const { requireNativeModule } = require("expo-modules-core");
       const AudioModule = requireNativeModule("ExpoAudio");
       if (AudioModule && AudioModule.AudioRecorder) {
-        const recorder = new AudioModule.AudioRecorder(
-          RecordingPresets.HIGH_QUALITY,
-        );
-        this.activeRecorder = recorder;
-        await recorder.prepareToRecordAsync({
+        const recordingOptions = {
           ...RecordingPresets.HIGH_QUALITY,
           isMeteringEnabled: true,
-        });
+        };
+        const recorder = new AudioModule.AudioRecorder(recordingOptions);
+        this.activeRecorder = recorder;
+        await recorder.prepareToRecordAsync(recordingOptions);
         recorder.record();
       } else {
         // Fallback for mock/test environments
@@ -109,26 +112,55 @@ class AudioRecordingService {
   private startStatusTimer() {
     this.stopStatusTimer();
     this.timerInterval = setInterval(() => {
-      if (!this.isPaused) {
-        this.durationMillis += 200;
-      }
-      if (this.statusCallback) {
-        // Sample metering from recorder if available, or generate subtle simulated level
-        let rawDb = -30;
-        if (this.activeRecorder?.getStatusAsync) {
-          this.activeRecorder
-            .getStatusAsync()
-            .then((st: { metering?: number }) => {
-              if (st && typeof st.metering === "number") {
-                rawDb = st.metering;
-              }
-            })
-            .catch(() => {});
-        } else if (this.activeRecorder?.metering !== undefined) {
+      let rawDb: number | null = null;
+
+      if (this.activeRecorder) {
+        if (typeof this.activeRecorder.getStatus === "function") {
+          try {
+            const st = this.activeRecorder.getStatus();
+            if (st && typeof st.metering === "number") {
+              rawDb = st.metering;
+            }
+            if (
+              st &&
+              typeof (st as { durationMillis?: number }).durationMillis ===
+                "number" &&
+              (st as { durationMillis?: number }).durationMillis! > 0
+            ) {
+              this.durationMillis = (
+                st as { durationMillis: number }
+              ).durationMillis;
+            } else if (!this.isPaused) {
+              this.durationMillis += 100;
+            }
+          } catch {
+            if (!this.isPaused) {
+              this.durationMillis += 100;
+            }
+          }
+        } else if (this.activeRecorder.metering !== undefined) {
           rawDb = this.activeRecorder.metering;
+          if (!this.isPaused) {
+            this.durationMillis += 100;
+          }
+        } else if (!this.isPaused) {
+          this.durationMillis += 100;
+        }
+      } else if (!this.isPaused) {
+        this.durationMillis += 100;
+      }
+
+      if (this.statusCallback) {
+        const normalized = this.isPaused
+          ? 0.05
+          : rawDb !== null
+            ? normalizeMetering(rawDb)
+            : 0.05;
+
+        if (!this.isPaused) {
+          this.recordedSamples.push(normalized);
         }
 
-        const normalized = this.isPaused ? 0.05 : normalizeMetering(rawDb);
         this.statusCallback({
           isRecording: true,
           isPaused: this.isPaused,
@@ -136,7 +168,7 @@ class AudioRecordingService {
           meteringLevel: normalized,
         });
       }
-    }, 200);
+    }, 100);
   }
 
   private stopStatusTimer() {
@@ -177,6 +209,7 @@ class AudioRecordingService {
   async stopRecording(): Promise<{
     localUri: string;
     durationSec: number;
+    waveformData?: number[];
   }> {
     this.stopStatusTimer();
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
@@ -240,9 +273,15 @@ class AudioRecordingService {
       console.warn("Could not copy recording to sandbox path:", fsErr);
     }
 
+    const waveformData =
+      this.recordedSamples.length > 0
+        ? resampleWaveform(this.recordedSamples, 75)
+        : undefined;
+
     this.activeRecorder = null;
     this.statusCallback = null;
     this.currentEntryId = null;
+    this.recordedSamples = [];
 
     try {
       await setAudioModeAsync({
@@ -256,11 +295,13 @@ class AudioRecordingService {
     return {
       localUri: destinationUri,
       durationSec: finalDurationSec,
+      waveformData,
     };
   }
 
   async cancelRecording(): Promise<void> {
     this.stopStatusTimer();
+    this.recordedSamples = [];
     if (this.activeRecorder) {
       try {
         await this.activeRecorder.stop?.();

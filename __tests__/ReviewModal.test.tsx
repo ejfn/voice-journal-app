@@ -4,11 +4,16 @@ import { ReviewModal } from "../src/components/ReviewModal";
 import { ThemeProvider } from "../src/theme/ThemeContext";
 import { ToastProvider } from "../src/components/common/Toast";
 import { JournalEntry } from "../src/db/schema";
+import { audioPlaybackService } from "../src/services/audio/AudioPlaybackService";
 
 jest.mock("../src/services/audio/AudioPlaybackService", () => ({
   audioPlaybackService: {
     addListener: jest.fn(() => jest.fn()),
     stop: jest.fn(),
+    pause: jest.fn(),
+    play: jest.fn(),
+    seekTo: jest.fn(),
+    skip: jest.fn(),
   },
 }));
 
@@ -117,4 +122,28 @@ describe("ReviewModal", () => {
       expect(renderedText).not.toContain(forbiddenText);
     },
   );
+
+  it("renders playback controls with ±10s skip buttons and triggers skip", () => {
+    const tree = renderModal(baseEntry);
+
+    const rewindNodes = tree.root.findAllByProps({
+      testID: "playback-rewind-10",
+    }) as { props: { onPress: () => void } }[];
+    const forwardNodes = tree.root.findAllByProps({
+      testID: "playback-forward-10",
+    }) as { props: { onPress: () => void } }[];
+
+    expect(rewindNodes.length).toBeGreaterThan(0);
+    expect(forwardNodes.length).toBeGreaterThan(0);
+
+    void act(() => {
+      rewindNodes[0].props.onPress();
+    });
+    expect(audioPlaybackService.skip).toHaveBeenCalledWith(-10);
+
+    void act(() => {
+      forwardNodes[0].props.onPress();
+    });
+    expect(audioPlaybackService.skip).toHaveBeenCalledWith(10);
+  });
 });

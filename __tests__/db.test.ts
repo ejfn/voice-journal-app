@@ -1,6 +1,10 @@
 import { entriesDao } from "../src/db/dao/entriesDao";
 import { syncQueueDao } from "../src/db/dao/syncQueueDao";
-import { initDatabase, setDatabaseConnection } from "../src/db/database";
+import {
+  DatabaseConnection,
+  initDatabase,
+  setDatabaseConnection,
+} from "../src/db/database";
 import { JournalEntry } from "../src/db/schema";
 import { createTestDb } from "./helpers/testDb";
 
@@ -41,6 +45,101 @@ describe("Database & FTS5 DAO", () => {
     expect(retrieved?.title).toBe("Science Project Planning");
     expect(retrieved?.tags).toEqual(["school", "science", "experiment"]);
     expect(retrieved?.duration_sec).toBe(105);
+  });
+
+  it("persists and retrieves recorded waveform_data", async () => {
+    const waveform = [0.1, 0.45, 0.8, 0.35, 0.9];
+    const entry: JournalEntry = {
+      id: "entry-wave",
+      title: "Audio with Waveform",
+      summary: "Voice memo with real metering",
+      transcript: "Testing waveform persistence",
+      tags: ["test"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1789700000000,
+      last_accessed_at: 1789700000000,
+      waveform_data: waveform,
+    };
+
+    await entriesDao.insertEntry(entry);
+    const retrieved = await entriesDao.getEntryById("entry-wave");
+
+    expect(retrieved).not.toBeNull();
+    expect(retrieved?.waveform_data).toEqual(waveform);
+  });
+
+  it("sanitizes waveform data by clamping out-of-bounds values and rejecting non-finite items", async () => {
+    // Clamping values outside [0, 1]
+    const outOfBoundsWaveform = [-0.5, 0.2, 1.5, 0.8];
+    const clampedEntry: JournalEntry = {
+      id: "entry-clamped",
+      title: "Clamped Waveform",
+      summary: "",
+      transcript: "Testing waveform clamping",
+      tags: [],
+      duration_sec: 5,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1789700000000,
+      last_accessed_at: 1789700000000,
+      waveform_data: outOfBoundsWaveform,
+    };
+
+    await entriesDao.insertEntry(clampedEntry);
+    const retrievedClamped = await entriesDao.getEntryById("entry-clamped");
+    expect(retrievedClamped?.waveform_data).toEqual([0, 0.2, 1, 0.8]);
+
+    // Rejecting invalid waveform with NaN or Infinity
+    const invalidWaveform = [0.1, NaN, Infinity, 0.5];
+    const invalidEntry: JournalEntry = {
+      id: "entry-invalid",
+      title: "Invalid Waveform",
+      summary: "",
+      transcript: "Testing invalid waveform rejection",
+      tags: [],
+      duration_sec: 5,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1789700000000,
+      last_accessed_at: 1789700000000,
+      waveform_data: invalidWaveform,
+    };
+
+    await entriesDao.insertEntry(invalidEntry);
+    const retrievedInvalid = await entriesDao.getEntryById("entry-invalid");
+    // Should gracefully reject and be undefined
+    expect(retrievedInvalid?.waveform_data).toBeUndefined();
+  });
+
+  it("rethrows migration error if column is still missing after migration attempt", async () => {
+    const brokenDb = {
+      execAsync: jest.fn().mockImplementation((sql: string) => {
+        if (sql.includes("ALTER TABLE entries ADD COLUMN waveform_data")) {
+          throw new Error("Disk I/O failure during ALTER TABLE");
+        }
+        return Promise.resolve();
+      }),
+      getAllAsync: jest
+        .fn()
+        .mockResolvedValue([{ name: "id" }, { name: "title" }]),
+      runAsync: jest.fn(),
+      getFirstAsync: jest.fn(),
+    };
+
+    await expect(
+      initDatabase(brokenDb as unknown as DatabaseConnection),
+    ).rejects.toThrow("Disk I/O failure during ALTER TABLE");
   });
 
   it("executes full-text search with FTS5 triggers", async () => {

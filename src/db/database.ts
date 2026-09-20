@@ -51,5 +51,32 @@ export const initDatabase = async (
   }
   const db = getDatabase();
   await db.execAsync(SCHEMA_SQL);
+
+  // Safe migration for existing databases missing waveform_data
+  try {
+    const columns = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(entries);`,
+    );
+    const hasWaveformCol = columns.some((col) => col.name === "waveform_data");
+    if (!hasWaveformCol) {
+      await db.execAsync(`ALTER TABLE entries ADD COLUMN waveform_data TEXT;`);
+    }
+  } catch (migrationError) {
+    // Only tolerate if column is present (e.g. concurrent migration race); otherwise rethrow
+    try {
+      const columns = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(entries);`,
+      );
+      const hasWaveformCol = columns.some(
+        (col) => col.name === "waveform_data",
+      );
+      if (!hasWaveformCol) {
+        throw migrationError;
+      }
+    } catch {
+      throw migrationError;
+    }
+  }
+
   return db;
 };
