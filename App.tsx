@@ -282,10 +282,19 @@ const MainScreen: React.FC = () => {
     setCurrentRecordingId(null);
   };
 
-  const handleStopRecording = async () => {
-    try {
-      const { localUri, durationSec, waveformData } =
-        await audioRecordingService.stopRecording();
+  const saveRecordedEntry = useCallback(
+    async (result: {
+      entryId?: string;
+      localUri: string;
+      durationSec: number;
+      waveformData?: number[];
+    }) => {
+      const {
+        localUri,
+        durationSec,
+        waveformData,
+        entryId: givenEntryId,
+      } = result;
 
       // Enforce 3-second minimum duration threshold
       if (durationSec < 3) {
@@ -310,7 +319,7 @@ const MainScreen: React.FC = () => {
         return;
       }
 
-      const entryId = currentRecordingId || generateUUID();
+      const entryId = givenEntryId || currentRecordingId || generateUUID();
       const now = Date.now();
       const hasKey = await geminiService.hasKeyConfigured();
 
@@ -365,6 +374,23 @@ const MainScreen: React.FC = () => {
       }
 
       await loadData();
+    },
+    [currentRecordingId, loadData, showToast],
+  );
+
+  useEffect(() => {
+    audioRecordingService.setOnExternalStop(async (result) => {
+      await saveRecordedEntry(result);
+    });
+    return () => {
+      audioRecordingService.setOnExternalStop(null);
+    };
+  }, [saveRecordedEntry]);
+
+  const handleStopRecording = async () => {
+    try {
+      const result = await audioRecordingService.stopRecording();
+      await saveRecordedEntry(result);
     } catch (err) {
       setIsProcessingAI(false);
       setIsRecordingVisible(false);

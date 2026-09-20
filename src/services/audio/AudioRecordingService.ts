@@ -4,6 +4,8 @@ import {
   AppState,
   AppStateStatus,
   NativeEventSubscription,
+  PermissionsAndroid,
+  Platform,
 } from "react-native";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
@@ -19,6 +21,17 @@ export interface RecordingStatus {
 
 export type RecordingStatusCallback = (status: RecordingStatus) => void;
 
+export interface RecordingResult {
+  entryId: string;
+  localUri: string;
+  durationSec: number;
+  waveformData?: number[];
+}
+
+export type ExternalStopCallback = (
+  result: RecordingResult,
+) => void | Promise<void>;
+
 interface AudioRecorderInstance {
   prepareToRecordAsync?: (options?: unknown) => Promise<unknown>;
   record?: () => void;
@@ -28,8 +41,21 @@ interface AudioRecorderInstance {
   uri?: string | null;
   getURI?: () => string | null;
   metering?: number;
-  getStatus?: () => { metering?: number; isRecording?: boolean };
+  getStatus?: () => {
+    metering?: number;
+    isRecording?: boolean;
+    durationMillis?: number;
+  };
   getStatusAsync?: () => Promise<{ metering?: number }>;
+  addListener?: (
+    eventName: string,
+    listener: (event: {
+      isFinished?: boolean;
+      isPaused?: boolean;
+      error?: string | null;
+      url?: string | null;
+    }) => void,
+  ) => { remove: () => void };
 }
 
 export const MIN_RECORDING_DURATION_SEC = 3;
@@ -37,19 +63,46 @@ export const MIN_RECORDING_DURATION_SEC = 3;
 class AudioRecordingService {
   private activeRecorder: AudioRecorderInstance | null = null;
   private statusCallback: RecordingStatusCallback | null = null;
+  private externalStopCallback: ExternalStopCallback | null = null;
+  private statusSubscription: { remove: () => void } | null = null;
   private timerInterval: NodeJS.Timeout | null = null;
   private durationMillis: number = 0;
   private isPaused: boolean = false;
   private isActionInProgress: boolean = false;
+  private isStoppingInternally: boolean = false;
   private appStateSubscription: NativeEventSubscription | null = null;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
   private recordedSamples: number[] = [];
 
+  setOnExternalStop(callback: ExternalStopCallback | null) {
+    this.externalStopCallback = callback;
+  }
+
   async requestPermissions(): Promise<boolean> {
     try {
       const status = await AudioModule.requestRecordingPermissionsAsync();
-      return status.granted;
+      if (!status.granted) {
+        return false;
+      }
+      const androidVersion =
+        typeof Platform.Version === "number"
+          ? Platform.Version
+          : parseInt(String(Platform.Version), 10);
+      if (
+        Platform.OS === "android" &&
+        !isNaN(androidVersion) &&
+        androidVersion >= 33
+      ) {
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          );
+        } catch {
+          // Non-fatal if permission request throws in mock/test
+        }
+      }
+      return true;
     } catch {
       return false;
     }
@@ -72,12 +125,14 @@ class AudioRecordingService {
     this.durationMillis = 0;
     this.isPaused = false;
     this.isActionInProgress = false;
+    this.isStoppingInternally = false;
     this.recordedSamples = [];
     this.setupAppStateListener();
 
     await setAudioModeAsync({
       allowsRecording: true,
       playsInSilentMode: true,
+      allowsBackgroundRecording: true,
     });
 
     // In modern expo-audio (SDK 57), native AudioRecorder is instantiated from ExpoAudio native module
@@ -92,6 +147,19 @@ class AudioRecordingService {
         };
         const recorder = new AudioModule.AudioRecorder(recordingOptions);
         this.activeRecorder = recorder;
+        if (typeof recorder.addListener === "function") {
+          this.statusSubscription = recorder.addListener(
+            "recordingStatusUpdate",
+            (status: {
+              isFinished?: boolean;
+              isPaused?: boolean;
+              error?: string | null;
+              url?: string | null;
+            }) => {
+              this.handleRecordingStatusUpdate(status);
+            },
+          );
+        }
         await recorder.prepareToRecordAsync(recordingOptions);
         recorder.record();
       } else {
@@ -118,6 +186,132 @@ class AudioRecordingService {
     this.startStatusTimer();
   }
 
+  private handleRecordingStatusUpdate(status: {
+    isFinished?: boolean;
+    isPaused?: boolean;
+    error?: string | null;
+    url?: string | null;
+  }) {
+    if (status.isPaused !== undefined) {
+      if (status.isPaused && !this.isPaused) {
+        this.isPaused = true;
+        this.emitStatus();
+      } else if (!status.isPaused && this.isPaused) {
+        this.isPaused = false;
+        this.emitStatus();
+      }
+    }
+
+    if (status.isFinished && !this.isStoppingInternally) {
+      // Stopped externally from Android notification
+      return this.handleExternalStop(status.url || null);
+    }
+  }
+
+  private async handleExternalStop(url: string | null) {
+    if (this.isStoppingInternally) return;
+    this.isStoppingInternally = true;
+    this.stopStatusTimer();
+    this.removeAppStateListener();
+    this.removeStatusSubscription();
+    this.isActionInProgress = false;
+
+    const finalDurationSec = Math.floor(this.durationMillis / 1000);
+    const recordedTempUri =
+      url ||
+      this.activeRecorder?.uri ||
+      this.activeRecorder?.getURI?.() ||
+      null;
+
+    const entryId = this.currentEntryId || generateUUID();
+
+    if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
+      if (recordedTempUri) {
+        try {
+          const tempFile = new File(recordedTempUri);
+          if (tempFile.exists) {
+            tempFile.delete();
+          }
+        } catch {
+          // Ignore temp cleanup errors
+        }
+      }
+      this.activeRecorder = null;
+      this.statusCallback = null;
+      this.currentEntryId = null;
+
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          allowsBackgroundRecording: false,
+        });
+      } catch {
+        // Ignore
+      }
+
+      if (this.externalStopCallback) {
+        await this.externalStopCallback({
+          entryId,
+          localUri: "",
+          durationSec: finalDurationSec,
+        });
+      }
+      return;
+    }
+
+    const destinationUri = getEntryAudioPath(
+      entryId,
+      this.currentTimestamp || Date.now(),
+    );
+
+    const dir = destinationUri.substring(
+      0,
+      destinationUri.lastIndexOf("/") + 1,
+    );
+    try {
+      const directory = new Directory(dir);
+      if (!directory.exists) {
+        directory.create({ intermediates: true, idempotent: true });
+      }
+
+      if (recordedTempUri && recordedTempUri !== destinationUri) {
+        await new File(recordedTempUri).copy(new File(destinationUri));
+      }
+    } catch (fsErr) {
+      console.warn("Could not copy recording to sandbox path:", fsErr);
+    }
+
+    const waveformData =
+      this.recordedSamples.length > 0
+        ? resampleWaveform(this.recordedSamples, WAVEFORM_BAR_COUNT)
+        : undefined;
+
+    this.activeRecorder = null;
+    this.statusCallback = null;
+    this.currentEntryId = null;
+    this.recordedSamples = [];
+
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        allowsBackgroundRecording: false,
+      });
+    } catch {
+      // Ignore
+    }
+
+    if (this.externalStopCallback) {
+      await this.externalStopCallback({
+        entryId,
+        localUri: destinationUri,
+        durationSec: finalDurationSec,
+        waveformData,
+      });
+    }
+  }
+
   private setupAppStateListener() {
     this.removeAppStateListener();
     this.appStateSubscription = AppState.addEventListener(
@@ -125,15 +319,17 @@ class AudioRecordingService {
       (nextState: AppStateStatus) => {
         if (!this.activeRecorder) return;
         if (nextState === "active") {
-          // When app returns to foreground:
-          // In Android expo-audio, OnActivityEntersForeground automatically calls recorder.record()
-          // if recorder.isPaused is true. If the user intentionally paused the recording, we must
-          // immediately re-pause the native recorder to prevent it from auto-recording and clashing with UI.
-          if (this.isPaused) {
+          // When app returns to foreground, check status to keep synced with notification actions
+          if (typeof this.activeRecorder.getStatus === "function") {
             try {
-              const st = this.activeRecorder.getStatus?.();
-              if (st?.isRecording) {
-                this.activeRecorder.pause?.();
+              const st = this.activeRecorder.getStatus();
+              if (st) {
+                if (st.isRecording === false && !this.isPaused) {
+                  this.isPaused = true;
+                  this.emitStatus();
+                } else if (st.isRecording === true && this.isPaused) {
+                  this.activeRecorder.pause?.();
+                }
               }
             } catch {
               // Ignore
@@ -151,6 +347,24 @@ class AudioRecordingService {
     }
   }
 
+  private removeStatusSubscription() {
+    if (this.statusSubscription) {
+      this.statusSubscription.remove();
+      this.statusSubscription = null;
+    }
+  }
+
+  private emitStatus() {
+    if (this.statusCallback) {
+      this.statusCallback({
+        isRecording: true,
+        isPaused: this.isPaused,
+        durationMillis: this.durationMillis,
+        meteringLevel: 0.05,
+      });
+    }
+  }
+
   private startStatusTimer() {
     this.stopStatusTimer();
     this.timerInterval = setInterval(() => {
@@ -159,8 +373,7 @@ class AudioRecordingService {
       if (this.activeRecorder) {
         if (this.isPaused) {
           // While paused, do NOT advance duration.
-          // In addition, if Android OnActivityEntersForeground auto-started recording in native layer,
-          // detect it and enforce pause to stay synchronized with user state.
+          // Re-enforce pause if native state drifted
           try {
             const st = this.activeRecorder.getStatus?.();
             if (st?.isRecording) {
@@ -179,13 +392,10 @@ class AudioRecordingService {
               }
               if (
                 st &&
-                typeof (st as { durationMillis?: number }).durationMillis ===
-                  "number" &&
-                (st as { durationMillis?: number }).durationMillis! > 0
+                typeof st.durationMillis === "number" &&
+                st.durationMillis > 0
               ) {
-                this.durationMillis = (
-                  st as { durationMillis: number }
-                ).durationMillis;
+                this.durationMillis = st.durationMillis;
               } else {
                 this.durationMillis += 100;
               }
@@ -246,14 +456,7 @@ class AudioRecordingService {
     } finally {
       this.isActionInProgress = false;
     }
-    if (this.statusCallback) {
-      this.statusCallback({
-        isRecording: true,
-        isPaused: true,
-        durationMillis: this.durationMillis,
-        meteringLevel: 0.05,
-      });
-    }
+    this.emitStatus();
   }
 
   async resumeRecording(): Promise<void> {
@@ -284,14 +487,7 @@ class AudioRecordingService {
     } finally {
       this.isActionInProgress = false;
     }
-    if (this.statusCallback) {
-      this.statusCallback({
-        isRecording: true,
-        isPaused: false,
-        durationMillis: this.durationMillis,
-        meteringLevel: 0.05,
-      });
-    }
+    this.emitStatus();
   }
 
   async stopRecording(): Promise<{
@@ -299,8 +495,10 @@ class AudioRecordingService {
     durationSec: number;
     waveformData?: number[];
   }> {
+    this.isStoppingInternally = true;
     this.stopStatusTimer();
     this.removeAppStateListener();
+    this.removeStatusSubscription();
     this.isActionInProgress = false;
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
 
@@ -332,6 +530,16 @@ class AudioRecordingService {
       this.activeRecorder = null;
       this.statusCallback = null;
       this.currentEntryId = null;
+
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          allowsBackgroundRecording: false,
+        });
+      } catch {
+        // Ignore
+      }
 
       return {
         localUri: "",
@@ -377,6 +585,7 @@ class AudioRecordingService {
       await setAudioModeAsync({
         allowsRecording: false,
         playsInSilentMode: true,
+        allowsBackgroundRecording: false,
       });
     } catch {
       // Ignore audio mode reset error
@@ -390,8 +599,10 @@ class AudioRecordingService {
   }
 
   async cancelRecording(): Promise<void> {
+    this.isStoppingInternally = true;
     this.stopStatusTimer();
     this.removeAppStateListener();
+    this.removeStatusSubscription();
     this.isActionInProgress = false;
     this.recordedSamples = [];
     if (this.activeRecorder) {
@@ -416,6 +627,7 @@ class AudioRecordingService {
       await setAudioModeAsync({
         allowsRecording: false,
         playsInSilentMode: true,
+        allowsBackgroundRecording: false,
       });
     } catch {
       // Ignore audio mode reset error

@@ -23,7 +23,9 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -42,6 +44,7 @@
         {
           "microphonePermission": "Allow VoiceJournal to access your microphone for journal recordings.",
           "enableBackgroundPlayback": true,
+          "enableBackgroundRecording": true,
           "recordAudioAndroid": true
         }
       ],
