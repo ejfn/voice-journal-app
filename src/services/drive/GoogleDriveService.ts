@@ -109,8 +109,31 @@ export class GoogleDriveService {
     return null;
   }
 
-  async signIn(): Promise<string> {
-    return this.getAccessToken();
+  async signIn(): Promise<{ email: string; name: string | null }> {
+    this.configure();
+    await GoogleSignin.hasPlayServices();
+
+    // Try to get tokens for an already-signed-in session first
+    const signedInUser: { email: string; name: string | null } | null =
+      this.getCurrentUser();
+    try {
+      const tokens = await GoogleSignin.getTokens();
+      if (tokens.accessToken && signedInUser) {
+        return signedInUser;
+      }
+    } catch {
+      // No existing session — fall through to interactive sign-in
+    }
+
+    // Interactive sign-in: capture user directly from the return value
+    const result = await GoogleSignin.signIn();
+    if (result.type !== "success") {
+      throw new Error("Google Sign-In was cancelled");
+    }
+    return {
+      email: result.data.user.email ?? "",
+      name: result.data.user.name ?? null,
+    };
   }
 
   async getAccessToken(): Promise<string> {
