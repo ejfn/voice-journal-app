@@ -207,8 +207,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleGoogleSignIn = async () => {
     setIsSigningIn(true);
     try {
-      await googleDriveService.signIn();
-      const user = googleDriveService.getCurrentUser();
+      const user = await googleDriveService.signIn();
       setGoogleUser(user);
       showToast({
         message: `Connected to Google Drive as ${user?.email || "user"}`,
