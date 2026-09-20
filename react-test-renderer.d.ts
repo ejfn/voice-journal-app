@@ -8,6 +8,7 @@ declare module "react-test-renderer" {
       ) => Array<{ props: Record<string, unknown> }>;
       findAllByProps: (props: Record<string, unknown>) => unknown[];
     };
+    unmount: () => void;
   }
 
   export function act(callback: () => void): void;

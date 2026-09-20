@@ -134,29 +134,29 @@ class AudioPlaybackService {
     this.stopProgressTracker();
     this.progressInterval = setInterval(() => {
       if (this.activePlayer?.currentTime !== undefined) {
-        this.currentTimeSec = Math.round(this.activePlayer.currentTime);
+        this.currentTimeSec = this.activePlayer.currentTime;
         if (this.activePlayer.duration) {
-          this.durationSec = Math.round(this.activePlayer.duration);
+          this.durationSec = this.activePlayer.duration;
         }
         // If native player stopped or reached duration
         if (
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
           (!this.activePlayer.playing &&
             this.currentTimeSec > 0 &&
-            this.currentTimeSec >= this.durationSec - 1)
+            this.currentTimeSec >= this.durationSec - 0.2)
         ) {
           this.stop();
           return;
         }
       } else {
-        this.currentTimeSec += 1;
+        this.currentTimeSec += 0.1;
         if (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) {
           this.stop();
           return;
         }
       }
       this.notify();
-    }, 1000);
+    }, 100);
   }
 
   private stopProgressTracker() {

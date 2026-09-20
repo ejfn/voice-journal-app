@@ -5,11 +5,28 @@ import { ThemeProvider } from "../src/theme/ThemeContext";
 import { MIN_RECORDING_DURATION_SEC } from "../src/services/audio/AudioRecordingService";
 
 describe("RecordingModal", () => {
+  let trees: ReactTestRenderer[] = [];
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+    trees.forEach((t) => {
+      try {
+        t.unmount();
+      } catch {}
+    });
+    trees = [];
+  });
+
   const findCancelButtons = (tree: ReactTestRenderer) =>
     tree.root.findAllByProps({ testID: "discard-recording-button" });
 
-  const renderModal = (durationSec: number, onCancel = jest.fn()) =>
-    renderer.create(
+  const renderModal = (durationSec: number, onCancel = jest.fn()) => {
+    const tr = renderer.create(
       <ThemeProvider>
         <RecordingModal
           visible
@@ -24,6 +41,9 @@ describe("RecordingModal", () => {
         />
       </ThemeProvider>,
     );
+    trees.push(tr);
+    return tr;
+  };
 
   const findModalCloseHandlers = (tree: ReactTestRenderer) =>
     tree.root.findAll(
@@ -102,6 +122,7 @@ describe("RecordingModal", () => {
           />
         </ThemeProvider>,
       );
+      trees.push(tree);
     });
 
     // Check status hint when active and duration < min duration
@@ -148,6 +169,7 @@ describe("RecordingModal", () => {
           />
         </ThemeProvider>,
       );
+      trees.push(pausedTree);
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pausedRoot = pausedTree!.root as any;

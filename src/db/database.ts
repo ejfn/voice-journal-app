@@ -55,8 +55,14 @@ export const initDatabase = async (
   // Migration to add amplitude_data column if it does not exist
   try {
     await db.execAsync("ALTER TABLE entries ADD COLUMN amplitude_data TEXT;");
-  } catch {
-    // Ignore error if column already exists or table isn't fully created
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      !message.toLowerCase().includes("duplicate column") &&
+      !message.toLowerCase().includes("already exists")
+    ) {
+      throw err;
+    }
   }
 
   return db;

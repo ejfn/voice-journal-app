@@ -38,41 +38,45 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
 }) => {
   const { colors } = useTheme();
   const canCancel = durationSec < MIN_RECORDING_DURATION_SEC;
-  // Array of 29 bars for waveform visualization
+  // Prominent waveform visualizer with 41 bars spanning the amplifier canvas
+  const BAR_COUNT = 41;
   const [waveformBars, setWaveformBars] = useState<number[]>(
-    new Array(29).fill(0.1),
+    new Array(BAR_COUNT).fill(0.06),
   );
 
-  // Animated values for smooth transition
+  // Animated values for smooth vertical expansion and flow
   const animatedBars = useRef(
-    Array.from({ length: 29 }, () => new Animated.Value(0.1)),
+    Array.from({ length: BAR_COUNT }, () => new Animated.Value(0.06)),
   ).current;
 
   useEffect(() => {
-    const animations = animatedBars.map((animVal, idx) => {
-      return Animated.spring(animVal, {
-        toValue: waveformBars[idx] ?? 0.1,
-        useNativeDriver: false,
-        tension: 40,
-        friction: 7,
-      });
-    });
-    Animated.parallel(animations).start();
+    const parallel = Animated.parallel(
+      animatedBars.map((animVal, idx) =>
+        Animated.timing(animVal, {
+          toValue: waveformBars[idx] ?? 0.06,
+          duration: 120,
+          useNativeDriver: false,
+        }),
+      ),
+    );
+    parallel.start();
+    return () => {
+      parallel.stop();
+    };
   }, [waveformBars, animatedBars]);
 
   useEffect(() => {
     if (!visible) {
-      setWaveformBars(new Array(29).fill(0.1));
+      setWaveformBars(new Array(BAR_COUNT).fill(0.06));
       return;
     }
 
     if (isPaused) {
-      setWaveformBars((prev) => [...prev.slice(1), 0.1]);
       return;
     }
 
-    // Shift previous values and add current metering
-    const barHeight = Math.max(0.1, Math.min(1.0, meteringLevel));
+    // Shift previous values to left and push new metering sample on the right
+    const barHeight = Math.max(0.06, Math.min(1.0, meteringLevel));
     setWaveformBars((prev) => [...prev.slice(1), barHeight]);
   }, [meteringLevel, visible, isPaused]);
 
@@ -158,26 +162,36 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                 {formatTimer(durationSec)}
               </Text>
 
-              {/* Dynamic Waveform Bars */}
-              <View style={styles.waveformContainer}>
-                {animatedBars.map((animVal, index) => (
-                  <Animated.View
-                    key={index}
-                    style={[
-                      styles.waveformBar,
-                      {
-                        height: animVal.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [6, 74],
-                          extrapolate: "clamp",
-                        }),
-                        backgroundColor: isPaused
-                          ? colors.waveformBar
-                          : colors.waveformActive,
-                      },
-                    ]}
-                  />
-                ))}
+              {/* Live Audio Amplifier Visualizer Canvas */}
+              <View
+                style={[
+                  styles.waveformCanvas,
+                  {
+                    backgroundColor: colors.surfaceAlt,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={styles.waveformBarsRow}>
+                  {animatedBars.map((animVal, index) => (
+                    <Animated.View
+                      key={index}
+                      style={[
+                        styles.waveformBar,
+                        {
+                          height: animVal.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [6, 106],
+                            extrapolate: "clamp",
+                          }),
+                          backgroundColor: isPaused
+                            ? colors.waveformBar
+                            : colors.waveformActive,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
               </View>
 
               {/* Status Hint */}
@@ -368,17 +382,26 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     marginBottom: 18,
   },
-  waveformContainer: {
+  waveformCanvas: {
+    width: "100%",
+    height: 136,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    marginBottom: 20,
+    overflow: "hidden",
+  },
+  waveformBarsRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 80,
-    gap: 4,
-    marginBottom: 16,
-    width: "100%",
+    height: 110,
+    gap: 3.5,
   },
   waveformBar: {
-    width: 4,
+    width: 3.5,
     borderRadius: 2,
   },
   statusHint: {

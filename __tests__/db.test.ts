@@ -43,6 +43,38 @@ describe("Database & FTS5 DAO", () => {
     expect(retrieved?.duration_sec).toBe(105);
   });
 
+  it("persists and updates amplitude_data round trip correctly", async () => {
+    const samples = [0.12, 0.45, 0.88, 0.33, 0.05];
+    const entry: JournalEntry = {
+      id: "amp-entry-1",
+      title: "Audio Waveform Test",
+      summary: "Testing amplitude storage",
+      transcript: "Testing waveform persistence.",
+      tags: ["test"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: "file:///audio/2026/09/amp-entry-1.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1789700000000,
+      last_accessed_at: 1789700000000,
+      amplitude_data: samples,
+    };
+
+    await entriesDao.insertEntry(entry);
+    const retrieved = await entriesDao.getEntryById("amp-entry-1");
+    expect(retrieved?.amplitude_data).toEqual(samples);
+
+    const updatedSamples = [0.99, 0.77, 0.55];
+    await entriesDao.updateEntry({
+      ...entry,
+      amplitude_data: updatedSamples,
+    });
+    const updated = await entriesDao.getEntryById("amp-entry-1");
+    expect(updated?.amplitude_data).toEqual(updatedSamples);
+  });
+
   it("executes full-text search with FTS5 triggers", async () => {
     const entry1: JournalEntry = {
       id: "entry-1",

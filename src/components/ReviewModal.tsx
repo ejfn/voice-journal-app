@@ -41,36 +41,19 @@ interface ReviewModalProps {
   onRetryTranscription?: (id: string) => void;
 }
 
-const WAVEFORM_CURSOR_WIDTH = 2;
-
 export function getDeterministicWaveform(
-  id: string,
+  _id?: string,
   count: number = 35,
 ): number[] {
-  const result: number[] = [];
-  let seed = 0;
-  for (let i = 0; i < id.length; i++) {
-    seed += id.charCodeAt(i);
-  }
-
-  for (let i = 0; i < count; i++) {
-    const t = i / (count - 1);
-    const taper = Math.sin(t * Math.PI); // 0 at ends, 1 in middle
-    const r =
-      Math.sin(seed + i * 17.3) * 0.4 +
-      Math.cos(seed * 2 + i * 31.7) * 0.2 +
-      0.6; // normalized around 0.6
-    const heightFactor = Math.max(0.15, Math.min(1.0, r * taper));
-    result.push(heightFactor);
-  }
-  return result;
+  // If amplitude data is not available, render a flat baseline (no fake synthetic waves)
+  return new Array(count).fill(0.06);
 }
 
 export function sampleAmplitudeData(
   data: number[],
   count: number = 35,
 ): number[] {
-  if (data.length === 0) return new Array(count).fill(0.35);
+  if (!data || data.length === 0) return new Array(count).fill(0.06);
 
   const result: number[] = [];
   const step = data.length / count;
@@ -79,11 +62,10 @@ export function sampleAmplitudeData(
     const endIdx = Math.min(data.length, Math.floor((i + 1) * step));
 
     if (startIdx === endIdx) {
-      // If the window is empty, interpolate/repeat the nearest sample
       const sampleIdx = Math.min(data.length - 1, startIdx);
-      result.push(Math.max(0.15, data[sampleIdx]));
+      result.push(Math.max(0.06, data[sampleIdx]));
     } else {
-      let maxVal = 0.15;
+      let maxVal = 0.06;
       for (let j = startIdx; j < endIdx; j++) {
         if (data[j] > maxVal) {
           maxVal = data[j];
@@ -97,16 +79,15 @@ export function sampleAmplitudeData(
   // Find the peak amplitude in the downsampled result
   const peak = Math.max(...result);
 
-  // If the peak is non-zero, scale/amplify all bars so the peak reaches 1.0.
-  // We clamp each bar to a minimum height factor of 0.15 to keep it visually pleasing.
-  if (peak > 0.15) {
+  // If the peak exceeds the baseline floor, scale/amplify so the vocal peaks reach 1.0
+  if (peak > 0.06) {
     const scaleFactor = 1.0 / peak;
     return result.map((val) =>
-      Math.max(0.15, Math.min(1.0, val * scaleFactor)),
+      Math.max(0.06, Math.min(1.0, val * scaleFactor)),
     );
   }
 
-  return result.map((val) => Math.max(0.15, val));
+  return result.map((val) => Math.max(0.06, val));
 }
 
 export const ReviewModal: React.FC<ReviewModalProps> = ({
@@ -123,15 +104,22 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(entry);
   const activeEntry = currentEntry || entry;
 
-  const [containerWidth, setContainerWidth] = useState(200);
-  const cursorPosition = useRef(new Animated.Value(0)).current;
+  const BAR_WIDTH = 3.5;
+  const BAR_MARGIN = 1.5;
+  const BAR_STEP = BAR_WIDTH + BAR_MARGIN * 2; // 6.5dp
+  const BAR_COUNT = 55;
+
+  const [containerWidth, setContainerWidth] = useState(320);
+  const [scrubberWidth, setScrubberWidth] = useState(200);
+  const [hasCompleted, setHasCompleted] = useState(false);
+  const waveformTranslateX = useRef(new Animated.Value(160)).current;
 
   const waveformBars = useMemo(() => {
     if (!activeEntry) return [];
     if (activeEntry.amplitude_data && activeEntry.amplitude_data.length > 0) {
-      return sampleAmplitudeData(activeEntry.amplitude_data, 35);
+      return sampleAmplitudeData(activeEntry.amplitude_data, BAR_COUNT);
     }
-    return getDeterministicWaveform(activeEntry.id, 35);
+    return getDeterministicWaveform(activeEntry.id, BAR_COUNT);
   }, [activeEntry]);
 
   const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
@@ -206,6 +194,15 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     const unsubscribe = audioPlaybackService.addListener((state) => {
       if (entry && state.entryId === entry.id) {
         setPlaybackState(state);
+        if (
+          !state.isPlaying &&
+          state.durationSec > 0 &&
+          state.currentTimeSec >= state.durationSec - 0.25
+        ) {
+          setHasCompleted(true);
+        } else if (state.isPlaying) {
+          setHasCompleted(false);
+        }
       } else {
         setPlaybackState({
           isPlaying: false,
@@ -225,6 +222,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (playbackState.isPlaying) {
       await audioPlaybackService.pause();
       return;
+    }
+
+    if (hasCompleted) {
+      setHasCompleted(false);
+      await audioPlaybackService.seekTo(0);
     }
 
     const localPath = active.local_audio_path;
@@ -292,8 +294,21 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const handleSeek = async (ratio: number) => {
     const active = currentEntry || entry;
     if (!active) return;
+    setHasCompleted(false);
     const targetSec = Math.round(ratio * (active.duration_sec || 1));
     await audioPlaybackService.seekTo(targetSec);
+  };
+
+  const handleRewind10 = async () => {
+    setHasCompleted(false);
+    const target = Math.max(0, playbackState.currentTimeSec - 10);
+    await audioPlaybackService.seekTo(target);
+  };
+
+  const handleForward10 = async () => {
+    setHasCompleted(false);
+    const target = Math.min(durationSec, playbackState.currentTimeSec + 10);
+    await audioPlaybackService.seekTo(target);
   };
 
   const handleAddTag = () => {
@@ -336,20 +351,35 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   const durationSec =
     activeEntry?.duration_sec || playbackState.durationSec || 1;
-  const progressRatio = Math.min(
+  const rawProgressRatio = Math.min(
     1,
     Math.max(0, playbackState.currentTimeSec / durationSec),
   );
+  const progressRatio = hasCompleted ? 1 : rawProgressRatio;
 
   useEffect(() => {
-    Animated.timing(cursorPosition, {
-      toValue:
-        progressRatio * Math.max(0, containerWidth - WAVEFORM_CURSOR_WIDTH),
-      duration: playbackState.isPlaying ? 120 : 0,
+    const totalWaveformWidth = waveformBars.length * BAR_STEP;
+    const centerX = containerWidth / 2;
+    const targetX = centerX - progressRatio * totalWaveformWidth;
+
+    const anim = Animated.timing(waveformTranslateX, {
+      toValue: targetX,
+      duration: playbackState.isPlaying ? 100 : 0,
       easing: Easing.linear,
       useNativeDriver: true,
-    }).start();
-  }, [containerWidth, cursorPosition, playbackState.isPlaying, progressRatio]);
+    });
+    anim.start();
+    return () => {
+      anim.stop();
+    };
+  }, [
+    containerWidth,
+    waveformBars.length,
+    progressRatio,
+    playbackState.isPlaying,
+    waveformTranslateX,
+    BAR_STEP,
+  ]);
 
   if (!activeEntry) return null;
 
@@ -415,115 +445,216 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           keyboardDismissMode="none"
           showsVerticalScrollIndicator={true}
         >
-          {/* Audio Player Bar */}
+          {/* Audio Player: Waveform Amplifier Canvas + Scrubber + Controls */}
           <View
             style={[
-              styles.playerContainer,
+              styles.playerCard,
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
-            <View style={styles.playerControls}>
+            {/* Waveform Amplifier Canvas with fixed center playhead needle */}
+            <TouchableOpacity
+              style={[
+                styles.waveformCanvas,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              activeOpacity={0.95}
+              accessible
+              accessibilityRole="adjustable"
+              accessibilityLabel="Playback waveform visualizer and scrubber"
+              accessibilityValue={{
+                min: 0,
+                max: 100,
+                now: Math.round(progressRatio * 100),
+                text: `${formatTimer(Math.floor(playbackState.currentTimeSec))} of ${formatDuration(durationSec)}`,
+              }}
+              accessibilityActions={[
+                { name: "increment", label: "Seek forward 5 percent" },
+                { name: "decrement", label: "Seek backward 5 percent" },
+              ]}
+              onAccessibilityAction={(event) => {
+                if (event.nativeEvent.actionName === "increment") {
+                  void handleSeek(Math.min(1, progressRatio + 0.05));
+                }
+                if (event.nativeEvent.actionName === "decrement") {
+                  void handleSeek(Math.max(0, progressRatio - 0.05));
+                }
+              }}
+              onLayout={(e) => {
+                setContainerWidth(e.nativeEvent.layout.width || 320);
+              }}
+              onPress={(e) => {
+                const { locationX } = e.nativeEvent;
+                const totalWaveformWidth = waveformBars.length * BAR_STEP;
+                const centerX = containerWidth / 2;
+                const currentX = centerX - progressRatio * totalWaveformWidth;
+                const tappedOffset = locationX - currentX;
+                const ratio = Math.max(
+                  0,
+                  Math.min(1, tappedOffset / totalWaveformWidth),
+                );
+                void handleSeek(ratio);
+              }}
+            >
+              {/* Scrolling Waveform Bars */}
+              <Animated.View
+                style={[
+                  styles.waveformTrack,
+                  {
+                    transform: [{ translateX: waveformTranslateX }],
+                  },
+                ]}
+              >
+                {waveformBars.map((heightFactor, index) => {
+                  const isPast = index / waveformBars.length <= progressRatio;
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        styles.waveformBar,
+                        {
+                          height: Math.max(6, heightFactor * 100),
+                          backgroundColor: isPast
+                            ? colors.waveformActive
+                            : colors.waveformBar,
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </Animated.View>
+
+              {/* Fixed Center Playhead Needle */}
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.centerPlayhead,
+                  { backgroundColor: colors.waveformActive },
+                ]}
+              />
+            </TouchableOpacity>
+
+            {/* Timeline Scrubber & Time Display */}
+            <View style={styles.scrubberRow}>
+              <Text style={[styles.timeLabel, { color: colors.textMuted }]}>
+                {formatTimer(Math.floor(playbackState.currentTimeSec))}
+              </Text>
+
+              <TouchableOpacity
+                style={styles.scrubberTrackContainer}
+                activeOpacity={1}
+                onLayout={(e) => {
+                  setScrubberWidth(e.nativeEvent.layout.width || 200);
+                }}
+                onPress={(e) => {
+                  const { locationX } = e.nativeEvent;
+                  const ratio = Math.max(
+                    0,
+                    Math.min(1, locationX / (scrubberWidth || 1)),
+                  );
+                  void handleSeek(ratio);
+                }}
+              >
+                <View
+                  style={[
+                    styles.scrubberTrack,
+                    {
+                      backgroundColor: colors.surfaceAlt,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.scrubberFill,
+                      {
+                        backgroundColor: colors.primary,
+                        width: `${Math.round(progressRatio * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+                <View
+                  style={[
+                    styles.scrubberThumb,
+                    {
+                      left: `${progressRatio * 100}%`,
+                      backgroundColor: colors.primary,
+                    },
+                  ]}
+                />
+              </TouchableOpacity>
+
+              <Text style={[styles.timeLabel, { color: colors.textMuted }]}>
+                {`-${formatDuration(Math.max(0, durationSec - Math.floor(playbackState.currentTimeSec)))}`}
+              </Text>
+            </View>
+
+            {/* Playback Controls Row: Replay 10, Play/Pause Pill, Forward 10 */}
+            <View style={styles.playbackControlsRow}>
+              <TouchableOpacity
+                onPress={handleRewind10}
+                style={[
+                  styles.skipButton,
+                  { backgroundColor: colors.surfaceAlt },
+                ]}
+                activeOpacity={0.7}
+                accessibilityLabel="Rewind 10 seconds"
+              >
+                <MaterialIcons name="replay-10" size={26} color={colors.text} />
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[
-                  styles.playerPlayBtn,
+                  styles.primaryPlayButton,
                   { backgroundColor: colors.primary },
+                  isDownloadingAudio && { opacity: 0.6 },
                 ]}
                 onPress={handlePlayPause}
                 disabled={isDownloadingAudio}
                 activeOpacity={0.8}
                 accessibilityLabel={
                   isDownloadingAudio
-                    ? "Downloading Audio"
+                    ? "Downloading audio"
                     : playbackState.isPlaying
-                      ? "Pause Audio"
-                      : "Play Audio"
+                      ? "Pause audio"
+                      : "Play audio"
                 }
               >
                 {isDownloadingAudio ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <MaterialIcons
-                    name={playbackState.isPlaying ? "pause" : "play-arrow"}
-                    size={24}
-                    color="#FFFFFF"
-                  />
+                  <>
+                    <MaterialIcons
+                      name={playbackState.isPlaying ? "pause" : "play-arrow"}
+                      size={28}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.playButtonText}>
+                      {playbackState.isPlaying ? "Pause" : "Play"}
+                    </Text>
+                  </>
                 )}
               </TouchableOpacity>
 
-              {/* Waveform Scrubber - transparent/no-box */}
               <TouchableOpacity
-                style={styles.waveformScrubberTransparent}
-                activeOpacity={0.9}
-                accessible
-                accessibilityRole="adjustable"
-                accessibilityLabel="Playback waveform scrubber"
-                accessibilityValue={{
-                  min: 0,
-                  max: 100,
-                  now: Math.round(progressRatio * 100),
-                  text: `${formatTimer(playbackState.currentTimeSec)} of ${formatDuration(durationSec)}`,
-                }}
-                accessibilityActions={[
-                  { name: "increment", label: "Seek forward 5 percent" },
-                  { name: "decrement", label: "Seek backward 5 percent" },
+                onPress={handleForward10}
+                style={[
+                  styles.skipButton,
+                  { backgroundColor: colors.surfaceAlt },
                 ]}
-                onAccessibilityAction={(event) => {
-                  if (event.nativeEvent.actionName === "increment") {
-                    void handleSeek(Math.min(1, progressRatio + 0.05));
-                  }
-                  if (event.nativeEvent.actionName === "decrement") {
-                    void handleSeek(Math.max(0, progressRatio - 0.05));
-                  }
-                }}
-                onLayout={(e) => {
-                  setContainerWidth(e.nativeEvent.layout.width || 150);
-                }}
-                onPress={(e) => {
-                  const { locationX } = e.nativeEvent;
-                  const ratio = Math.max(
-                    0,
-                    Math.min(1, locationX / containerWidth),
-                  );
-                  handleSeek(ratio);
-                }}
+                activeOpacity={0.7}
+                accessibilityLabel="Forward 10 seconds"
               >
-                <View style={styles.waveformScrubberBars}>
-                  {waveformBars.map((heightFactor, index) => {
-                    const isActive =
-                      index / waveformBars.length < progressRatio;
-                    return (
-                      <View
-                        key={index}
-                        style={[
-                          styles.waveformScrubberBar,
-                          {
-                            height: Math.max(4, heightFactor * 26),
-                            backgroundColor: isActive
-                              ? colors.waveformActive
-                              : colors.waveformBar,
-                          },
-                        ]}
-                      />
-                    );
-                  })}
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.waveformCursor,
-                      {
-                        backgroundColor: colors.waveformActive,
-                        transform: [{ translateX: cursorPosition }],
-                      },
-                    ]}
-                  />
-                </View>
+                <MaterialIcons
+                  name="forward-10"
+                  size={26}
+                  color={colors.text}
+                />
               </TouchableOpacity>
-
-              {/* Timer Text on same row */}
-              <Text style={[styles.timerTextRow, { color: colors.text }]}>
-                {formatTimer(playbackState.currentTimeSec)}/
-                {formatDuration(durationSec)}
-              </Text>
             </View>
           </View>
 
@@ -840,64 +971,115 @@ const styles = StyleSheet.create({
     padding: 18,
     paddingBottom: 40,
   },
-  playerContainer: {
+  playerCard: {
     padding: 14,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
-    marginBottom: 14,
+    marginBottom: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  playerControls: {
+  waveformCanvas: {
+    width: "100%",
+    height: 136,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: "hidden",
+    justifyContent: "center",
+    position: "relative",
+  },
+  waveformTrack: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
+    height: 116,
   },
-  playerPlayBtn: {
+  waveformBar: {
+    width: 3.5,
+    marginHorizontal: 1.5,
+    borderRadius: 2,
+  },
+  centerPlayhead: {
+    position: "absolute",
+    left: "50%",
+    marginLeft: -1.5,
+    width: 3,
+    top: 10,
+    bottom: 10,
+    borderRadius: 1.5,
+    zIndex: 10,
+  },
+  scrubberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 14,
+    marginBottom: 10,
+  },
+  timeLabel: {
+    fontSize: 12,
+    fontVariant: ["tabular-nums"],
+    fontWeight: "600",
+    minWidth: 44,
+  },
+  scrubberTrackContainer: {
+    flex: 1,
+    height: 24,
+    justifyContent: "center",
+    marginHorizontal: 8,
+    position: "relative",
+  },
+  scrubberTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+    borderWidth: 0.5,
+  },
+  scrubberFill: {
+    height: "100%",
+    borderRadius: 2,
+  },
+  scrubberThumb: {
+    position: "absolute",
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginLeft: -6,
+    top: 6,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  playbackControlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 20,
+    marginTop: 4,
+  },
+  skipButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
-  playerPlayIcon: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    marginLeft: 2,
-  },
-  waveformScrubberTransparent: {
-    flex: 1,
-    height: 36,
-    justifyContent: "center",
-    paddingHorizontal: 4,
-  },
-  timerTextRow: {
-    fontSize: 12,
-    fontWeight: "600",
-    textAlign: "right",
-    fontVariant: ["tabular-nums"],
-    minWidth: 70,
-  },
-  waveformScrubberBars: {
+  primaryPlayButton: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    height: "100%",
-    width: "100%",
-    position: "relative",
+    justifyContent: "center",
+    paddingHorizontal: 26,
+    height: 48,
+    borderRadius: 24,
+    gap: 6,
   },
-  waveformScrubberBar: {
-    width: 3.5,
-    borderRadius: 1.75,
-  },
-  waveformCursor: {
-    position: "absolute",
-    width: 2,
-    height: "100%",
-    borderRadius: 1,
+  playButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "600",
   },
   section: {
     marginBottom: 18,

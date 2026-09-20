@@ -3,53 +3,32 @@ import {
   sampleAmplitudeData,
 } from "../src/components/ReviewModal";
 
-describe("Deterministic Waveform Generator", () => {
-  it("generates the default number of bars", () => {
+describe("Baseline Waveform Generator (when amplitude data is missing)", () => {
+  it("generates the default number of flat baseline bars", () => {
     const bars = getDeterministicWaveform("test-entry-id");
     expect(bars.length).toBe(35);
+    expect(bars.every((v) => v === 0.06)).toBe(true);
   });
 
-  it("generates a custom number of bars", () => {
+  it("generates a custom number of flat baseline bars", () => {
     const bars = getDeterministicWaveform("test-entry-id", 50);
     expect(bars.length).toBe(50);
+    expect(bars.every((v) => v === 0.06)).toBe(true);
   });
 
-  it("clamps all values between 0.15 and 1.0", () => {
-    const bars = getDeterministicWaveform("another-long-entry-id-12345");
-    bars.forEach((val) => {
-      expect(val).toBeGreaterThanOrEqual(0.15);
-      expect(val).toBeLessThanOrEqual(1.0);
-    });
-  });
-
-  it("is completely deterministic for the same input", () => {
-    const bars1 = getDeterministicWaveform("same-id");
-    const bars2 = getDeterministicWaveform("same-id");
+  it("returns flat baseline bars without synthetic sine waves", () => {
+    const bars1 = getDeterministicWaveform("entry-1");
+    const bars2 = getDeterministicWaveform("entry-2");
     expect(bars1).toEqual(bars2);
-  });
-
-  it("generates different waveforms for different input IDs", () => {
-    const bars1 = getDeterministicWaveform("id-one");
-    const bars2 = getDeterministicWaveform("id-two");
-    expect(bars1).not.toEqual(bars2);
-  });
-
-  it("applies a tapering envelope (smaller at the ends)", () => {
-    const bars = getDeterministicWaveform("taper-test-id", 35);
-    // The ends (index 0 and 34) should be clamped to 0.15 due to the sine taper factor
-    expect(bars[0]).toBe(0.15);
-    expect(bars[34]).toBe(0.15);
-    // The middle should have some larger peak values
-    const maxVal = Math.max(...bars);
-    expect(maxVal).toBeGreaterThan(0.3);
+    expect(bars1.every((v) => v === 0.06)).toBe(true);
   });
 });
 
 describe("sampleAmplitudeData", () => {
-  it("returns filled default array when input is empty", () => {
+  it("returns flat baseline array when input is empty", () => {
     const res = sampleAmplitudeData([], 10);
     expect(res).toHaveLength(10);
-    expect(res.every((v) => v === 0.35)).toBe(true);
+    expect(res.every((v) => v === 0.06)).toBe(true);
   });
 
   it("downsamples a larger array correctly with amplification", () => {
@@ -85,6 +64,6 @@ describe("sampleAmplitudeData", () => {
   it("does not amplify silent recordings to full height", () => {
     const input = [0, 0, 0, 0];
     const res = sampleAmplitudeData(input, 4);
-    expect(res).toEqual([0.15, 0.15, 0.15, 0.15]);
+    expect(res).toEqual([0.06, 0.06, 0.06, 0.06]);
   });
 });

@@ -22,6 +22,13 @@ interface AudioRecorderInstance {
   uri?: string | null;
   getURI?: () => string | null;
   metering?: number;
+  getStatus?: () => {
+    metering?: number;
+    canRecord?: boolean;
+    isRecording?: boolean;
+    durationMillis?: number;
+    url?: string | null;
+  };
   getStatusAsync?: () => Promise<{ metering?: number }>;
 }
 
@@ -35,6 +42,7 @@ class AudioRecordingService {
   private isPaused: boolean = false;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
+  private isRecordingActive: boolean = false;
 
   async requestPermissions(): Promise<boolean> {
     try {
@@ -61,6 +69,7 @@ class AudioRecordingService {
     this.statusCallback = onStatusUpdate || null;
     this.durationMillis = 0;
     this.isPaused = false;
+    this.isRecordingActive = true;
 
     await setAudioModeAsync({
       allowsRecording: true,
@@ -103,21 +112,35 @@ class AudioRecordingService {
       };
     }
 
+    if (!this.isRecordingActive) {
+      return;
+    }
+
     this.startStatusTimer();
   }
 
   private startStatusTimer() {
     this.stopStatusTimer();
     this.timerInterval = setInterval(async () => {
+      if (!this.isRecordingActive) return;
+
       if (!this.isPaused) {
-        this.durationMillis += 200;
+        this.durationMillis += 100;
       }
       if (this.statusCallback) {
-        // Sample metering from recorder if available, or generate subtle simulated level
-        let rawDb = -30;
-        if (this.activeRecorder?.getStatusAsync) {
+        // Sample real metering from native recorder (getStatus in expo-audio SDK 57)
+        let rawDb = -60;
+        if (typeof this.activeRecorder?.getStatus === "function") {
+          try {
+            const st = this.activeRecorder.getStatus();
+            if (st && typeof st.metering === "number") {
+              rawDb = st.metering;
+            }
+          } catch {}
+        } else if (typeof this.activeRecorder?.getStatusAsync === "function") {
           try {
             const st = await this.activeRecorder.getStatusAsync();
+            if (!this.isRecordingActive || !this.statusCallback) return;
             if (st && typeof st.metering === "number") {
               rawDb = st.metering;
             }
@@ -125,6 +148,8 @@ class AudioRecordingService {
         } else if (this.activeRecorder?.metering !== undefined) {
           rawDb = this.activeRecorder.metering;
         }
+
+        if (!this.isRecordingActive || !this.statusCallback) return;
 
         const normalized = this.isPaused ? 0.05 : normalizeMetering(rawDb);
         this.statusCallback({
@@ -134,7 +159,7 @@ class AudioRecordingService {
           meteringLevel: normalized,
         });
       }
-    }, 200);
+    }, 100);
   }
 
   private stopStatusTimer() {
@@ -176,6 +201,8 @@ class AudioRecordingService {
     localUri: string;
     durationSec: number;
   }> {
+    this.isRecordingActive = false;
+    this.statusCallback = null;
     this.stopStatusTimer();
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
 
@@ -258,6 +285,8 @@ class AudioRecordingService {
   }
 
   async cancelRecording(): Promise<void> {
+    this.isRecordingActive = false;
+    this.statusCallback = null;
     this.stopStatusTimer();
     if (this.activeRecorder) {
       try {
