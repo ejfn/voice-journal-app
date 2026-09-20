@@ -375,7 +375,6 @@ const MainScreen: React.FC = () => {
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
-        setDownloadingEntryIds((prev) => new Set(prev).add(entry.id));
         showToast({
           message: "Downloading audio from Google Drive...",
           icon: "cloud-download",
@@ -403,12 +402,6 @@ const MainScreen: React.FC = () => {
         message: (err as Error).message || "Could not play audio.",
         icon: "error-outline",
         type: "error",
-      });
-    } finally {
-      setDownloadingEntryIds((prev) => {
-        const next = new Set(prev);
-        next.delete(entry.id);
-        return next;
       });
     }
   };
