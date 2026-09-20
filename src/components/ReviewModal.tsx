@@ -13,7 +13,7 @@ import {
   ActivityIndicator,
   Keyboard,
 } from "react-native";
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 import { JournalEntry } from "../db/schema";
 import { entriesDao } from "../db/dao/entriesDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
@@ -149,8 +149,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
     if (isLocal && localPath) {
       try {
-        const info = await FileSystem.getInfoAsync(localPath);
-        if (!info.exists) {
+        const file = new File(localPath);
+        if (!file.exists) {
           isLocal = false;
         }
       } catch {

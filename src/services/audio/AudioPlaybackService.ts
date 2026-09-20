@@ -9,6 +9,13 @@ export interface PlaybackState {
 
 export type PlaybackListener = (state: PlaybackState) => void;
 
+interface AudioPlayerStatusUpdate {
+  didJustFinish?: boolean;
+  playing?: boolean;
+  duration?: number;
+  currentTime?: number;
+}
+
 interface AudioPlayerInstance {
   playing?: boolean;
   currentTime?: number;
@@ -17,10 +24,15 @@ interface AudioPlayerInstance {
   pause?: () => void;
   seekTo?: (seconds: number) => Promise<void> | void;
   remove?: () => void;
+  addListener?: (
+    event: string,
+    listener: (status: AudioPlayerStatusUpdate) => void,
+  ) => { remove: () => void };
 }
 
 class AudioPlaybackService {
   private activePlayer: AudioPlayerInstance | null = null;
+  private playerSubscription: { remove: () => void } | null = null;
   private currentEntryId: string | null = null;
   private listeners: Set<PlaybackListener> = new Set();
   private progressInterval: NodeJS.Timeout | null = null;
@@ -43,8 +55,13 @@ class AudioPlaybackService {
   }
 
   getState(): PlaybackState {
+    const isPlaying = Boolean(
+      this.currentEntryId &&
+      (this.activePlayer?.playing ||
+        (this.progressInterval && !this.activePlayer?.pause)),
+    );
     return {
-      isPlaying: Boolean(this.activePlayer?.playing || this.progressInterval),
+      isPlaying,
       currentTimeSec: this.currentTimeSec,
       durationSec: this.durationSec,
       entryId: this.currentEntryId,
@@ -75,8 +92,26 @@ class AudioPlaybackService {
 
     try {
       if (typeof createAudioPlayer === "function") {
-        this.activePlayer = createAudioPlayer({ uri: audioUri });
-        this.activePlayer.play?.();
+        const player = createAudioPlayer({ uri: audioUri });
+        this.activePlayer = player as unknown as AudioPlayerInstance;
+        if (this.activePlayer?.addListener) {
+          this.playerSubscription = this.activePlayer.addListener(
+            "playbackStatusUpdate",
+            (status: AudioPlayerStatusUpdate) => {
+              if (
+                status?.didJustFinish ||
+                (!status?.playing &&
+                  status?.duration !== undefined &&
+                  status.duration > 0 &&
+                  status?.currentTime !== undefined &&
+                  status.currentTime >= status.duration)
+              ) {
+                this.stop();
+              }
+            },
+          );
+        }
+        this.activePlayer?.play?.();
       } else {
         // Fallback for mock environments
         this.activePlayer = {
@@ -102,6 +137,16 @@ class AudioPlaybackService {
         this.currentTimeSec = Math.round(this.activePlayer.currentTime);
         if (this.activePlayer.duration) {
           this.durationSec = Math.round(this.activePlayer.duration);
+        }
+        // If native player stopped or reached duration
+        if (
+          (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
+          (!this.activePlayer.playing &&
+            this.currentTimeSec > 0 &&
+            this.currentTimeSec >= this.durationSec - 1)
+        ) {
+          this.stop();
+          return;
         }
       } else {
         this.currentTimeSec += 1;
@@ -139,6 +184,14 @@ class AudioPlaybackService {
 
   async stop(): Promise<void> {
     this.stopProgressTracker();
+    if (this.playerSubscription) {
+      try {
+        this.playerSubscription.remove();
+      } catch {
+        // Ignore unbind error
+      }
+      this.playerSubscription = null;
+    }
     if (this.activePlayer) {
       try {
         if (this.activePlayer.pause) {

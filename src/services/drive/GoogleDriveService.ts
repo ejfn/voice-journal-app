@@ -1,5 +1,5 @@
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
-import * as FileSystem from "expo-file-system/legacy";
+import { Directory, File, UploadType } from "expo-file-system";
 import { deletedEntriesDao } from "../../db/dao/deletedEntriesDao";
 import { entriesDao } from "../../db/dao/entriesDao";
 import { settingsDao } from "../../db/dao/settingsDao";
@@ -167,8 +167,8 @@ export class GoogleDriveService {
       entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
 
     if (localAudioUri) {
-      const fileInfo = await FileSystem.getInfoAsync(localAudioUri);
-      if (fileInfo.exists && !audioFileId) {
+      const audioFile = new File(localAudioUri);
+      if (audioFile.exists && !audioFileId) {
         // Create audio file placeholder with metadata in Drive
         const createAudioRes = await fetch(
           "https://www.googleapis.com/drive/v3/files",
@@ -190,17 +190,16 @@ export class GoogleDriveService {
           const audioData = await createAudioRes.json();
           audioFileId = audioData.id;
 
-          // Stream binary audio file directly to Drive via FileSystem.uploadAsync
-          await FileSystem.uploadAsync(
+          // Stream binary audio file directly to Drive via audioFile.upload
+          await audioFile.upload(
             `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
-            localAudioUri,
             {
               httpMethod: "PATCH",
               headers: {
                 Authorization: `Bearer ${token}`,
                 "Content-Type": "audio/mp4",
               },
-              uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+              uploadType: UploadType.BINARY_CONTENT,
             },
           );
         }
@@ -572,9 +571,7 @@ export class GoogleDriveService {
                 entryJson.id,
                 entryJson.created_at,
               );
-              const audioExists = (
-                await FileSystem.getInfoAsync(localAudioPath)
-              ).exists;
+              const audioExists = new File(localAudioPath).exists;
 
               await entriesDao.insertEntry({
                 ...entryJson,
@@ -613,8 +610,8 @@ export class GoogleDriveService {
     if (!entry) throw new Error(`Entry ${entryId} not found`);
 
     const localPath = getEntryAudioPath(entryId, entry.created_at);
-    const info = await FileSystem.getInfoAsync(localPath);
-    if (info.exists) {
+    const localFile = new File(localPath);
+    if (localFile.exists) {
       await entriesDao.setAudioCached(entryId, true, localPath);
       return localPath;
     }
@@ -627,21 +624,15 @@ export class GoogleDriveService {
     const downloadUrl = `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?alt=media`;
 
     const dir = localPath.substring(0, localPath.lastIndexOf("/") + 1);
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-
-    const downloadResult = await FileSystem.downloadAsync(
-      downloadUrl,
-      localPath,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
-
-    if (downloadResult.status !== 200) {
-      throw new Error(
-        `Failed to download audio from Drive (${downloadResult.status})`,
-      );
+    const directory = new Directory(dir);
+    if (!directory.exists) {
+      directory.create({ intermediates: true, idempotent: true });
     }
+
+    await File.downloadFileAsync(downloadUrl, localFile, {
+      headers: { Authorization: `Bearer ${token}` },
+      idempotent: true,
+    });
 
     await entriesDao.setAudioCached(entryId, true, localPath);
     await entriesDao.markAudioAccessed(entryId);
@@ -670,9 +661,9 @@ export class GoogleDriveService {
     for (const entry of cachedEntries) {
       if (entry.local_audio_path) {
         try {
-          const info = await FileSystem.getInfoAsync(entry.local_audio_path);
-          if (info.exists && typeof info.size === "number") {
-            totalBytes += info.size;
+          const file = new File(entry.local_audio_path);
+          if (file.exists && typeof file.size === "number") {
+            totalBytes += file.size;
             validCachedCount++;
           }
         } catch {
@@ -721,12 +712,12 @@ export class GoogleDriveService {
     for (const entry of prunableEntries) {
       if (entry.local_audio_path) {
         try {
-          const info = await FileSystem.getInfoAsync(entry.local_audio_path);
-          if (info.exists && typeof info.size === "number") {
-            totalBytes += info.size;
+          const file = new File(entry.local_audio_path);
+          if (file.exists && typeof file.size === "number") {
+            totalBytes += file.size;
             entrySizes.push({
               entry,
-              size: info.size,
+              size: file.size,
             });
           }
         } catch {
@@ -753,9 +744,10 @@ export class GoogleDriveService {
 
         try {
           if (item.entry.local_audio_path) {
-            await FileSystem.deleteAsync(item.entry.local_audio_path, {
-              idempotent: true,
-            });
+            const file = new File(item.entry.local_audio_path);
+            if (file.exists) {
+              file.delete();
+            }
           }
           await entriesDao.setAudioCached(item.entry.id, false, null);
           freedBytes += item.size;

@@ -1,7 +1,8 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
-import * as FileSystem from "expo-file-system/legacy";
+import { Directory, File } from "expo-file-system";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
+import { audioPlaybackService } from "./AudioPlaybackService";
 
 export interface RecordingStatus {
   isRecording: boolean;
@@ -48,6 +49,13 @@ class AudioRecordingService {
     entryId: string,
     onStatusUpdate?: RecordingStatusCallback,
   ): Promise<void> {
+    // Ensure any active playback is halted to avoid feedback/conflicts
+    try {
+      await audioPlaybackService.stop();
+    } catch {
+      // Ignore
+    }
+
     this.currentEntryId = entryId;
     this.currentTimestamp = Date.now();
     this.statusCallback = onStatusUpdate || null;
@@ -190,7 +198,10 @@ class AudioRecordingService {
     if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
       if (recordedTempUri) {
         try {
-          await FileSystem.deleteAsync(recordedTempUri, { idempotent: true });
+          const tempFile = new File(recordedTempUri);
+          if (tempFile.exists) {
+            tempFile.delete();
+          }
         } catch {
           // Ignore temp cleanup errors
         }
@@ -217,16 +228,13 @@ class AudioRecordingService {
       destinationUri.lastIndexOf("/") + 1,
     );
     try {
-      const dirInfo = await FileSystem.getInfoAsync(dir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+      const directory = new Directory(dir);
+      if (!directory.exists) {
+        directory.create({ intermediates: true, idempotent: true });
       }
 
       if (recordedTempUri && recordedTempUri !== destinationUri) {
-        await FileSystem.copyAsync({
-          from: recordedTempUri,
-          to: destinationUri,
-        });
+        await new File(recordedTempUri).copy(new File(destinationUri));
       }
     } catch (fsErr) {
       console.warn("Could not copy recording to sandbox path:", fsErr);
@@ -235,6 +243,15 @@ class AudioRecordingService {
     this.activeRecorder = null;
     this.statusCallback = null;
     this.currentEntryId = null;
+
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      });
+    } catch {
+      // Ignore audio mode reset error
+    }
 
     return {
       localUri: destinationUri,
@@ -249,7 +266,10 @@ class AudioRecordingService {
         await this.activeRecorder.stop?.();
         const uri = this.activeRecorder.uri || this.activeRecorder.getURI?.();
         if (uri) {
-          await FileSystem.deleteAsync(uri, { idempotent: true });
+          const tempFile = new File(uri);
+          if (tempFile.exists) {
+            tempFile.delete();
+          }
         }
       } catch {
         // Ignore cancel cleanup errors
@@ -258,6 +278,15 @@ class AudioRecordingService {
     this.activeRecorder = null;
     this.statusCallback = null;
     this.currentEntryId = null;
+
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      });
+    } catch {
+      // Ignore audio mode reset error
+    }
   }
 }
 

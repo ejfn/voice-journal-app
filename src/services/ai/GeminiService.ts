@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 import { settingsDao } from "../../db/dao/settingsDao";
 
 export interface GeminiAnalysisResult {
@@ -94,9 +94,8 @@ export class GeminiService {
     }
 
     // Read audio as base64 string
-    const base64Audio = await FileSystem.readAsStringAsync(audioUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    const audioFile = new File(audioUri);
+    const base64Audio = await audioFile.base64();
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${effectiveKey}`;
 

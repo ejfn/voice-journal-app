@@ -44,7 +44,7 @@ runs:
         if [ "${{ github.event_name }}" = "release" ]; then
           # Release event - use actual version for expo.version, normalized for runtime
           RAW_VERSION="${{ github.event.release.tag_name }}"
-          VERSION="$RAW_VERSION"
+          VERSION="${RAW_VERSION#v}"
           FULL_VERSION="${RAW_VERSION}+${GIT_HASH_SHORT}"
           if [[ $RAW_VERSION =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
@@ -59,7 +59,7 @@ runs:
         elif [[ ${{ github.ref }} == refs/tags/v* ]]; then
           # Tag push - use actual version for expo.version, normalized for runtime
           RAW_VERSION="${{ github.ref_name }}"
-          VERSION="$RAW_VERSION"
+          VERSION="${RAW_VERSION#v}"
           FULL_VERSION="${RAW_VERSION}+${GIT_HASH_SHORT}"
           if [[ $RAW_VERSION =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
@@ -75,7 +75,7 @@ runs:
           # Main branch push - isolate with stable beta runtime version
           # Increment minor version by 1 and reset patch to 0
           BASE_VERSION="${MAJOR}.$((MINOR + 1)).0"
-          VERSION="v${BASE_VERSION}-beta.${COMMIT_COUNT}"
+          VERSION="${BASE_VERSION}-beta.${COMMIT_COUNT}"
           FULL_VERSION="v${BASE_VERSION}-beta.${COMMIT_COUNT}+${GIT_HASH_SHORT}"
           RUNTIME_VERSION="v${BASE_VERSION}-beta"
           EAS_BRANCH="preview"
@@ -84,7 +84,7 @@ runs:
           # Other branch (manual trigger) - isolate with git hash in runtime version
           # Increment minor version by 1 and reset patch to 0
           BASE_VERSION="${MAJOR}.$((MINOR + 1)).0"
-          VERSION="v${BASE_VERSION}-alpha.${COMMIT_COUNT}"
+          VERSION="${BASE_VERSION}-alpha.${COMMIT_COUNT}"
           FULL_VERSION="v${BASE_VERSION}-alpha.${COMMIT_COUNT}+${GIT_HASH_SHORT}"
           RUNTIME_VERSION="v${BASE_VERSION}-alpha.${COMMIT_COUNT}+${GIT_HASH_SHORT}"
           EAS_BRANCH="development"

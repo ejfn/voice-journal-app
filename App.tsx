@@ -7,11 +7,9 @@ import {
   StyleSheet,
   RefreshControl,
   StatusBar,
-  Alert,
-  Platform,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import * as FileSystem from "expo-file-system/legacy";
+import { File } from "expo-file-system";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
@@ -22,7 +20,6 @@ import { TagFilterChips } from "./src/components/TagFilterChips";
 import { TimelineHeader } from "./src/components/TimelineHeader";
 import { DayGroup, entriesDao, MonthSection } from "./src/db/dao/entriesDao";
 import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
-import { syncQueueDao } from "./src/db/dao/syncQueueDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
@@ -162,29 +159,11 @@ const MainScreen: React.FC = () => {
     setIsRefreshing(false);
   };
 
-  const handleDriveSync = async () => {
-    try {
-      const result = await smartSyncService.sync({
-        force: true,
-        reason: "manual",
-      });
-      await loadData();
-      showToast({
-        message: `Sync Complete: ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
-        icon: "cloud-done",
-        type: "success",
-      });
-    } catch (err) {
-      showToast({
-        message: (err as Error).message || "Could not sync with Google Drive.",
-        icon: "cloud-off",
-        type: "error",
-      });
-    }
-  };
-
   // Start Voice Recording
   const handleStartRecording = async () => {
+    // Ensure any ongoing playback is stopped before starting a new recording
+    await audioPlaybackService.stop();
+
     const hasPermission = await audioRecordingService.requestPermissions();
     if (!hasPermission) {
       showToast({
@@ -233,7 +212,10 @@ const MainScreen: React.FC = () => {
       if (durationSec < 3) {
         if (localUri) {
           try {
-            await FileSystem.deleteAsync(localUri, { idempotent: true });
+            const shortFile = new File(localUri);
+            if (shortFile.exists) {
+              shortFile.delete();
+            }
           } catch (delErr) {
             console.warn("Could not delete short recording:", delErr);
           }
@@ -350,13 +332,13 @@ const MainScreen: React.FC = () => {
     }
 
     try {
-      let localPath = entry.local_audio_path;
+      const localPath = entry.local_audio_path;
       let isCached = entry.is_audio_cached === 1 && Boolean(localPath);
 
       if (isCached && localPath) {
         try {
-          const info = await FileSystem.getInfoAsync(localPath);
-          if (!info.exists) {
+          const file = new File(localPath);
+          if (!file.exists) {
             isCached = false;
           }
         } catch {
