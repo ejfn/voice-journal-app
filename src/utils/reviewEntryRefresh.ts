@@ -1,4 +1,4 @@
-import { MonthSection } from "../db/dao/entriesDao";
+import { MonthSection, entriesDao } from "../db/dao/entriesDao";
 import { JournalEntry } from "../db/schema";
 
 export const findEntryInSections = (
@@ -17,13 +17,12 @@ export const findEntryInSections = (
   return null;
 };
 
-export const getRefreshedReviewEntry = (
+export const getRefreshedReviewEntry = async (
   currentEntry: JournalEntry | null,
-  groupedSections: MonthSection[],
-): JournalEntry | null => {
+): Promise<JournalEntry | null> => {
   if (!currentEntry) {
     return currentEntry;
   }
 
-  return findEntryInSections(groupedSections, currentEntry.id) ?? currentEntry;
+  return (await entriesDao.getEntryById(currentEntry.id)) ?? currentEntry;
 };

@@ -1,4 +1,4 @@
-import { MonthSection } from "../src/db/dao/entriesDao";
+import { MonthSection, entriesDao } from "../src/db/dao/entriesDao";
 import { JournalEntry } from "../src/db/schema";
 import {
   findEntryInSections,
@@ -39,6 +39,10 @@ describe("reviewEntryRefresh", () => {
     },
   ];
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("finds the refreshed entry object by id from grouped sections", () => {
     const refreshedEntry: JournalEntry = {
       ...baseEntry,
@@ -54,7 +58,7 @@ describe("reviewEntryRefresh", () => {
     ).toBe(refreshedEntry);
   });
 
-  it("replaces the open review entry when refreshed timeline data contains it", () => {
+  it("replaces the open review entry with the latest database row", async () => {
     const refreshedEntry: JournalEntry = {
       ...baseEntry,
       title: "Refreshed title",
@@ -62,21 +66,20 @@ describe("reviewEntryRefresh", () => {
       updated_at: 2000,
       transcription_status: "completed",
     };
+    jest.spyOn(entriesDao, "getEntryById").mockResolvedValue(refreshedEntry);
 
-    expect(
-      getRefreshedReviewEntry(baseEntry, makeSections(refreshedEntry)),
-    ).toBe(refreshedEntry);
+    await expect(getRefreshedReviewEntry(baseEntry)).resolves.toBe(
+      refreshedEntry,
+    );
   });
 
-  it("preserves the current review entry when filters exclude it from refreshed sections", () => {
-    const differentEntry: JournalEntry = {
-      ...baseEntry,
-      id: "entry-2",
-      title: "Other entry",
-    };
+  it("preserves the current review entry when no refreshed row exists", async () => {
+    jest.spyOn(entriesDao, "getEntryById").mockResolvedValue(null);
 
-    expect(
-      getRefreshedReviewEntry(baseEntry, makeSections(differentEntry)),
-    ).toBe(baseEntry);
+    await expect(getRefreshedReviewEntry(baseEntry)).resolves.toBe(baseEntry);
+  });
+
+  it("keeps null when there is no current review entry", async () => {
+    await expect(getRefreshedReviewEntry(null)).resolves.toBeNull();
   });
 });
