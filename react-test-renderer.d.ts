@@ -10,7 +10,8 @@ declare module "react-test-renderer" {
     };
   }
 
-  export function act<T>(callback: () => T | Promise<T>): Promise<void>;
+  export function act(callback: () => void): void;
+  export function act<T>(callback: () => Promise<T>): Promise<void>;
 
   const renderer: {
     create: (element: React.ReactElement) => ReactTestRenderer;
