@@ -2,6 +2,8 @@ import {
   formatDate,
   formatDayLabel,
   formatDuration,
+  formatNegativeCountdown,
+  formatPrecisionTimer,
   formatTime,
   formatTimer,
   getAudioDirectory,
@@ -47,6 +49,21 @@ describe("Path & Audio Utilities", () => {
     expect(formatTimer(105)).toBe("01:45");
     expect(formatTimer(5)).toBe("00:05");
     expect(formatTimer(0)).toBe("00:00");
+  });
+
+  it("formats precision timer MM:SS.s with tenths of a second", () => {
+    expect(formatPrecisionTimer(4200)).toBe("00:04.2");
+    expect(formatPrecisionTimer(0)).toBe("00:00.0");
+    expect(formatPrecisionTimer(65400)).toBe("01:05.4");
+    expect(formatPrecisionTimer(150)).toBe("00:00.1");
+    expect(formatPrecisionTimer(990)).toBe("00:00.9");
+  });
+
+  it("formats negative countdown -MM:SS", () => {
+    expect(formatNegativeCountdown(4)).toBe("-00:04");
+    expect(formatNegativeCountdown(0)).toBe("-00:00");
+    expect(formatNegativeCountdown(65)).toBe("-01:05");
+    expect(formatNegativeCountdown(125)).toBe("-02:05");
   });
 
   it("formats time and date", () => {

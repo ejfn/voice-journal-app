@@ -134,7 +134,7 @@ class AudioPlaybackService {
     this.stopProgressTracker();
     this.progressInterval = setInterval(() => {
       if (this.activePlayer?.currentTime !== undefined) {
-        this.currentTimeSec = Math.round(this.activePlayer.currentTime);
+        this.currentTimeSec = this.activePlayer.currentTime;
         if (this.activePlayer.duration) {
           this.durationSec = Math.round(this.activePlayer.duration);
         }
@@ -143,20 +143,20 @@ class AudioPlaybackService {
           (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) ||
           (!this.activePlayer.playing &&
             this.currentTimeSec > 0 &&
-            this.currentTimeSec >= this.durationSec - 1)
+            this.currentTimeSec >= this.durationSec - 0.5)
         ) {
           this.stop();
           return;
         }
       } else {
-        this.currentTimeSec += 1;
+        this.currentTimeSec += 0.25;
         if (this.durationSec > 0 && this.currentTimeSec >= this.durationSec) {
           this.stop();
           return;
         }
       }
       this.notify();
-    }, 1000);
+    }, 250);
   }
 
   private stopProgressTracker() {
@@ -175,11 +175,25 @@ class AudioPlaybackService {
   }
 
   async seekTo(seconds: number): Promise<void> {
-    this.currentTimeSec = seconds;
+    const clamped = Math.max(
+      0,
+      this.durationSec > 0 ? Math.min(this.durationSec, seconds) : seconds,
+    );
+    this.currentTimeSec = clamped;
     if (this.activePlayer?.seekTo) {
-      await this.activePlayer.seekTo(seconds);
+      await this.activePlayer.seekTo(clamped);
     }
     this.notify();
+  }
+
+  async skip(offsetSec: number): Promise<void> {
+    const target = Math.max(
+      0,
+      this.durationSec > 0
+        ? Math.min(this.durationSec, this.currentTimeSec + offsetSec)
+        : Math.max(0, this.currentTimeSec + offsetSec),
+    );
+    await this.seekTo(target);
   }
 
   async stop(): Promise<void> {

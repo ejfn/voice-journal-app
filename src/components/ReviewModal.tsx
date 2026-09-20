@@ -22,8 +22,8 @@ import {
   PlaybackState,
 } from "../services/audio/AudioPlaybackService";
 import { useTheme } from "../theme/ThemeContext";
-import { formatDuration, formatTimer } from "../utils/paths";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
+import { PlaybackVisualizer } from "./PlaybackVisualizer";
 import {
   computeStorageStatus,
   getStorageBadgeConfig,
@@ -206,11 +206,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     }
   };
 
-  const handleSeek = async (ratio: number) => {
-    const active = currentEntry || entry;
-    if (!active) return;
-    const targetSec = Math.round(ratio * (active.duration_sec || 1));
+  const handleSeek = async (targetSec: number) => {
     await audioPlaybackService.seekTo(targetSec);
+  };
+
+  const handleSkip = async (offsetSec: number) => {
+    await audioPlaybackService.skip(offsetSec);
   };
 
   const handleAddTag = () => {
@@ -256,10 +257,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   const durationSec =
     activeEntry.duration_sec || playbackState.durationSec || 1;
-  const progressRatio = Math.min(
-    1,
-    Math.max(0, playbackState.currentTimeSec / durationSec),
-  );
   const storageStatus = computeStorageStatus(activeEntry);
   const storageBadge = getStorageBadgeConfig(storageStatus, colors);
   const isUntranscribed =
@@ -322,77 +319,17 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           keyboardDismissMode="none"
           showsVerticalScrollIndicator={true}
         >
-          {/* Audio Player Bar */}
-          <View
-            style={[
-              styles.playerContainer,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-          >
-            <View style={styles.playerControls}>
-              <TouchableOpacity
-                style={[
-                  styles.playerPlayBtn,
-                  { backgroundColor: colors.primary },
-                ]}
-                onPress={handlePlayPause}
-                disabled={isDownloadingAudio}
-                activeOpacity={0.8}
-                accessibilityLabel={
-                  isDownloadingAudio
-                    ? "Downloading Audio"
-                    : playbackState.isPlaying
-                      ? "Pause Audio"
-                      : "Play Audio"
-                }
-              >
-                {isDownloadingAudio ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <MaterialIcons
-                    name={playbackState.isPlaying ? "pause" : "play-arrow"}
-                    size={24}
-                    color="#FFFFFF"
-                  />
-                )}
-              </TouchableOpacity>
-
-              <View style={styles.playerTimeInfo}>
-                <Text style={[styles.timerText, { color: colors.text }]}>
-                  {formatTimer(playbackState.currentTimeSec)} /{" "}
-                  {formatDuration(durationSec)}
-                </Text>
-                {/* Progress bar */}
-                <TouchableOpacity
-                  style={[
-                    styles.progressBarBg,
-                    { backgroundColor: colors.surfaceAlt },
-                  ]}
-                  activeOpacity={1}
-                  onPress={(e) => {
-                    const { locationX } = e.nativeEvent;
-                    // Approximate full width of progress bar (parent width minus paddings)
-                    const totalWidth = 200;
-                    const ratio = Math.max(
-                      0,
-                      Math.min(1, locationX / totalWidth),
-                    );
-                    handleSeek(ratio);
-                  }}
-                >
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        backgroundColor: colors.primary,
-                        width: `${Math.round(progressRatio * 100)}%`,
-                      },
-                    ]}
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
+          {/* Waveform Scrubber & Enhanced Playback Controls */}
+          <PlaybackVisualizer
+            entryId={activeEntry.id}
+            isPlaying={playbackState.isPlaying}
+            currentTimeSec={playbackState.currentTimeSec}
+            durationSec={durationSec}
+            isDownloading={isDownloadingAudio}
+            onPlayPause={handlePlayPause}
+            onSeek={handleSeek}
+            onSkip={handleSkip}
+          />
 
           {/* Storage & Cloud Sync Status Badge */}
           <View
@@ -706,51 +643,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 18,
     paddingBottom: 40,
-  },
-  playerContainer: {
-    padding: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: 14,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  playerControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-  },
-  playerPlayBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  playerPlayIcon: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    marginLeft: 2,
-  },
-  playerTimeInfo: {
-    flex: 1,
-  },
-  timerText: {
-    fontSize: 13,
-    fontWeight: "600",
-    marginBottom: 6,
-  },
-  progressBarBg: {
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  progressBarFill: {
-    height: "100%",
-    borderRadius: 3,
   },
   section: {
     marginBottom: 18,

@@ -51,6 +51,8 @@ const MainScreen: React.FC = () => {
   // Recording Modal State
   const [isRecordingVisible, setIsRecordingVisible] = useState<boolean>(false);
   const [recordingDurationSec, setRecordingDurationSec] = useState<number>(0);
+  const [recordingDurationMillis, setRecordingDurationMillis] =
+    useState<number>(0);
   const [recordingMetering, setRecordingMetering] = useState<number>(0);
   const [isRecordingPaused, setIsRecordingPaused] = useState<boolean>(false);
   const [isProcessingAI, setIsProcessingAI] = useState<boolean>(false);
@@ -233,6 +235,7 @@ const MainScreen: React.FC = () => {
     const newId = generateUUID();
     setCurrentRecordingId(newId);
     setRecordingDurationSec(0);
+    setRecordingDurationMillis(0);
     setRecordingMetering(0);
     setIsRecordingPaused(false);
     setIsProcessingAI(false);
@@ -240,6 +243,7 @@ const MainScreen: React.FC = () => {
 
     await audioRecordingService.startRecording(newId, (status) => {
       setRecordingDurationSec(Math.floor(status.durationMillis / 1000));
+      setRecordingDurationMillis(status.durationMillis);
       setRecordingMetering(status.meteringLevel);
       setIsRecordingPaused(status.isPaused);
     });
@@ -644,6 +648,7 @@ const MainScreen: React.FC = () => {
         <RecordingModal
           visible={isRecordingVisible}
           durationSec={recordingDurationSec}
+          durationMillis={recordingDurationMillis}
           meteringLevel={recordingMetering}
           isPaused={isRecordingPaused}
           isProcessing={isProcessingAI}

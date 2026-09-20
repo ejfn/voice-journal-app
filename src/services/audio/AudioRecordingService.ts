@@ -22,6 +22,7 @@ interface AudioRecorderInstance {
   uri?: string | null;
   getURI?: () => string | null;
   metering?: number;
+  getStatus?: () => { metering?: number; isRecording?: boolean };
   getStatusAsync?: () => Promise<{ metering?: number }>;
 }
 
@@ -73,14 +74,13 @@ class AudioRecordingService {
       const { requireNativeModule } = require("expo-modules-core");
       const AudioModule = requireNativeModule("ExpoAudio");
       if (AudioModule && AudioModule.AudioRecorder) {
-        const recorder = new AudioModule.AudioRecorder(
-          RecordingPresets.HIGH_QUALITY,
-        );
-        this.activeRecorder = recorder;
-        await recorder.prepareToRecordAsync({
+        const recordingOptions = {
           ...RecordingPresets.HIGH_QUALITY,
           isMeteringEnabled: true,
-        });
+        };
+        const recorder = new AudioModule.AudioRecorder(recordingOptions);
+        this.activeRecorder = recorder;
+        await recorder.prepareToRecordAsync(recordingOptions);
         recorder.record();
       } else {
         // Fallback for mock/test environments
@@ -109,26 +109,51 @@ class AudioRecordingService {
   private startStatusTimer() {
     this.stopStatusTimer();
     this.timerInterval = setInterval(() => {
-      if (!this.isPaused) {
-        this.durationMillis += 200;
-      }
-      if (this.statusCallback) {
-        // Sample metering from recorder if available, or generate subtle simulated level
-        let rawDb = -30;
-        if (this.activeRecorder?.getStatusAsync) {
-          this.activeRecorder
-            .getStatusAsync()
-            .then((st: { metering?: number }) => {
-              if (st && typeof st.metering === "number") {
-                rawDb = st.metering;
-              }
-            })
-            .catch(() => {});
-        } else if (this.activeRecorder?.metering !== undefined) {
-          rawDb = this.activeRecorder.metering;
-        }
+      let rawDb: number | null = null;
 
-        const normalized = this.isPaused ? 0.05 : normalizeMetering(rawDb);
+      if (this.activeRecorder) {
+        if (typeof this.activeRecorder.getStatus === "function") {
+          try {
+            const st = this.activeRecorder.getStatus();
+            if (st && typeof st.metering === "number") {
+              rawDb = st.metering;
+            }
+            if (
+              st &&
+              typeof (st as { durationMillis?: number }).durationMillis ===
+                "number" &&
+              (st as { durationMillis?: number }).durationMillis! > 0
+            ) {
+              this.durationMillis = (
+                st as { durationMillis: number }
+              ).durationMillis;
+            } else if (!this.isPaused) {
+              this.durationMillis += 100;
+            }
+          } catch {
+            if (!this.isPaused) {
+              this.durationMillis += 100;
+            }
+          }
+        } else if (this.activeRecorder.metering !== undefined) {
+          rawDb = this.activeRecorder.metering;
+          if (!this.isPaused) {
+            this.durationMillis += 100;
+          }
+        } else if (!this.isPaused) {
+          this.durationMillis += 100;
+        }
+      } else if (!this.isPaused) {
+        this.durationMillis += 100;
+      }
+
+      if (this.statusCallback) {
+        const normalized = this.isPaused
+          ? 0.05
+          : rawDb !== null
+            ? normalizeMetering(rawDb)
+            : 0.05;
+
         this.statusCallback({
           isRecording: true,
           isPaused: this.isPaused,
@@ -136,7 +161,7 @@ class AudioRecordingService {
           meteringLevel: normalized,
         });
       }
-    }, 200);
+    }, 100);
   }
 
   private stopStatusTimer() {

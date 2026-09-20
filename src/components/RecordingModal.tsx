@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -8,13 +8,14 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useTheme } from "../theme/ThemeContext";
-import { formatTimer } from "../utils/paths";
+import { formatPrecisionTimer } from "../utils/paths";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { MIN_RECORDING_DURATION_SEC } from "../services/audio/AudioRecordingService";
 
 interface RecordingModalProps {
   visible: boolean;
   durationSec: number;
+  durationMillis?: number;
   meteringLevel: number; // 0.0 to 1.0
   isPaused: boolean;
   isProcessing: boolean;
@@ -24,9 +25,12 @@ interface RecordingModalProps {
   onCancel: () => void;
 }
 
+const BAR_COUNT = 42;
+
 export const RecordingModal: React.FC<RecordingModalProps> = ({
   visible,
   durationSec,
+  durationMillis,
   meteringLevel,
   isPaused,
   isProcessing,
@@ -37,27 +41,42 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
 }) => {
   const { colors } = useTheme();
   const canCancel = durationSec < MIN_RECORDING_DURATION_SEC;
-  // Array of 19 bars for waveform visualization
+  const durationMillisEffective =
+    durationMillis !== undefined ? durationMillis : durationSec * 1000;
+
+  // Real-time horizontally scrolling waveform bars
   const [waveformBars, setWaveformBars] = useState<number[]>(
-    new Array(19).fill(0.1),
+    new Array(BAR_COUNT).fill(0.08),
   );
+  const lastMeteringRef = useRef<number>(0.08);
 
   useEffect(() => {
     if (!visible) {
-      setWaveformBars(new Array(19).fill(0.1));
+      lastMeteringRef.current = 0.08;
+      setWaveformBars(new Array(BAR_COUNT).fill(0.08));
       return;
     }
 
     if (isPaused) {
-      setWaveformBars((prev) => [...prev.slice(1), 0.1]);
+      // Pause waveform movement while paused
       return;
     }
 
-    // Shift previous values and add current metering with subtle random variation for organic waveform feel
-    const jitter = (Math.random() - 0.5) * 0.12;
-    const barHeight = Math.max(0.12, Math.min(1.0, meteringLevel + jitter));
-    setWaveformBars((prev) => [...prev.slice(1), barHeight]);
-  }, [meteringLevel, visible, isPaused]);
+    // Immediate response to volume increases (fast attack), natural decay on drops
+    const prev = lastMeteringRef.current;
+    let target = meteringLevel;
+    if (target < prev) {
+      target = prev * 0.82;
+    }
+    lastMeteringRef.current = target;
+
+    // Organic vocal texture only when voice is detected
+    const jitter = target > 0.15 ? (Math.random() - 0.5) * 0.08 : 0;
+    const barHeight = Math.max(0.06, Math.min(1.0, target + jitter));
+
+    // Scroll waveform horizontally by shifting left and adding new bar on the right
+    setWaveformBars((prevBars) => [...prevBars.slice(1), barHeight]);
+  }, [meteringLevel, visible, isPaused, durationMillisEffective]);
 
   return (
     <Modal
@@ -84,6 +103,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
             </View>
           ) : (
             <>
+              {/* Header with status pill and cancel/discard button */}
               <View style={styles.header}>
                 <View
                   style={[
@@ -136,38 +156,60 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                 )}
               </View>
 
-              {/* Centered Timer */}
-              <Text style={[styles.timer, { color: colors.text }]}>
-                {formatTimer(durationSec)}
-              </Text>
+              {/* Symmetrical Real-Time Horizontally Scrolling Waveform Visualizer */}
+              <View
+                style={[
+                  styles.waveformCard,
+                  {
+                    backgroundColor: colors.surfaceAlt,
+                    borderColor: colors.border,
+                  },
+                ]}
+                accessibilityLabel="Live audio recording waveform visualizer"
+              >
+                <View style={styles.waveformRow}>
+                  {waveformBars.map((heightFactor, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.waveformBar,
+                        {
+                          height: Math.max(6, heightFactor * 100),
+                          backgroundColor: colors.waveformActive,
+                          opacity: isPaused ? 0.35 : 1.0,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
 
-              {/* Dynamic Waveform Bars */}
-              <View style={styles.waveformContainer}>
-                {waveformBars.map((heightFactor, index) => (
-                  <View
-                    key={index}
-                    style={[
-                      styles.waveformBar,
-                      {
-                        height: Math.max(6, heightFactor * 54),
-                        backgroundColor: isPaused
-                          ? colors.waveformBar
-                          : colors.waveformActive,
-                      },
-                    ]}
-                  />
-                ))}
+              {/* Digital Timer (MM:SS.s) & Live Status Indicator */}
+              <View style={styles.timerSection}>
+                <View
+                  style={[
+                    styles.liveIndicatorDot,
+                    {
+                      backgroundColor: isPaused
+                        ? colors.warning
+                        : colors.danger,
+                      opacity: isPaused ? 0.6 : 1,
+                    },
+                  ]}
+                />
+                <Text
+                  style={[styles.timer, { color: colors.text }]}
+                  testID="recording-precision-timer"
+                >
+                  {formatPrecisionTimer(durationMillisEffective)}
+                </Text>
               </View>
 
               {/* Status Hint */}
               <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
-                  ? durationSec < MIN_RECORDING_DURATION_SEC
-                    ? `Recording paused (< ${MIN_RECORDING_DURATION_SEC}s). Tap resume to continue, or discard.`
-                    : "Recording paused. Tap resume to continue, or stop to save."
-                  : durationSec < MIN_RECORDING_DURATION_SEC
-                    ? `Speak naturally. Minimum ${MIN_RECORDING_DURATION_SEC} seconds to save.`
-                    : "Speak naturally. Tap pause to take a break, or stop when finished."}
+                  ? "Recording paused. Tap resume to continue, or stop to save."
+                  : "Speak naturally. Tap pause to take a break, or stop when finished."}
               </Text>
 
               {/* Action Buttons */}
@@ -340,30 +382,49 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.8,
   },
-  timer: {
-    fontSize: 52,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-    letterSpacing: -1,
-    marginBottom: 18,
+  waveformCard: {
+    width: "100%",
+    height: 140,
+    borderRadius: 20,
+    borderWidth: 1,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
   },
-  waveformContainer: {
+  waveformRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 60,
+    height: "100%",
     gap: 4,
-    marginBottom: 16,
-    width: "100%",
   },
   waveformBar: {
-    width: 4,
+    width: 3.5,
     borderRadius: 2,
+  },
+  timerSection: {
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  liveIndicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  timer: {
+    fontSize: 48,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: -0.5,
   },
   statusHint: {
     fontSize: 13,
     textAlign: "center",
-    marginBottom: 26,
+    marginBottom: 24,
   },
   controlsRow: {
     flexDirection: "row",
@@ -371,7 +432,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     width: "100%",
     paddingHorizontal: 16,
-    marginTop: 8,
+    marginTop: 4,
     marginBottom: 8,
   },
   actionColumn: {
