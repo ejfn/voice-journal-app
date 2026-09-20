@@ -104,6 +104,445 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     unsubscribe();
   });
 
+  it("reuses existing entry files when a retry has no saved Drive IDs", async () => {
+    const entry: JournalEntry = {
+      id: "entry-retry",
+      title: "Retry",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/document/audio/entry-retry.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    const createRequests: string[] = [];
+    const lookupRequests: string[] = [];
+    let audioLookupCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const query = decodeURIComponent(urlStr);
+        if (query.includes("application/vnd.google-apps.folder")) {
+          return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-retry.m4a'")) {
+          lookupRequests.push(urlStr);
+          audioLookupCount += 1;
+          if (audioLookupCount === 1) {
+            return new Response(
+              JSON.stringify({
+                nextPageToken: "next-page",
+                files: [
+                  {
+                    id: "z-existing-audio-id",
+                    createdTime: "2026-09-01T00:00:00.000Z",
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              files: [
+                {
+                  id: "existing-audio-id",
+                  createdTime: "2026-09-01T00:00:00.000Z",
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (query.includes("name = 'entry-retry.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (init?.method === "POST") {
+          createRequests.push(urlStr);
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const result = await driveService.uploadEntry(entry);
+
+    expect(result).toEqual({
+      audioFileId: "existing-audio-id",
+      sidecarFileId: "existing-sidecar-id",
+      raceDetected: false,
+    });
+    expect(createRequests).toEqual([]);
+    expect(lookupRequests).toHaveLength(2);
+    expect(lookupRequests[0]).toContain("orderBy=createdTime");
+    expect(lookupRequests[1]).toContain("pageToken=next-page");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).toHaveBeenCalledWith(
+      expect.stringContaining("existing-audio-id"),
+      expect.any(Object),
+    );
+  });
+
+  it("reuses an existing cloud audio file when the local file is missing", async () => {
+    const entry: JournalEntry = {
+      id: "entry-cloud-only",
+      title: "Cloud Only",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 0,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    const createRequests: string[] = [];
+    const sidecarBodies: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const query = decodeURIComponent(urlStr);
+        if (query.includes("application/vnd.google-apps.folder")) {
+          return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-cloud-only.m4a'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-audio-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (query.includes("name = 'entry-cloud-only.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (
+          init?.method === "PATCH" &&
+          urlStr.includes(
+            "/upload/drive/v3/files/existing-sidecar-id?uploadType=media",
+          )
+        ) {
+          sidecarBodies.push(String(init.body));
+          return new Response(JSON.stringify({ id: "existing-sidecar-id" }), {
+            status: 200,
+          });
+        }
+        if (init?.method === "POST") {
+          createRequests.push(urlStr);
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const result = await driveService.uploadEntry(entry);
+
+    expect(result).toEqual({
+      audioFileId: "existing-audio-id",
+      sidecarFileId: "existing-sidecar-id",
+      raceDetected: false,
+    });
+    expect(createRequests).toEqual([]);
+    expect(sidecarBodies[0]).toContain(
+      '"drive_audio_file_id": "existing-audio-id"',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent uploadEntry calls for the same entry", async () => {
+    const t0 = 1758290000000;
+    const entry: JournalEntry = {
+      id: "entry-concurrent-upload",
+      title: "Concurrent Upload",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path:
+        "file:///mock/document/audio/2026/09/entry-concurrent-upload.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0,
+    };
+    await entriesDao.insertEntry(entry);
+
+    let audioCreateCount = 0;
+    let sidecarCreateCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const decodedUrl = decodeURIComponent(urlStr);
+        if (decodedUrl.includes("application/vnd.google-apps.folder")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "folder-id" }] }),
+            {
+              status: 200,
+            },
+          );
+        }
+        if (
+          decodedUrl.includes("name = 'entry-concurrent-upload.m4a'") ||
+          decodedUrl.includes("name = 'entry-concurrent-upload.json'")
+        ) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr === "https://www.googleapis.com/drive/v3/files"
+        ) {
+          audioCreateCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return new Response(
+            JSON.stringify({ id: `audio-id-${audioCreateCount}` }),
+            { status: 200 },
+          );
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr.includes("/upload/drive/v3/files?uploadType=multipart")
+        ) {
+          sidecarCreateCount += 1;
+          return new Response(
+            JSON.stringify({ id: `sidecar-id-${sidecarCreateCount}` }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      driveService.uploadEntry(entry),
+      driveService.uploadEntry(entry),
+    ]);
+
+    expect(first).toEqual(second);
+    expect(audioCreateCount).toBe(1);
+    expect(sidecarCreateCount).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares concurrent month folder resolution", async () => {
+    const createdFolders: string[] = [];
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          createdFolders.push(body.name);
+          return new Response(JSON.stringify({ id: `folder-${body.name}` }), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      driveService.resolveMonthFolder(2026, 9, "token"),
+      driveService.resolveMonthFolder("2026", "09", "token"),
+    ]);
+
+    expect(first).toBe("folder-09");
+    expect(second).toBe(first);
+    expect(createdFolders).toEqual(["VoiceJournal", "2026", "09"]);
+  });
+
+  it("waits for a pre-signout folder resolution before starting a new session", async () => {
+    let releaseOldRootLookup!: () => void;
+    const oldRootLookupStarted = new Promise<void>((resolve) => {
+      releaseOldRootLookup = resolve;
+    });
+    let oldRootLookupBlocked = true;
+
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = decodeURIComponent(url.toString());
+        const authHeader =
+          typeof init?.headers === "object" &&
+          init.headers !== null &&
+          "Authorization" in init.headers
+            ? String(
+                (
+                  init.headers as {
+                    Authorization?: string;
+                  }
+                ).Authorization ?? "",
+              )
+            : "";
+        const tokenPrefix = authHeader.includes("old-token") ? "old" : "new";
+        const nameMatch = urlStr.match(/name = '([^']+)'/);
+        const folderName = nameMatch ? nameMatch[1] : "unknown";
+
+        if (
+          tokenPrefix === "old" &&
+          folderName === "VoiceJournal" &&
+          oldRootLookupBlocked
+        ) {
+          await oldRootLookupStarted;
+          oldRootLookupBlocked = false;
+        }
+
+        if (urlStr.includes("application/vnd.google-apps.folder")) {
+          return new Response(
+            JSON.stringify({
+              files: [{ id: `${tokenPrefix}-${folderName}` }],
+            }),
+            { status: 200 },
+          );
+        }
+
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const staleResolutionPromise = driveService.resolveMonthFolder(
+      2026,
+      9,
+      "old-token",
+    );
+    await Promise.resolve();
+    await driveService.signOut();
+
+    const freshResolutionPromise = driveService.resolveMonthFolder(
+      2026,
+      9,
+      "new-token",
+    );
+
+    releaseOldRootLookup();
+    await expect(staleResolutionPromise).rejects.toThrow(
+      "Google Drive session changed during operation",
+    );
+    expect(await freshResolutionPromise).toBe("new-09");
+
+    const postSignOutFolderId = await driveService.resolveMonthFolder(
+      2026,
+      9,
+      "new-token",
+    );
+    expect(postSignOutFolderId).toBe("new-09");
+  });
+
+  it("does not update local sync state after sign-out during an upload", async () => {
+    const entry: JournalEntry = {
+      id: "entry-stale-upload",
+      title: "Stale Upload",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 0,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    let releaseSidecarUpload!: () => void;
+    let notifySidecarUploadStarted!: () => void;
+    const sidecarUploadStarted = new Promise<void>((resolve) => {
+      notifySidecarUploadStarted = resolve;
+    });
+    const sidecarUploadRelease = new Promise<void>((resolve) => {
+      releaseSidecarUpload = resolve;
+    });
+    let sidecarUploadBlocked = true;
+    const events: string[] = [];
+    const unsubscribe = driveService.addTransferListener((event) => {
+      events.push(event.status);
+    });
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = decodeURIComponent(url.toString());
+        if (urlStr.includes("application/vnd.google-apps.folder")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "folder-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (urlStr.includes("name = 'entry-stale-upload.m4a'")) {
+          return new Response(JSON.stringify({ files: [{ id: "audio-id" }] }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("name = 'entry-stale-upload.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (
+          sidecarUploadBlocked &&
+          init?.method === "PATCH" &&
+          urlStr.includes("sidecar-id?uploadType=media")
+        ) {
+          notifySidecarUploadStarted();
+          await sidecarUploadRelease;
+          sidecarUploadBlocked = false;
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const uploadPromise = driveService.uploadEntry(entry);
+    await sidecarUploadStarted;
+    await driveService.signOut();
+    releaseSidecarUpload();
+
+    await expect(uploadPromise).rejects.toThrow(
+      "Google Drive session changed during operation",
+    );
+    expect(await entriesDao.getEntryById(entry.id)).toMatchObject({
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      drive_synced_at: null,
+    });
+    expect(events).toEqual(["uploading"]);
+    unsubscribe();
+  });
+
   it("emits download transfer notifications for success and failure paths", async () => {
     const t0 = 1758290100000;
     const downloadableEntry: JournalEntry = {
@@ -261,6 +700,17 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
             json: async () => ({
               files: [{ id: "mock-folder-id", name: "folder" }],
             }),
+          } as Response;
+        }
+
+        // Exact-name retry lookups find no existing files for this test.
+        if (
+          decodedUrl.includes("name = 'entry-uuid-new.m4a'") ||
+          decodedUrl.includes("name = 'entry-uuid-new.json'")
+        ) {
+          return {
+            ok: true,
+            json: async () => ({ files: [] }),
           } as Response;
         }
 
