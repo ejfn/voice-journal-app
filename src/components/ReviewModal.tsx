@@ -325,6 +325,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             isPlaying={playbackState.isPlaying}
             currentTimeSec={playbackState.currentTimeSec}
             durationSec={durationSec}
+            waveformData={activeEntry.waveform_data}
             isDownloading={isDownloadingAudio}
             onPlayPause={handlePlayPause}
             onSeek={handleSeek}

@@ -11,13 +11,13 @@ import {
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { formatNegativeCountdown, formatTimer } from "../utils/paths";
-import { generateDeterministicWaveform } from "../utils/waveform";
 
 export interface PlaybackVisualizerProps {
   entryId: string;
   isPlaying: boolean;
   currentTimeSec: number;
   durationSec: number;
+  waveformData?: number[];
   isDownloading?: boolean;
   onPlayPause: () => void;
   onSeek: (targetSec: number) => void;
@@ -30,10 +30,11 @@ const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const WAVEFORM_BAR_COUNT = 75;
 
 export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
-  entryId,
+  entryId: _entryId,
   isPlaying,
   currentTimeSec,
   durationSec,
+  waveformData,
   isDownloading = false,
   onPlayPause,
   onSeek,
@@ -46,12 +47,14 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
   const [isScrubbing, setIsScrubbing] = useState<boolean>(false);
   const [scrubPositionSec, setScrubPositionSec] = useState<number>(0);
 
-  // Deterministic waveform envelope seeded by entry ID
-  const audioBars = useMemo(
-    () =>
-      generateDeterministicWaveform(entryId || "default", WAVEFORM_BAR_COUNT),
-    [entryId],
-  );
+  // Use real recorded waveform if available; otherwise display uniform neutral baseline bars
+  const audioBars = useMemo(() => {
+    if (waveformData && waveformData.length > 0) {
+      return waveformData;
+    }
+    // Clean uniform bars when real amplitude is not available
+    return new Array(WAVEFORM_BAR_COUNT).fill(0.2);
+  }, [waveformData]);
 
   const safeDuration = Math.max(1, durationSec);
   const displayTime = isScrubbing ? scrubPositionSec : currentTimeSec;

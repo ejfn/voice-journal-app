@@ -265,7 +265,7 @@ const MainScreen: React.FC = () => {
 
   const handleStopRecording = async () => {
     try {
-      const { localUri, durationSec } =
+      const { localUri, durationSec, waveformData } =
         await audioRecordingService.stopRecording();
 
       // Enforce 3-second minimum duration threshold
@@ -313,6 +313,7 @@ const MainScreen: React.FC = () => {
         updated_at: now,
         last_accessed_at: now,
         transcription_status: "queued",
+        waveform_data: waveformData,
       };
 
       await entriesDao.insertEntry(newEntry);

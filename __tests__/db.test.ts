@@ -43,6 +43,32 @@ describe("Database & FTS5 DAO", () => {
     expect(retrieved?.duration_sec).toBe(105);
   });
 
+  it("persists and retrieves recorded waveform_data", async () => {
+    const waveform = [0.1, 0.45, 0.8, 0.35, 0.9];
+    const entry: JournalEntry = {
+      id: "entry-wave",
+      title: "Audio with Waveform",
+      summary: "Voice memo with real metering",
+      transcript: "Testing waveform persistence",
+      tags: ["test"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1789700000000,
+      last_accessed_at: 1789700000000,
+      waveform_data: waveform,
+    };
+
+    await entriesDao.insertEntry(entry);
+    const retrieved = await entriesDao.getEntryById("entry-wave");
+
+    expect(retrieved).not.toBeNull();
+    expect(retrieved?.waveform_data).toEqual(waveform);
+  });
+
   it("executes full-text search with FTS5 triggers", async () => {
     const entry1: JournalEntry = {
       id: "entry-1",

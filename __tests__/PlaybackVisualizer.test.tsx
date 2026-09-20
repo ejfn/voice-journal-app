@@ -140,4 +140,12 @@ describe("PlaybackVisualizer", () => {
     // 150 / default 300 trackWidth = 50% of 100s = 50s
     expect(onSeek).toHaveBeenCalledWith(50);
   });
+
+  it("renders with custom recorded waveformData when provided", () => {
+    const customWave = [0.2, 0.4, 0.6, 0.8, 1.0];
+    const { tree } = renderVisualizer({
+      waveformData: customWave,
+    });
+    expect(tree.root).toBeTruthy();
+  });
 });

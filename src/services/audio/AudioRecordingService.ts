@@ -2,6 +2,7 @@ import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { Directory, File } from "expo-file-system";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
+import { resampleWaveform } from "../../utils/waveform";
 import { audioPlaybackService } from "./AudioPlaybackService";
 
 export interface RecordingStatus {
@@ -36,6 +37,7 @@ class AudioRecordingService {
   private isPaused: boolean = false;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
+  private recordedSamples: number[] = [];
 
   async requestPermissions(): Promise<boolean> {
     try {
@@ -62,6 +64,7 @@ class AudioRecordingService {
     this.statusCallback = onStatusUpdate || null;
     this.durationMillis = 0;
     this.isPaused = false;
+    this.recordedSamples = [];
 
     await setAudioModeAsync({
       allowsRecording: true,
@@ -154,6 +157,10 @@ class AudioRecordingService {
             ? normalizeMetering(rawDb)
             : 0.05;
 
+        if (!this.isPaused) {
+          this.recordedSamples.push(normalized);
+        }
+
         this.statusCallback({
           isRecording: true,
           isPaused: this.isPaused,
@@ -202,6 +209,7 @@ class AudioRecordingService {
   async stopRecording(): Promise<{
     localUri: string;
     durationSec: number;
+    waveformData?: number[];
   }> {
     this.stopStatusTimer();
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
@@ -265,9 +273,15 @@ class AudioRecordingService {
       console.warn("Could not copy recording to sandbox path:", fsErr);
     }
 
+    const waveformData =
+      this.recordedSamples.length > 0
+        ? resampleWaveform(this.recordedSamples, 75)
+        : undefined;
+
     this.activeRecorder = null;
     this.statusCallback = null;
     this.currentEntryId = null;
+    this.recordedSamples = [];
 
     try {
       await setAudioModeAsync({
@@ -281,11 +295,13 @@ class AudioRecordingService {
     return {
       localUri: destinationUri,
       durationSec: finalDurationSec,
+      waveformData,
     };
   }
 
   async cancelRecording(): Promise<void> {
     this.stopStatusTimer();
+    this.recordedSamples = [];
     if (this.activeRecorder) {
       try {
         await this.activeRecorder.stop?.();

@@ -42,3 +42,50 @@ export const generateDeterministicWaveform = (
 
   return bars;
 };
+
+/**
+ * Resamples an array of amplitude values (0.0 to 1.0) into a target count of bars.
+ * Uses peak/average pooling to preserve transient vocal peaks and speech dynamics.
+ */
+export const resampleWaveform = (
+  samples: number[],
+  targetCount: number = 75,
+): number[] => {
+  if (!samples || samples.length === 0) {
+    return [];
+  }
+
+  if (samples.length === targetCount) {
+    return samples.map((v) =>
+      Math.max(0.08, Math.min(1.0, Number(v.toFixed(2)))),
+    );
+  }
+
+  const result: number[] = [];
+  const step = samples.length / targetCount;
+
+  for (let i = 0; i < targetCount; i++) {
+    const start = Math.floor(i * step);
+    const end = Math.min(samples.length, Math.floor((i + 1) * step));
+
+    if (start >= end) {
+      const val = samples[Math.min(start, samples.length - 1)] ?? 0.08;
+      result.push(Math.max(0.08, Math.min(1.0, Number(val.toFixed(2)))));
+      continue;
+    }
+
+    let maxVal = 0;
+    let sumVal = 0;
+    for (let j = start; j < end; j++) {
+      const v = samples[j] ?? 0;
+      if (v > maxVal) maxVal = v;
+      sumVal += v;
+    }
+    const avgVal = sumVal / (end - start);
+    // Blend 70% peak + 30% average for natural speech waveform appearance
+    const blended = 0.7 * maxVal + 0.3 * avgVal;
+    result.push(Math.max(0.08, Math.min(1.0, Number(blended.toFixed(2)))));
+  }
+
+  return result;
+};
