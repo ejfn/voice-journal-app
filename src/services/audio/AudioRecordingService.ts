@@ -1,5 +1,10 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
 import { Directory, File } from "expo-file-system";
+import {
+  AppState,
+  AppStateStatus,
+  NativeEventSubscription,
+} from "react-native";
 import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
 import { resampleWaveform, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
@@ -35,6 +40,8 @@ class AudioRecordingService {
   private timerInterval: NodeJS.Timeout | null = null;
   private durationMillis: number = 0;
   private isPaused: boolean = false;
+  private isActionInProgress: boolean = false;
+  private appStateSubscription: NativeEventSubscription | null = null;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
   private recordedSamples: number[] = [];
@@ -64,7 +71,9 @@ class AudioRecordingService {
     this.statusCallback = onStatusUpdate || null;
     this.durationMillis = 0;
     this.isPaused = false;
+    this.isActionInProgress = false;
     this.recordedSamples = [];
+    this.setupAppStateListener();
 
     await setAudioModeAsync({
       allowsRecording: true,
@@ -109,42 +118,86 @@ class AudioRecordingService {
     this.startStatusTimer();
   }
 
+  private setupAppStateListener() {
+    this.removeAppStateListener();
+    this.appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState: AppStateStatus) => {
+        if (!this.activeRecorder) return;
+        if (nextState === "active") {
+          // When app returns to foreground:
+          // In Android expo-audio, OnActivityEntersForeground automatically calls recorder.record()
+          // if recorder.isPaused is true. If the user intentionally paused the recording, we must
+          // immediately re-pause the native recorder to prevent it from auto-recording and clashing with UI.
+          if (this.isPaused) {
+            try {
+              const st = this.activeRecorder.getStatus?.();
+              if (st?.isRecording) {
+                this.activeRecorder.pause?.();
+              }
+            } catch {
+              // Ignore
+            }
+          }
+        }
+      },
+    );
+  }
+
+  private removeAppStateListener() {
+    if (this.appStateSubscription) {
+      this.appStateSubscription.remove();
+      this.appStateSubscription = null;
+    }
+  }
+
   private startStatusTimer() {
     this.stopStatusTimer();
     this.timerInterval = setInterval(() => {
       let rawDb: number | null = null;
 
       if (this.activeRecorder) {
-        if (typeof this.activeRecorder.getStatus === "function") {
+        if (this.isPaused) {
+          // While paused, do NOT advance duration.
+          // In addition, if Android OnActivityEntersForeground auto-started recording in native layer,
+          // detect it and enforce pause to stay synchronized with user state.
           try {
-            const st = this.activeRecorder.getStatus();
-            if (st && typeof st.metering === "number") {
-              rawDb = st.metering;
-            }
-            if (
-              st &&
-              typeof (st as { durationMillis?: number }).durationMillis ===
-                "number" &&
-              (st as { durationMillis?: number }).durationMillis! > 0
-            ) {
-              this.durationMillis = (
-                st as { durationMillis: number }
-              ).durationMillis;
-            } else if (!this.isPaused) {
-              this.durationMillis += 100;
+            const st = this.activeRecorder.getStatus?.();
+            if (st?.isRecording) {
+              this.activeRecorder.pause?.();
             }
           } catch {
-            if (!this.isPaused) {
+            // Ignore
+          }
+        } else {
+          // Actively recording: query native status and advance duration
+          if (typeof this.activeRecorder.getStatus === "function") {
+            try {
+              const st = this.activeRecorder.getStatus();
+              if (st && typeof st.metering === "number") {
+                rawDb = st.metering;
+              }
+              if (
+                st &&
+                typeof (st as { durationMillis?: number }).durationMillis ===
+                  "number" &&
+                (st as { durationMillis?: number }).durationMillis! > 0
+              ) {
+                this.durationMillis = (
+                  st as { durationMillis: number }
+                ).durationMillis;
+              } else {
+                this.durationMillis += 100;
+              }
+            } catch {
               this.durationMillis += 100;
             }
-          }
-        } else if (this.activeRecorder.metering !== undefined) {
-          rawDb = this.activeRecorder.metering;
-          if (!this.isPaused) {
+          } else if (this.activeRecorder.metering !== undefined) {
+            rawDb = this.activeRecorder.metering;
+            this.durationMillis += 100;
+          } else {
             this.durationMillis += 100;
           }
-        } else if (!this.isPaused) {
-          this.durationMillis += 100;
         }
       } else if (!this.isPaused) {
         this.durationMillis += 100;
@@ -179,30 +232,65 @@ class AudioRecordingService {
   }
 
   async pauseRecording(): Promise<void> {
-    if (this.activeRecorder && !this.isPaused) {
-      this.isPaused = true;
+    if (this.isActionInProgress || !this.activeRecorder || this.isPaused) {
+      return;
+    }
+    this.isActionInProgress = true;
+    this.isPaused = true;
+    try {
       if (this.activeRecorder.pause) {
         await this.activeRecorder.pause();
       }
-      if (this.statusCallback) {
-        this.statusCallback({
-          isRecording: true,
-          isPaused: true,
-          durationMillis: this.durationMillis,
-          meteringLevel: 0.05,
-        });
-      }
+    } catch (err) {
+      console.warn("Error pausing audio recorder:", err);
+    } finally {
+      this.isActionInProgress = false;
+    }
+    if (this.statusCallback) {
+      this.statusCallback({
+        isRecording: true,
+        isPaused: true,
+        durationMillis: this.durationMillis,
+        meteringLevel: 0.05,
+      });
     }
   }
 
   async resumeRecording(): Promise<void> {
-    if (this.activeRecorder && this.isPaused) {
-      this.isPaused = false;
-      if (this.activeRecorder.record) {
-        await this.activeRecorder.record();
-      } else if (this.activeRecorder.resume) {
-        await this.activeRecorder.resume();
+    if (this.isActionInProgress || !this.activeRecorder || !this.isPaused) {
+      return;
+    }
+    this.isActionInProgress = true;
+    this.isPaused = false;
+    try {
+      let isAlreadyRecording = false;
+      if (typeof this.activeRecorder.getStatus === "function") {
+        try {
+          const st = this.activeRecorder.getStatus();
+          isAlreadyRecording = Boolean(st?.isRecording);
+        } catch {
+          // Ignore
+        }
       }
+      if (!isAlreadyRecording) {
+        if (this.activeRecorder.record) {
+          await this.activeRecorder.record();
+        } else if (this.activeRecorder.resume) {
+          await this.activeRecorder.resume();
+        }
+      }
+    } catch (err) {
+      console.warn("Error resuming audio recorder:", err);
+    } finally {
+      this.isActionInProgress = false;
+    }
+    if (this.statusCallback) {
+      this.statusCallback({
+        isRecording: true,
+        isPaused: false,
+        durationMillis: this.durationMillis,
+        meteringLevel: 0.05,
+      });
     }
   }
 
@@ -212,6 +300,8 @@ class AudioRecordingService {
     waveformData?: number[];
   }> {
     this.stopStatusTimer();
+    this.removeAppStateListener();
+    this.isActionInProgress = false;
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
 
     let recordedTempUri: string | null = null;
@@ -301,6 +391,8 @@ class AudioRecordingService {
 
   async cancelRecording(): Promise<void> {
     this.stopStatusTimer();
+    this.removeAppStateListener();
+    this.isActionInProgress = false;
     this.recordedSamples = [];
     if (this.activeRecorder) {
       try {

@@ -1,10 +1,40 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File } from "expo-file-system";
+import { createAudioPlayer } from "expo-audio";
 import { entriesDao } from "../../db/dao/entriesDao";
 import { uploadQueueService } from "../drive/UploadQueueService";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
+
+/**
+ * Probes an audio file's actual duration in seconds by temporarily creating
+ * an AudioPlayer and polling until the duration is populated (up to 3s).
+ * Returns 0 if duration cannot be determined within the timeout.
+ */
+async function probeAudioDuration(uri: string): Promise<number> {
+  let player: ReturnType<typeof createAudioPlayer> | null = null;
+  try {
+    player = createAudioPlayer({ uri });
+    // Poll up to 3 seconds (30 × 100ms) for the player to report a valid duration
+    for (let i = 0; i < 30; i++) {
+      const dur = (player as { duration?: number }).duration;
+      if (typeof dur === "number" && dur > 0) {
+        return Math.round(dur);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    return 0;
+  } catch {
+    return 0;
+  } finally {
+    try {
+      (player as { remove?: () => void } | null)?.remove?.();
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
 
 export interface ImportedAudioResult {
   entryId: string;
@@ -50,6 +80,9 @@ export class AudioImportService {
       // Copy from temporary cache to sandbox
       await new File(asset.uri).copy(new File(destinationPath));
 
+      // Probe actual duration from the copied file; falls back to 0 if unavailable
+      const durationSec = await probeAudioDuration(destinationPath);
+
       const title =
         asset.name.replace(/\.[^/.]+$/, "").trim() || "Imported Audio";
 
@@ -59,7 +92,7 @@ export class AudioImportService {
         summary: "Imported audio waiting for transcription and summary...",
         transcript: "Imported audio recording.",
         tags: ["imported"],
-        duration_sec: 60, // Estimate if unknown
+        duration_sec: durationSec,
         source_type: "imported",
         local_audio_path: destinationPath,
         drive_audio_file_id: null,
@@ -79,6 +112,7 @@ export class AudioImportService {
         name: asset.name,
         localPath: destinationPath,
         size: asset.size,
+        durationSec,
       });
     }
 

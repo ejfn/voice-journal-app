@@ -204,11 +204,11 @@ describe("ReviewModal", () => {
       );
     });
 
-    const saveButtons = tree.root.findAllByProps({
-      accessibilityLabel: "Save Changes",
+    const backButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Back",
     }) as { props: { onPress: () => void } }[];
     await act(async () => {
-      await saveButtons[0].props.onPress();
+      await backButtons[0].props.onPress();
     });
 
     expect(onSave).toHaveBeenCalledWith(
@@ -258,21 +258,57 @@ describe("ReviewModal", () => {
       );
     });
 
-    const saveButtons = tree.root.findAllByProps({
-      accessibilityLabel: "Save Changes",
-    }) as { props: { onPress: () => void } }[];
+    const updatedTextInputs = tree.root.findAllByProps({
+      placeholder: "Headline...",
+    }) as {
+      props: { onChangeText: (value: string) => void; onBlur: () => void };
+    }[];
+
     await act(async () => {
-      await saveButtons[0].props.onPress();
+      updatedTextInputs[0].props.onChangeText("Second title edited");
+      updatedTextInputs[0].props.onBlur();
+      await Promise.resolve();
     });
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "test-entry-2",
-        title: "Second title",
+        title: "Second title edited",
         summary: "Second summary",
         transcript: "Second transcript",
         tags: ["second"],
       }),
     );
+  });
+
+  it("auto-saves when title, summary, or transcript are edited after debounce", async () => {
+    jest.useFakeTimers();
+    try {
+      const onSave = jest.fn();
+      const tree = renderModal(baseEntry, onSave);
+      const textInputs = tree.root.findAllByProps({
+        placeholder: "Headline...",
+      }) as { props: { onChangeText: (value: string) => void } }[];
+
+      void act(() => {
+        textInputs[0].props.onChangeText("Auto saved title");
+      });
+
+      expect(onSave).not.toHaveBeenCalled();
+
+      await act(async () => {
+        jest.advanceTimersByTime(650);
+        await Promise.resolve();
+      });
+
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: baseEntry.id,
+          title: "Auto saved title",
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -30,6 +30,7 @@ import {
 } from "../utils/storageStatus";
 import { WAVEFORM_BAR_COUNT } from "../utils/waveform";
 import { useToast } from "./common/Toast";
+import { formatDate, formatTime } from "../utils/paths";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -74,6 +75,13 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     transcript: false,
     tags: false,
   });
+  const latestValuesRef = useRef({
+    title: "",
+    summary: "",
+    transcript: "",
+    tags: [] as string[],
+  });
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -124,19 +132,28 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (entry) {
       if (isNewEntry || !dirtyFieldsRef.current.title) {
         setTitle(entry.title);
+        latestValuesRef.current.title = entry.title;
       }
       if (isNewEntry || !dirtyFieldsRef.current.summary) {
         setSummary(entry.summary);
+        latestValuesRef.current.summary = entry.summary;
       }
       if (isNewEntry || !dirtyFieldsRef.current.transcript) {
         setTranscript(entry.transcript);
+        latestValuesRef.current.transcript = entry.transcript;
       }
       if (isNewEntry || !dirtyFieldsRef.current.tags) {
-        setTags(entry.tags || []);
+        const entryTags = entry.tags || [];
+        setTags(entryTags);
+        latestValuesRef.current.tags = entryTags;
       }
     }
 
     if (isNewEntry) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
       dirtyFieldsRef.current = {
         title: false,
         summary: false,
@@ -147,6 +164,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
     previousEntryIdRef.current = entry?.id ?? null;
   }, [entry]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = audioPlaybackService.addListener((state) => {
@@ -267,25 +292,23 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     await audioPlaybackService.skip(offsetSec);
   };
 
-  const handleAddTag = () => {
-    const clean = newTagInput.trim().toLowerCase().replace(/^#+/, "");
-    if (clean && !tags.includes(clean)) {
-      dirtyFieldsRef.current.tags = true;
-      setTags([...tags, clean]);
-      setNewTagInput("");
-      handleTagFocus();
+  const performSave = useCallback(async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
     }
-  };
 
-  const handleRemoveTag = (tagToRemove: string) => {
-    dirtyFieldsRef.current.tags = true;
-    setTags(tags.filter((t) => t !== tagToRemove));
-  };
-
-  const handleSaveAndClose = async () => {
     const active = currentEntry || entry;
     if (!active) return;
-    await audioPlaybackService.stop();
+
+    const isDirty =
+      dirtyFieldsRef.current.title ||
+      dirtyFieldsRef.current.summary ||
+      dirtyFieldsRef.current.transcript ||
+      dirtyFieldsRef.current.tags;
+
+    if (!isDirty) return;
+
     let latestWaveform = active.waveform_data;
     try {
       const refreshed = await entriesDao.getEntryById(active.id);
@@ -295,25 +318,103 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     } catch {
       // Ignore
     }
-    onSave({
+
+    const {
+      title: curTitle,
+      summary: curSummary,
+      transcript: curTranscript,
+      tags: curTags,
+    } = latestValuesRef.current;
+
+    const updatedEntry: JournalEntry = {
       ...active,
       waveform_data: latestWaveform,
-      title: title.trim() || "Untitled Voice Entry",
-      summary: summary.trim(),
-      transcript: transcript.trim(),
-      tags,
-    });
+      title: curTitle.trim() || "Untitled Voice Entry",
+      summary: curSummary.trim(),
+      transcript: curTranscript.trim(),
+      tags: curTags,
+    };
+
+    onSave(updatedEntry);
+  }, [currentEntry, entry, onSave]);
+
+  const scheduleAutoSave = useCallback(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      void performSave();
+    }, 600);
+  }, [performSave]);
+
+  const handleTitleChange = (value: string) => {
+    dirtyFieldsRef.current.title = true;
+    latestValuesRef.current.title = value;
+    setTitle(value);
+    scheduleAutoSave();
+  };
+
+  const handleSummaryChange = (value: string) => {
+    dirtyFieldsRef.current.summary = true;
+    latestValuesRef.current.summary = value;
+    setSummary(value);
+    scheduleAutoSave();
+  };
+
+  const handleTranscriptChange = (value: string) => {
+    dirtyFieldsRef.current.transcript = true;
+    latestValuesRef.current.transcript = value;
+    setTranscript(value);
+    scheduleAutoSave();
+  };
+
+  const handleAddTag = () => {
+    const clean = newTagInput.trim().toLowerCase().replace(/^#+/, "");
+    if (clean && !tags.includes(clean)) {
+      dirtyFieldsRef.current.tags = true;
+      const updatedTags = [...tags, clean];
+      latestValuesRef.current.tags = updatedTags;
+      setTags(updatedTags);
+      setNewTagInput("");
+      handleTagFocus();
+      void performSave();
+    }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    dirtyFieldsRef.current.tags = true;
+    const updatedTags = tags.filter((t) => t !== tagToRemove);
+    latestValuesRef.current.tags = updatedTags;
+    setTags(updatedTags);
+    void performSave();
   };
 
   const handleDelete = () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    dirtyFieldsRef.current = {
+      title: false,
+      summary: false,
+      transcript: false,
+      tags: false,
+    };
     const active = currentEntry || entry;
     if (!active) return;
     audioPlaybackService.stop();
     onDelete(active.id);
   };
 
-  const handleClose = () => {
-    audioPlaybackService.stop();
+  const handleClose = async () => {
+    await audioPlaybackService.stop();
+    await performSave();
+    dirtyFieldsRef.current = {
+      title: false,
+      summary: false,
+      transcript: false,
+      tags: false,
+    };
     onClose();
   };
 
@@ -347,24 +448,18 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             onPress={handleClose}
             style={styles.closeButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Close"
+            accessibilityLabel="Back"
           >
-            <MaterialIcons name="close" size={22} color={colors.textMuted} />
+            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>
-            Voice Note
+          <Text
+            style={[styles.headerTitle, { color: colors.text }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {`${formatDate(activeEntry.created_at)} • ${formatTime(activeEntry.created_at)}`}
           </Text>
-          <TouchableOpacity
-            onPress={handleSaveAndClose}
-            style={[
-              styles.saveHeaderButton,
-              { backgroundColor: colors.primary },
-            ]}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityLabel="Save Changes"
-          >
-            <Text style={styles.saveHeaderText}>Save</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRightPlaceholder} />
         </View>
 
         <ScrollView
@@ -516,10 +611,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={title}
-              onChangeText={(value) => {
-                dirtyFieldsRef.current.title = true;
-                setTitle(value);
-              }}
+              onChangeText={handleTitleChange}
+              onBlur={() => void performSave()}
               placeholder="Headline..."
               placeholderTextColor={colors.textMuted}
             />
@@ -541,10 +634,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={summary}
-              onChangeText={(value) => {
-                dirtyFieldsRef.current.summary = true;
-                setSummary(value);
-              }}
+              onChangeText={handleSummaryChange}
+              onBlur={() => void performSave()}
               onFocus={handleSummaryFocus}
               multiline
               placeholder="Key takeaway..."
@@ -641,10 +732,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 },
               ]}
               value={transcript}
-              onChangeText={(value) => {
-                dirtyFieldsRef.current.transcript = true;
-                setTranscript(value);
-              }}
+              onChangeText={handleTranscriptChange}
+              onBlur={() => void performSave()}
               onFocus={handleTranscriptFocus}
               multiline={true}
               scrollEnabled={true}
@@ -698,8 +787,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "600",
+    textAlign: "center",
+    flex: 1,
+    paddingHorizontal: 8,
   },
   closeButton: {
     width: 32,
@@ -711,15 +803,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
   },
-  saveHeaderButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  saveHeaderText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
+  headerRightPlaceholder: {
+    width: 32,
+    height: 32,
   },
   scrollContent: {
     padding: 18,
