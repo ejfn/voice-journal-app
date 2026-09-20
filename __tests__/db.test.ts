@@ -403,4 +403,47 @@ describe("Database & FTS5 DAO", () => {
     expect(prunableIds).not.toContain("entry-partial-sync");
     expect(prunableIds).toContain("entry-fully-backed-up");
   });
+
+  it("handles transcription queue status transitions", async () => {
+    const entryId = "entry-queued-test";
+    await entriesDao.insertEntry({
+      id: entryId,
+      title: "Voice Recording",
+      summary: "Queued...",
+      transcript: "",
+      tags: ["voice"],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/queued.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: Date.now(),
+      last_accessed_at: Date.now(),
+      transcription_status: "queued",
+    });
+
+    let queued = await entriesDao.getQueuedEntries();
+    expect(queued.some((e) => e.id === entryId)).toBe(true);
+
+    await entriesDao.updateTranscriptionStatus(entryId, "processing");
+    let entry = await entriesDao.getEntryById(entryId);
+    expect(entry?.transcription_status).toBe("processing");
+
+    await entriesDao.updateTranscription(entryId, {
+      title: "Morning reflections",
+      summary: "Reflected on the project goals.",
+      transcript: "This morning I thought about project goals.",
+      tags: ["morning", "goals"],
+      transcription_status: "completed",
+    });
+
+    entry = await entriesDao.getEntryById(entryId);
+    expect(entry?.transcription_status).toBe("completed");
+    expect(entry?.title).toBe("Morning reflections");
+    expect(entry?.tags).toEqual(["morning", "goals"]);
+
+    queued = await entriesDao.getQueuedEntries();
+    expect(queued.some((e) => e.id === entryId)).toBe(false);
+  });
 });

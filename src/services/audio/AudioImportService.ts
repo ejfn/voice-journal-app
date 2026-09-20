@@ -71,6 +71,7 @@ export class AudioImportService {
         created_at: now,
         updated_at: now,
         last_accessed_at: now,
+        transcription_status: "queued",
       };
 
       await entriesDao.insertEntry(entry);

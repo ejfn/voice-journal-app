@@ -1,6 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { getDatabase } from "../database";
-import { JournalEntry, JournalEntryRow } from "../schema";
+import { JournalEntry, JournalEntryRow, TranscriptionStatus } from "../schema";
 import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
 import { deletedEntriesDao } from "./deletedEntriesDao";
 
@@ -56,6 +56,8 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
     updated_at: row.updated_at || row.created_at,
     drive_synced_at: row.drive_synced_at ?? null,
     last_accessed_at: row.last_accessed_at,
+    transcription_status:
+      (row.transcription_status as TranscriptionStatus) || "completed",
   };
 };
 
@@ -77,12 +79,14 @@ export const entriesDao = {
       entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
     );
     const updatedAt = entry.updated_at || entry.created_at;
+    const transcriptionStatus = entry.transcription_status || "completed";
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
-        is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
+        transcription_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -99,6 +103,7 @@ export const entriesDao = {
         updatedAt,
         entry.drive_synced_at ?? null,
         entry.last_accessed_at || entry.created_at,
+        transcriptionStatus,
       ],
     );
   },
@@ -109,12 +114,13 @@ export const entriesDao = {
       entry.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
     );
     const updatedAt = entry.updated_at || Date.now();
+    const transcriptionStatus = entry.transcription_status || "completed";
     await db.runAsync(
       `UPDATE entries SET
         title = ?, summary = ?, transcript = ?, tags = ?, duration_sec = ?,
         source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
         drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
-        drive_synced_at = ?, last_accessed_at = ?
+        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?
       WHERE id = ?`,
       [
         entry.title,
@@ -130,9 +136,61 @@ export const entriesDao = {
         updatedAt,
         entry.drive_synced_at ?? null,
         entry.last_accessed_at || Date.now(),
+        transcriptionStatus,
         entry.id,
       ],
     );
+  },
+
+  async updateTranscriptionStatus(
+    id: string,
+    status: TranscriptionStatus,
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE entries SET transcription_status = ?, updated_at = ? WHERE id = ?`,
+      [status, Date.now(), id],
+    );
+  },
+
+  async updateTranscription(
+    id: string,
+    updates: {
+      title: string;
+      summary: string;
+      transcript: string;
+      tags: string[];
+      transcription_status: TranscriptionStatus;
+    },
+  ): Promise<void> {
+    const db = getDatabase();
+    const tagsJson = JSON.stringify(
+      updates.tags.map((t) => t.toLowerCase().replace(/^#/, "").trim()),
+    );
+    const now = Date.now();
+    await db.runAsync(
+      `UPDATE entries SET
+        title = ?, summary = ?, transcript = ?, tags = ?,
+        transcription_status = ?, updated_at = ?
+      WHERE id = ?`,
+      [
+        updates.title,
+        updates.summary,
+        updates.transcript,
+        tagsJson,
+        updates.transcription_status,
+        now,
+        id,
+      ],
+    );
+  },
+
+  async getQueuedEntries(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries WHERE transcription_status IN ('queued', 'processing') ORDER BY created_at ASC`,
+    );
+    return rows.map(rowToEntry);
   },
 
   async deleteEntry(id: string): Promise<JournalEntry | null> {
