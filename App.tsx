@@ -181,9 +181,7 @@ const MainScreen: React.FC = () => {
           decrementDownloadingEntry(event.entryId);
         }
 
-        if (event.status === "synced" || event.status === "uploaded") {
-          loadData();
-        }
+        loadData();
       },
     );
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
