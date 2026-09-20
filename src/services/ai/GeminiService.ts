@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
+import { settingsDao } from "../../db/dao/settingsDao";
 
 export interface GeminiAnalysisResult {
   title: string;
@@ -11,7 +12,7 @@ export class GeminiService {
   private apiKey: string;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
+    this.apiKey = apiKey || "";
   }
 
   setApiKey(key: string): void {
@@ -22,6 +23,61 @@ export class GeminiService {
     return this.apiKey;
   }
 
+  async resolveApiKey(): Promise<string> {
+    if (this.apiKey) {
+      return this.apiKey;
+    }
+    try {
+      return await settingsDao.getGeminiApiKey();
+    } catch {
+      return process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
+    }
+  }
+
+  async hasKeyConfigured(): Promise<boolean> {
+    const key = await this.resolveApiKey();
+    return key.trim().length > 0;
+  }
+
+  async validateApiKey(
+    keyToTest?: string,
+  ): Promise<{ valid: boolean; error?: string }> {
+    const key = (keyToTest ?? (await this.resolveApiKey())).trim();
+    if (!key) {
+      return { valid: false, error: "Gemini API key is not configured." };
+    }
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${key}`;
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: "Ping" }] }],
+        }),
+      });
+
+      if (!response.ok) {
+        let errMessage = "API key validation failed";
+        try {
+          const errJson = await response.json();
+          errMessage =
+            errJson?.error?.message || `API error (${response.status})`;
+        } catch {
+          errMessage = `API error (${response.status})`;
+        }
+        return { valid: false, error: errMessage };
+      }
+
+      return { valid: true };
+    } catch (err) {
+      return {
+        valid: false,
+        error: (err as Error).message || "Connection failed",
+      };
+    }
+  }
+
   cleanTags(tags: unknown[]): string[] {
     if (!Array.isArray(tags)) return [];
     return tags
@@ -30,9 +86,10 @@ export class GeminiService {
   }
 
   async analyzeAudio(audioUri: string): Promise<GeminiAnalysisResult> {
-    if (!this.apiKey) {
+    const effectiveKey = await this.resolveApiKey();
+    if (!effectiveKey) {
       throw new Error(
-        "Gemini API key is not configured. Please provide EXPO_PUBLIC_GEMINI_API_KEY.",
+        "Gemini API key is not configured. Please add your key in Settings.",
       );
     }
 
@@ -41,7 +98,7 @@ export class GeminiService {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${this.apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${effectiveKey}`;
 
     const promptText = `
 You are a precise voice journal assistant. Analyze this recorded voice journal audio entry:

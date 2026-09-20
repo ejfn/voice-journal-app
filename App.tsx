@@ -25,6 +25,7 @@ import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
 import { syncQueueDao } from "./src/db/dao/syncQueueDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
+import { geminiService } from "./src/services/ai/GeminiService";
 import { transcriptionQueueService } from "./src/services/ai/TranscriptionQueueService";
 import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
@@ -206,11 +207,14 @@ const MainScreen: React.FC = () => {
 
       const entryId = currentRecordingId || generateUUID();
       const now = Date.now();
+      const hasKey = await geminiService.hasKeyConfigured();
 
       const newEntry: JournalEntry = {
         id: entryId,
         title: "Voice Recording",
-        summary: "Queued for AI transcription...",
+        summary: hasKey
+          ? "Queued for AI transcription..."
+          : "Add Gemini API key in Settings to transcribe",
         transcript: "",
         tags: ["voice"],
         duration_sec: durationSec,
@@ -232,18 +236,26 @@ const MainScreen: React.FC = () => {
       setCurrentRecordingId(null);
       setIsProcessingAI(false);
 
-      showToast({
-        message: "Recording saved • Transcribing in background",
-        icon: "check-circle",
-        type: "success",
-      });
+      if (hasKey) {
+        showToast({
+          message: "Recording saved • Transcribing in background",
+          icon: "check-circle",
+          type: "success",
+        });
+        // Process transcription in background queue
+        transcriptionQueueService.processQueue().catch((err) => {
+          console.warn("Background transcription error:", err);
+        });
+      } else {
+        showToast({
+          message:
+            "Recording saved • Add Gemini API key in Settings to transcribe",
+          icon: "info-outline",
+          type: "warning",
+        });
+      }
 
       await loadData();
-
-      // Process transcription in background queue
-      transcriptionQueueService.processQueue().catch((err) => {
-        console.warn("Background transcription error:", err);
-      });
     } catch (err) {
       setIsProcessingAI(false);
       setIsRecordingVisible(false);
