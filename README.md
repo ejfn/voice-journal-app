@@ -1,5 +1,7 @@
 # Voice Journal
 
+> *Speak your mind. AI captures the rest.*
+
 A zero-subscription mobile voice diary application built with React Native and Expo. It features native audio recording, speech-to-structured metadata powered by Gemini Flash, local full-text search (FTS5 via `expo-sqlite`), and on-demand Google Drive synchronization.
 
 ## Features

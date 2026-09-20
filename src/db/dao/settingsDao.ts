@@ -32,4 +32,21 @@ export const settingsDao = {
   async setMaxStorageMb(mb: number): Promise<void> {
     await this.setSetting("max_audio_storage_mb", String(mb));
   },
+
+  async getUserGeminiApiKey(): Promise<string> {
+    return this.getSetting("gemini_api_key", "");
+  },
+
+  async getGeminiApiKey(): Promise<string> {
+    const userKey = (await this.getUserGeminiApiKey()).trim();
+    if (userKey) {
+      return userKey;
+    }
+    // Fallback to local env only as secondary backup
+    return process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
+  },
+
+  async setGeminiApiKey(key: string): Promise<void> {
+    await this.setSetting("gemini_api_key", key.trim());
+  },
 };

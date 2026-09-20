@@ -9,9 +9,13 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
+  TextInput,
+  Linking,
 } from "react-native";
 import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
+import { geminiService } from "../services/ai/GeminiService";
+import { transcriptionQueueService } from "../services/ai/TranscriptionQueueService";
 import { useTheme } from "../theme/ThemeContext";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useToast } from "./common/Toast";
@@ -56,6 +60,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   });
   const [isCleaningCache, setIsCleaningCache] = useState<boolean>(false);
 
+  // Gemini BYOK state
+  const [apiKeyInput, setApiKeyInput] = useState<string>("");
+  const [savedUserKey, setSavedUserKey] = useState<string>("");
+  const [hasEnvFallback, setHasEnvFallback] = useState<boolean>(false);
+  const [isKeyVisible, setIsKeyVisible] = useState<boolean>(false);
+  const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
+  const [isSavingKey, setIsSavingKey] = useState<boolean>(false);
+  const [keyValidationStatus, setKeyValidationStatus] = useState<
+    "idle" | "valid" | "invalid"
+  >("idle");
+
   const refreshStatus = useCallback(async () => {
     try {
       const user = googleDriveService.getCurrentUser();
@@ -63,6 +78,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       const stats = await googleDriveService.getStorageStats();
       setStorageStats(stats);
+
+      const userKey = await settingsDao.getUserGeminiApiKey();
+      setSavedUserKey(userKey);
+      setApiKeyInput(userKey);
+      setHasEnvFallback(
+        Boolean(process.env.EXPO_PUBLIC_GEMINI_API_KEY?.trim()),
+      );
+      setKeyValidationStatus("idle");
     } catch {
       // Ignore initial status fetch error
     }
@@ -73,6 +96,112 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       refreshStatus();
     }
   }, [visible, refreshStatus]);
+
+  const handleOpenAIStudio = async () => {
+    const url = "https://aistudio.google.com/apikey";
+    try {
+      await Linking.openURL(url);
+    } catch {
+      showToast({
+        message: "Please visit aistudio.google.com/apikey in your browser",
+        icon: "open-in-browser",
+        type: "info",
+      });
+    }
+  };
+
+  const handleTestApiKey = async () => {
+    const keyToTest = apiKeyInput.trim();
+    if (!keyToTest && !hasEnvFallback) {
+      showToast({
+        message: "Please enter an API key to test",
+        icon: "info-outline",
+        type: "warning",
+      });
+      return;
+    }
+
+    setIsTestingKey(true);
+    try {
+      const result = await geminiService.validateApiKey(keyToTest || undefined);
+      if (result.valid) {
+        setKeyValidationStatus("valid");
+        showToast({
+          message: "API key is valid and connected to Gemini 3.5!",
+          icon: "check-circle",
+          type: "success",
+        });
+      } else {
+        setKeyValidationStatus("invalid");
+        showToast({
+          message: result.error || "API key validation failed",
+          icon: "error-outline",
+          type: "error",
+        });
+      }
+    } catch (err) {
+      setKeyValidationStatus("invalid");
+      showToast({
+        message: (err as Error).message || "Validation request failed",
+        icon: "error-outline",
+        type: "error",
+      });
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmed = apiKeyInput.trim();
+    setIsSavingKey(true);
+    try {
+      await settingsDao.setGeminiApiKey(trimmed);
+      setSavedUserKey(trimmed);
+      setKeyValidationStatus("idle");
+      showToast({
+        message: trimmed ? "Gemini API key saved" : "Custom API key removed",
+        icon: "check-circle",
+        type: "success",
+      });
+
+      if (trimmed || hasEnvFallback) {
+        transcriptionQueueService.processQueue().catch((err) => {
+          console.warn("Queue processing error after key update:", err);
+        });
+      }
+    } catch (err) {
+      showToast({
+        message: (err as Error).message || "Failed to save API key",
+        icon: "error-outline",
+        type: "error",
+      });
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
+
+  const handleRemoveApiKey = async () => {
+    setIsSavingKey(true);
+    try {
+      await settingsDao.setGeminiApiKey("");
+      setSavedUserKey("");
+      setApiKeyInput("");
+      setKeyValidationStatus("idle");
+      showToast({
+        message: "Custom API key removed",
+        icon: "info-outline",
+        type: "info",
+      });
+    } catch (err) {
+      showToast({
+        message: (err as Error).message || "Failed to remove API key",
+        icon: "error-outline",
+        type: "error",
+      });
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     setIsSigningIn(true);
@@ -450,6 +579,245 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           </View>
 
+          {/* Section: Gemini AI Transcription (BYOK) */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleContainer}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Gemini AI Transcription (BYOK)
+                </Text>
+                <Text
+                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
+                >
+                  Bring Your Own Key for smart titles, summaries, and
+                  transcripts
+                </Text>
+              </View>
+            </View>
+
+            {/* Status Pill */}
+            <View
+              style={[
+                styles.statusPillRow,
+                { backgroundColor: colors.surfaceAlt },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: savedUserKey
+                      ? colors.success
+                      : hasEnvFallback
+                        ? colors.warning
+                        : colors.danger,
+                  },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.statusPillText,
+                  {
+                    color:
+                      savedUserKey || hasEnvFallback
+                        ? colors.text
+                        : colors.danger,
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {savedUserKey
+                  ? "Active • Custom API Key configured"
+                  : hasEnvFallback
+                    ? "Active • Development fallback key in use"
+                    : "No Key Configured • Auto-transcription disabled"}
+              </Text>
+            </View>
+
+            {/* Input Row */}
+            <View style={styles.inputContainer}>
+              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
+                Gemini API Key
+              </Text>
+              <View
+                style={[
+                  styles.inputFieldWrapper,
+                  {
+                    backgroundColor: colors.surfaceAlt,
+                    borderColor:
+                      keyValidationStatus === "valid"
+                        ? colors.success
+                        : keyValidationStatus === "invalid"
+                          ? colors.danger
+                          : colors.border,
+                  },
+                ]}
+              >
+                <TextInput
+                  style={[styles.textInputField, { color: colors.text }]}
+                  value={apiKeyInput}
+                  onChangeText={(val) => {
+                    setApiKeyInput(val);
+                    if (keyValidationStatus !== "idle") {
+                      setKeyValidationStatus("idle");
+                    }
+                  }}
+                  placeholder="AIzaSy..."
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry={!isKeyVisible}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  selectTextOnFocus
+                />
+                {apiKeyInput.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setApiKeyInput("");
+                      setKeyValidationStatus("idle");
+                    }}
+                    style={styles.inputIconButton}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MaterialIcons
+                      name="clear"
+                      size={16}
+                      color={colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => setIsKeyVisible((prev) => !prev)}
+                  style={styles.inputIconButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons
+                    name={isKeyVisible ? "visibility-off" : "visibility"}
+                    size={18}
+                    color={colors.textMuted}
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Plain Text Hint / AI Studio Link */}
+            <TouchableOpacity
+              style={styles.byokHintPlainRow}
+              onPress={handleOpenAIStudio}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[styles.byokHintPlainText, { color: colors.textMuted }]}
+              >
+                Need an API key?{" "}
+                <Text style={{ color: colors.primary, fontWeight: "600" }}>
+                  Get one free at Google AI Studio
+                </Text>
+              </Text>
+              <MaterialIcons
+                name="open-in-new"
+                size={13}
+                color={colors.primary}
+                style={{ marginLeft: 4 }}
+              />
+            </TouchableOpacity>
+
+            {/* Action Buttons */}
+            <View style={[styles.buttonRow, { marginTop: 12 }]}>
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: colors.surfaceAlt,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  },
+                ]}
+                onPress={handleTestApiKey}
+                disabled={
+                  isTestingKey || (!apiKeyInput.trim() && !hasEnvFallback)
+                }
+                activeOpacity={0.7}
+              >
+                {isTestingKey ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <View style={styles.buttonContent}>
+                    <MaterialIcons
+                      name="check-circle-outline"
+                      size={16}
+                      color={colors.text}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.secondaryButtonText,
+                        { color: colors.text },
+                      ]}
+                    >
+                      Test Key
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.secondaryButton,
+                  { backgroundColor: colors.primary },
+                ]}
+                onPress={handleSaveApiKey}
+                disabled={isSavingKey}
+                activeOpacity={0.8}
+              >
+                {isSavingKey ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <View style={styles.buttonContent}>
+                    <MaterialIcons
+                      name="save"
+                      size={16}
+                      color="#FFF"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[styles.secondaryButtonText, { color: "#FFF" }]}
+                    >
+                      Save Key
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {savedUserKey ? (
+                <TouchableOpacity
+                  style={[
+                    styles.outlineButton,
+                    {
+                      borderColor: colors.danger,
+                      paddingHorizontal: 12,
+                    },
+                  ]}
+                  onPress={handleRemoveApiKey}
+                  disabled={isSavingKey}
+                >
+                  <MaterialIcons
+                    name="delete-outline"
+                    size={16}
+                    color={colors.danger}
+                  />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+
           {/* Section: Storage & Local Cache */}
           <View
             style={[
@@ -613,7 +981,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Version {getAppVersion()}
             </Text>
             <Text style={[styles.aboutSubtitle, { color: colors.textMuted }]}>
-              Offline-first multimodal voice journal
+              Speak your mind. AI captures the rest.
             </Text>
           </View>
         </ScrollView>
@@ -847,5 +1215,44 @@ const styles = StyleSheet.create({
   },
   aboutSubtitle: {
     fontSize: 12,
+  },
+  byokHintPlainRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 2,
+    paddingHorizontal: 2,
+  },
+  byokHintPlainText: {
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
+  inputContainer: {
+    width: "100%",
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  inputFieldWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  textInputField: {
+    flex: 1,
+    fontSize: 14,
+    height: "100%",
+    paddingVertical: 0,
+  },
+  inputIconButton: {
+    padding: 4,
+    marginLeft: 6,
   },
 });

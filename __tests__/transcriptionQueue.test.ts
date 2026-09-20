@@ -39,6 +39,7 @@ describe("TranscriptionQueueService", () => {
     jest.clearAllMocks();
     service = new TranscriptionQueueService();
     (FileSystem.getInfoAsync as jest.Mock).mockResolvedValue({ exists: true });
+    (geminiService.hasKeyConfigured as jest.Mock).mockResolvedValue(true);
   });
 
   it("processes queued entries successfully and notifies listeners", async () => {
@@ -159,5 +160,40 @@ describe("TranscriptionQueueService", () => {
       "entry-q1",
       "failed",
     );
+  });
+
+  it("does not process queue and returns early when API key is not configured", async () => {
+    (geminiService.hasKeyConfigured as jest.Mock).mockResolvedValue(false);
+    (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([mockEntry]);
+
+    await service.processQueue();
+
+    expect(entriesDao.getQueuedEntries).not.toHaveBeenCalled();
+    expect(entriesDao.updateTranscriptionStatus).not.toHaveBeenCalled();
+  });
+
+  it("immediately marks entry as failed without retry backoff when API key is invalid", async () => {
+    (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+      { ...mockEntry, transcription_retry_count: 0 },
+    ]);
+    (geminiService.analyzeAudio as jest.Mock).mockRejectedValue(
+      new Error("API key not valid. Please pass a valid API key."),
+    );
+
+    const listenerEvents: TranscriptionEvent[] = [];
+    service.addListener((event) => listenerEvents.push(event));
+
+    await service.processQueue();
+
+    expect(entriesDao.recordTranscriptionFailure).toHaveBeenCalledWith(
+      "entry-q1",
+      0,
+      null,
+      "failed",
+    );
+    expect(listenerEvents).toContainEqual({
+      entryId: "entry-q1",
+      status: "failed",
+    });
   });
 });

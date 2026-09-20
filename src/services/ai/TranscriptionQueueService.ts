@@ -81,6 +81,12 @@ export class TranscriptionQueueService {
       return;
     }
 
+    // Auto-transcription is disabled when key is unprovided
+    const hasKey = await geminiService.hasKeyConfigured();
+    if (!hasKey) {
+      return;
+    }
+
     this.isProcessing = true;
 
     try {
@@ -149,6 +155,25 @@ export class TranscriptionQueueService {
             }
           }
         } catch (error) {
+          const errMessage = (error as Error).message || "";
+          const isInvalidKey =
+            errMessage.includes("API key not valid") ||
+            errMessage.includes("API_KEY_INVALID") ||
+            errMessage.includes("Gemini API key is not configured") ||
+            errMessage.includes("API key expired");
+
+          if (isInvalidKey) {
+            // Unprovided or invalid key disables auto-transcription immediately without backoff retries
+            await entriesDao.recordTranscriptionFailure(
+              entry.id,
+              entry.transcription_retry_count ?? 0,
+              null,
+              "failed",
+            );
+            this.notifyListeners({ entryId: entry.id, status: "failed" });
+            break;
+          }
+
           const currentRetries = entry.transcription_retry_count ?? 0;
           const hasMoreRetries = currentRetries < MAX_TRANSCRIPTION_RETRIES;
 
@@ -175,7 +200,6 @@ export class TranscriptionQueueService {
             this.notifyListeners({ entryId: entry.id, status: "failed" });
           }
 
-          const errMessage = (error as Error).message || "";
           const isNetworkError =
             errMessage.includes("Network request failed") ||
             errMessage.includes("Failed to fetch") ||
