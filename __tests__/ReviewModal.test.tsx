@@ -13,6 +13,23 @@ jest.mock("../src/services/audio/AudioPlaybackService", () => ({
 }));
 
 describe("ReviewModal", () => {
+  const flattenText = (value: unknown): string => {
+    if (typeof value === "string" || typeof value === "number") {
+      return String(value);
+    }
+
+    if (Array.isArray(value)) {
+      return value.map(flattenText).join("");
+    }
+
+    if (value && typeof value === "object" && "props" in value) {
+      const props = (value as { props?: { children?: unknown } }).props;
+      return flattenText(props?.children);
+    }
+
+    return "";
+  };
+
   const baseEntry: JournalEntry = {
     id: "test-entry-1",
     title: "Test Voice Note",
@@ -96,7 +113,7 @@ describe("ReviewModal", () => {
       const texts = (tree.root as any).findAllByType("Text");
       const renderedText = texts
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((t: any) => String(t.props.children))
+        .map((t: any) => flattenText(t.props.children))
         .join(" ");
 
       expect(renderedText).toContain(expectedLabel);
