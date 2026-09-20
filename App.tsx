@@ -67,8 +67,8 @@ const MainScreen: React.FC = () => {
 
   // Playback State
   const [playingEntryId, setPlayingEntryId] = useState<string | null>(null);
-  const [downloadingEntryId, setDownloadingEntryId] = useState<string | null>(
-    null,
+  const [downloadingEntryIds, setDownloadingEntryIds] = useState<Set<string>>(
+    new Set(),
   );
   const [uploadingEntryIds, setUploadingEntryIds] = useState<Set<string>>(
     new Set(),
@@ -133,7 +133,7 @@ const MainScreen: React.FC = () => {
           return;
         }
         if (event.status === "downloading") {
-          setDownloadingEntryId(event.entryId);
+          setDownloadingEntryIds((prev) => new Set(prev).add(event.entryId));
           return;
         }
 
@@ -142,7 +142,11 @@ const MainScreen: React.FC = () => {
           next.delete(event.entryId);
           return next;
         });
-        setDownloadingEntryId((prev) => (prev === event.entryId ? null : prev));
+        setDownloadingEntryIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.entryId);
+          return next;
+        });
 
         if (event.status === "synced" || event.status === "uploaded") {
           loadData();
@@ -343,7 +347,7 @@ const MainScreen: React.FC = () => {
 
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
-    if (downloadingEntryId === entry.id) {
+    if (downloadingEntryIds.has(entry.id)) {
       return;
     }
 
@@ -375,7 +379,7 @@ const MainScreen: React.FC = () => {
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
-        setDownloadingEntryId(entry.id);
+        setDownloadingEntryIds((prev) => new Set(prev).add(entry.id));
         showToast({
           message: "Downloading audio from Google Drive...",
           icon: "cloud-download",
@@ -405,7 +409,11 @@ const MainScreen: React.FC = () => {
         type: "error",
       });
     } finally {
-      setDownloadingEntryId(null);
+      setDownloadingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.id);
+        return next;
+      });
     }
   };
 
@@ -524,10 +532,10 @@ const MainScreen: React.FC = () => {
                   key={clip.id}
                   entry={clip}
                   isPlaying={playingEntryId === clip.id}
-                  isDownloading={downloadingEntryId === clip.id}
+                  isDownloading={downloadingEntryIds.has(clip.id)}
                   isItemSyncing={isEntryActivelyTransferring(clip.id, {
                     uploadingEntryIds,
-                    downloadingEntryId,
+                    downloadingEntryIds,
                   })}
                   onPlayPress={() => handlePlayClip(clip)}
                   onPress={() => handleOpenReview(clip)}

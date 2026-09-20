@@ -11,7 +11,7 @@ export interface StorageStatusOptions {
 
 export interface ActiveTransferState {
   uploadingEntryIds: ReadonlySet<string>;
-  downloadingEntryId?: string | null;
+  downloadingEntryIds: ReadonlySet<string>;
 }
 
 /**
@@ -26,7 +26,7 @@ export function isEntryActivelyTransferring(
 ): boolean {
   return (
     active.uploadingEntryIds.has(entryId) ||
-    active.downloadingEntryId === entryId
+    active.downloadingEntryIds.has(entryId)
   );
 }
 

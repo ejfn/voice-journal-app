@@ -69,7 +69,7 @@ describe("Storage Status Computation (Issue #11)", () => {
 
     const isActivelyTransferring = isEntryActivelyTransferring(syncedEntry.id, {
       uploadingEntryIds: new Set(), // nothing uploading
-      downloadingEntryId: null,
+      downloadingEntryIds: new Set(),
     });
     expect(isActivelyTransferring).toBe(false);
 
@@ -83,21 +83,21 @@ describe("Storage Status Computation (Issue #11)", () => {
     expect(
       isEntryActivelyTransferring("entry-a", {
         uploadingEntryIds: new Set(["entry-a"]),
-        downloadingEntryId: null,
+        downloadingEntryIds: new Set(),
       }),
     ).toBe(true);
 
     expect(
       isEntryActivelyTransferring("entry-b", {
         uploadingEntryIds: new Set(["entry-a"]),
-        downloadingEntryId: "entry-b",
+        downloadingEntryIds: new Set(["entry-b"]),
       }),
     ).toBe(true);
 
     expect(
       isEntryActivelyTransferring("entry-c", {
         uploadingEntryIds: new Set(["entry-a"]),
-        downloadingEntryId: "entry-b",
+        downloadingEntryIds: new Set(["entry-b"]),
       }),
     ).toBe(false);
   });
