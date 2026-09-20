@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
+  Keyboard,
 } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import { JournalEntry } from "../db/schema";
@@ -62,6 +63,40 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     durationSec: 0,
     entryId: null,
   });
+
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+      },
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        setKeyboardHeight(0);
+      },
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleTranscriptFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 150);
+  };
+
+  const handleSummaryFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 160, animated: true });
+    }, 150);
+  };
 
   useEffect(() => {
     setCurrentEntry(entry);
@@ -259,9 +294,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         </View>
 
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          ref={scrollViewRef}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 40 },
+          ]}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={true}
         >
           {/* Audio Player Bar */}
           <View
@@ -471,6 +511,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               ]}
               value={summary}
               onChangeText={setSummary}
+              onFocus={handleSummaryFocus}
               multiline
               placeholder="Key takeaway..."
               placeholderTextColor={colors.textMuted}
@@ -552,29 +593,24 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 </Text>
               )}
             </View>
-            <ScrollView
+            <TextInput
               style={[
-                styles.transcriptScrollContainer,
+                styles.transcriptInput,
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
+                  color: colors.text,
                 },
               ]}
-              nestedScrollEnabled={true}
-              showsVerticalScrollIndicator={true}
-              keyboardShouldPersistTaps="handled"
-            >
-              <TextInput
-                style={[styles.transcriptInput, { color: colors.text }]}
-                value={transcript}
-                onChangeText={setTranscript}
-                multiline
-                scrollEnabled={false}
-                textAlignVertical="top"
-                placeholder="Audio transcript..."
-                placeholderTextColor={colors.textMuted}
-              />
-            </ScrollView>
+              value={transcript}
+              onChangeText={setTranscript}
+              onFocus={handleTranscriptFocus}
+              multiline={true}
+              scrollEnabled={true}
+              textAlignVertical="top"
+              placeholder="Audio transcript..."
+              placeholderTextColor={colors.textMuted}
+            />
           </View>
 
           {/* Delete Entry Button */}
@@ -728,20 +764,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlignVertical: "top",
   },
-  transcriptScrollContainer: {
+  transcriptInput: {
     borderWidth: 1,
     borderRadius: 12,
-    minHeight: 200,
-    maxHeight: 320,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  transcriptInput: {
+    paddingVertical: 12,
     fontSize: 14.5,
     lineHeight: 22,
-    textAlignVertical: "top",
-    padding: 0,
     minHeight: 180,
+    maxHeight: 280,
+    textAlignVertical: "top",
   },
   tagWrap: {
     flexDirection: "row",
