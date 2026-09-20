@@ -123,6 +123,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     const unsubscribe = audioPlaybackService.addListener((state) => {
       if (entry && state.entryId === entry.id) {
         setPlaybackState(state);
+        if (state.waveformBars && state.waveformBars.length === 75) {
+          setCurrentEntry((prev) =>
+            prev ? { ...prev, waveform_data: state.waveformBars } : prev,
+          );
+        }
       } else {
         setPlaybackState({
           isPlaying: false,
