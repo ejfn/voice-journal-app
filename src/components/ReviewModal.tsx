@@ -577,20 +577,26 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             </ScrollView>
           </View>
 
-          {/* Subtle bottom delete action */}
+          {/* Delete Entry Button */}
           <TouchableOpacity
-            style={styles.deleteLinkContainer}
+            style={[
+              styles.deleteButton,
+              {
+                borderColor: colors.danger,
+                backgroundColor: colors.surface,
+              },
+            ]}
             onPress={handleDelete}
-            activeOpacity={0.6}
+            activeOpacity={0.7}
             accessibilityLabel="Delete entry"
           >
             <MaterialIcons
               name="delete-outline"
-              size={16}
+              size={18}
               color={colors.danger}
               style={{ marginRight: 6 }}
             />
-            <Text style={[styles.deleteLinkText, { color: colors.danger }]}>
+            <Text style={[styles.deleteText, { color: colors.danger }]}>
               Delete Entry
             </Text>
           </TouchableOpacity>
@@ -786,16 +792,18 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "600",
   },
-  deleteLinkContainer: {
+  deleteButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 28,
-    marginBottom: 12,
-    paddingVertical: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 26,
+    marginBottom: 16,
   },
-  deleteLinkText: {
-    fontSize: 13.5,
+  deleteText: {
+    fontSize: 14,
     fontWeight: "600",
   },
   statusBarContainer: {
