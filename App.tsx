@@ -116,9 +116,7 @@ const MainScreen: React.FC = () => {
       },
     );
     const unsubscribeUpload = uploadQueueService.addListener((event) => {
-      if (event.status === "uploading") {
-        setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
-      } else {
+      if (event.status !== "uploading") {
         setUploadingEntryIds((prev) => {
           const next = new Set(prev);
           next.delete(event.entryId);
@@ -138,16 +136,19 @@ const MainScreen: React.FC = () => {
           return;
         }
 
-        setUploadingEntryIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.entryId);
-          return next;
-        });
-        setDownloadingEntryIds((prev) => {
-          const next = new Set(prev);
-          next.delete(event.entryId);
-          return next;
-        });
+        if (event.direction === "upload") {
+          setUploadingEntryIds((prev) => {
+            const next = new Set(prev);
+            next.delete(event.entryId);
+            return next;
+          });
+        } else {
+          setDownloadingEntryIds((prev) => {
+            const next = new Set(prev);
+            next.delete(event.entryId);
+            return next;
+          });
+        }
 
         if (event.status === "synced" || event.status === "uploaded") {
           loadData();

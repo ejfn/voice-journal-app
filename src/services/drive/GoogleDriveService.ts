@@ -18,6 +18,7 @@ export interface DriveFolderInfo {
  */
 export type DriveTransferEvent = {
   entryId: string;
+  direction: "upload" | "download";
   status:
     | "uploading"
     | "downloading"
@@ -192,6 +193,7 @@ export class GoogleDriveService {
     // Notify only for this entry's real upload — not the broader scan/check pass
     this.notifyTransferListeners({
       entryId: entry.id,
+      direction: "upload",
       status: "uploading",
     });
 
@@ -353,6 +355,7 @@ export class GoogleDriveService {
         );
         this.notifyTransferListeners({
           entryId: entry.id,
+          direction: "upload",
           status: "uploaded",
         });
         return { audioFileId, sidecarFileId, raceDetected: true };
@@ -368,12 +371,14 @@ export class GoogleDriveService {
 
       this.notifyTransferListeners({
         entryId: entry.id,
+        direction: "upload",
         status: "synced",
       });
       return { audioFileId, sidecarFileId, raceDetected: false };
     } catch (error) {
       this.notifyTransferListeners({
         entryId: entry.id,
+        direction: "upload",
         status: "failed",
       });
       throw error;
@@ -679,6 +684,7 @@ export class GoogleDriveService {
 
     this.notifyTransferListeners({
       entryId,
+      direction: "download",
       status: "downloading",
     });
 
@@ -701,6 +707,7 @@ export class GoogleDriveService {
       await entriesDao.markAudioAccessed(entryId);
       this.notifyTransferListeners({
         entryId,
+        direction: "download",
         status: "downloaded",
       });
 
@@ -713,6 +720,7 @@ export class GoogleDriveService {
     } catch (error) {
       this.notifyTransferListeners({
         entryId,
+        direction: "download",
         status: "failed",
       });
       throw error;
