@@ -30,17 +30,17 @@ describe("RecordingModal", () => {
       (node) => typeof node.props.onRequestClose === "function",
     );
 
-  it("does not show the cancel button before the minimum recording duration is reached", () => {
+  it("shows the cancel button before the minimum recording duration is reached", () => {
     let tree: ReactTestRenderer;
 
     void act(() => {
       tree = renderModal(MIN_RECORDING_DURATION_SEC - 1);
     });
 
-    expect(findCancelButtons(tree!).length).toBe(0);
+    expect(findCancelButtons(tree!).length).toBeGreaterThan(0);
   });
 
-  it("does not show the cancel button once the minimum recording duration is reached", () => {
+  it("hides the cancel button once the minimum recording duration is reached", () => {
     let tree: ReactTestRenderer;
 
     void act(() => {
@@ -50,25 +50,40 @@ describe("RecordingModal", () => {
     expect(findCancelButtons(tree!)).toHaveLength(0);
   });
 
-  it("does not trigger cancel on modal close requests (onRequestClose)", () => {
-    const cancelMock = jest.fn();
-    let tree: ReactTestRenderer;
+  it("only allows modal close requests before the minimum recording duration is reached", () => {
+    const beforeThresholdCancel = jest.fn();
+    const validRecordingCancel = jest.fn();
+    let beforeThresholdTree: ReactTestRenderer;
+    let validRecordingTree: ReactTestRenderer;
 
     void act(() => {
-      tree = renderModal(MIN_RECORDING_DURATION_SEC - 1, cancelMock);
+      beforeThresholdTree = renderModal(
+        MIN_RECORDING_DURATION_SEC - 1,
+        beforeThresholdCancel,
+      );
+      validRecordingTree = renderModal(
+        MIN_RECORDING_DURATION_SEC,
+        validRecordingCancel,
+      );
     });
 
-    const closeHandler = findModalCloseHandlers(tree!)[0].props
-      .onRequestClose as () => void;
+    const beforeThresholdCloseHandler = findModalCloseHandlers(
+      beforeThresholdTree!,
+    )[0].props.onRequestClose as () => void;
+    const validRecordingCloseHandler = findModalCloseHandlers(
+      validRecordingTree!,
+    )[0].props.onRequestClose as () => void;
 
     void act(() => {
-      closeHandler();
+      beforeThresholdCloseHandler();
+      validRecordingCloseHandler();
     });
 
-    expect(cancelMock).not.toHaveBeenCalled();
+    expect(beforeThresholdCancel).toHaveBeenCalledTimes(1);
+    expect(validRecordingCancel).not.toHaveBeenCalled();
   });
 
-  it("uses MIN_RECORDING_DURATION_SEC for status hint text and stop-button is enabled", () => {
+  it("uses MIN_RECORDING_DURATION_SEC for status hint text and stop-button opacity styling", () => {
     let tree: ReactTestRenderer;
 
     void act(() => {
@@ -102,7 +117,7 @@ describe("RecordingModal", () => {
       `${MIN_RECORDING_DURATION_SEC} seconds to save.`,
     );
 
-    // Check stop-button is enabled immediately (opacity 1)
+    // Check stop-button opacity < 1 before threshold
     const stopButtons = root.findAllByProps({
       accessibilityLabel: "Stop and save recording",
     });
@@ -113,7 +128,7 @@ describe("RecordingModal", () => {
     const flattenedStopStyle = Array.isArray(stopButtonStyle)
       ? Object.assign({}, ...stopButtonStyle)
       : stopButtonStyle;
-    expect(flattenedStopStyle.opacity).toBe(1);
+    expect(flattenedStopStyle.opacity).toBe(0.45);
 
     // Check status hint when paused and duration < min duration
     let pausedTree: ReactTestRenderer;
