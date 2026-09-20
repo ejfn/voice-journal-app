@@ -213,8 +213,7 @@ export class GoogleDriveService {
     const query = encodeURIComponent(
       `name = '${escapedName}' and '${parentId}' in parents and mimeType = '${mimeType}' and trashed = false`,
     );
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&pageSize=1`,
+      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&orderBy=createdTime,id&pageSize=1`
       { headers: { Authorization: "Bearer " + token } },
     );
     if (!response.ok) {
