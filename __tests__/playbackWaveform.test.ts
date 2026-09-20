@@ -350,4 +350,51 @@ describe("AudioPlaybackService Smart Waveform Generation", () => {
 
     expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
   });
+
+  it("awaits in-flight persistence request before stop completes cleanup", async () => {
+    let resolvePersistence: () => void = () => {};
+    const persistencePromise = new Promise<void>((res) => {
+      resolvePersistence = res;
+    });
+
+    (entriesDao.updateWaveform as jest.Mock).mockReturnValue(
+      persistencePromise,
+    );
+
+    const almostDone = new Array(WAVEFORM_BAR_COUNT).fill(0.5);
+    almostDone[WAVEFORM_BAR_COUNT - 1] = 0;
+
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue({
+      id: "entry-inflight",
+      waveform_data: almostDone,
+      duration_sec: 10,
+    });
+
+    await audioPlaybackService.play("entry-inflight", "file:///test.m4a", 10);
+
+    // Sample final bar to trigger completion write
+    sampleListener!({
+      timestamp: 9.9,
+      channels: [{ frames: [0.3, 0.3] }],
+    });
+
+    // Immediate stop while persistence is still in-flight
+    let stopResolved = false;
+    const stopPromise = audioPlaybackService.stop().then(() => {
+      stopResolved = true;
+    });
+
+    // stop() must NOT resolve until the in-flight database write completes
+    expect(stopResolved).toBe(false);
+
+    // Resolve the in-flight persistence
+    resolvePersistence();
+    await stopPromise;
+
+    expect(stopResolved).toBe(true);
+    expect(entriesDao.updateWaveform).toHaveBeenCalledWith(
+      "entry-inflight",
+      expect.any(Array),
+    );
+  });
 });

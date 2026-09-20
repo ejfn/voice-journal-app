@@ -58,6 +58,7 @@ class AudioPlaybackService {
   private newlySampledIndices: Set<number> = new Set();
   private receivedSampleCount: number = 0;
   private stopPromise: Promise<void> | null = null;
+  private persistPromise: Promise<void> | null = null;
   private isCompleted: boolean = false;
 
   addListener(listener: PlaybackListener): () => void {
@@ -367,6 +368,13 @@ class AudioPlaybackService {
   }
 
   private async persistRegeneratedWaveform(): Promise<void> {
+    if (this.persistPromise) {
+      try {
+        await this.persistPromise;
+      } catch {
+        // Handled in existing promise
+      }
+    }
     if (
       !this.isDirtyWaveform ||
       !this.currentEntryId ||
@@ -376,15 +384,19 @@ class AudioPlaybackService {
       return;
     }
     this.isDirtyWaveform = false;
-    try {
-      await entriesDao.updateWaveform(
-        this.currentEntryId,
-        this.playbackWaveformBars,
-      );
-    } catch (err) {
-      this.isDirtyWaveform = true;
-      console.warn("Could not save regenerated waveform to database:", err);
-    }
+    const entryId = this.currentEntryId;
+    const bars = [...this.playbackWaveformBars];
+    this.persistPromise = (async () => {
+      try {
+        await entriesDao.updateWaveform(entryId, bars);
+      } catch (err) {
+        this.isDirtyWaveform = true;
+        console.warn("Could not save regenerated waveform to database:", err);
+      } finally {
+        this.persistPromise = null;
+      }
+    })();
+    await this.persistPromise;
   }
 
   async pause(): Promise<void> {
