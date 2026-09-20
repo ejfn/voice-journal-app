@@ -150,7 +150,7 @@ describe("ReviewModal", () => {
     expect(audioPlaybackService.skip).toHaveBeenCalledWith(10);
   });
 
-  it("preserves dirty fields and updates untouched fields on same-entry refresh", () => {
+  it("preserves dirty fields and updates untouched fields on same-entry refresh", async () => {
     const onSave = jest.fn();
     const tree = renderModal(baseEntry, onSave);
     const textInputs = tree.root.findAllByProps({
@@ -207,8 +207,8 @@ describe("ReviewModal", () => {
     const saveButtons = tree.root.findAllByProps({
       accessibilityLabel: "Save Changes",
     }) as { props: { onPress: () => void } }[];
-    void act(() => {
-      saveButtons[0].props.onPress();
+    await act(async () => {
+      await saveButtons[0].props.onPress();
     });
 
     expect(onSave).toHaveBeenCalledWith(
@@ -221,7 +221,7 @@ describe("ReviewModal", () => {
     );
   });
 
-  it("resets dirty fields when switching to a different entry id", () => {
+  it("resets dirty fields when switching to a different entry id", async () => {
     const onSave = jest.fn();
     const tree = renderModal(baseEntry, onSave);
     const textInputs = tree.root.findAllByProps({
@@ -261,8 +261,8 @@ describe("ReviewModal", () => {
     const saveButtons = tree.root.findAllByProps({
       accessibilityLabel: "Save Changes",
     }) as { props: { onPress: () => void } }[];
-    void act(() => {
-      saveButtons[0].props.onPress();
+    await act(async () => {
+      await saveButtons[0].props.onPress();
     });
 
     expect(onSave).toHaveBeenCalledWith(
