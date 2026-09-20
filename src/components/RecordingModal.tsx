@@ -10,6 +10,7 @@ import {
 import { useTheme } from "../theme/ThemeContext";
 import { formatTimer } from "../utils/paths";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
+import { MIN_RECORDING_DURATION_SEC } from "../services/audio/AudioRecordingService";
 
 interface RecordingModalProps {
   visible: boolean;
@@ -35,6 +36,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
   onCancel,
 }) => {
   const { colors } = useTheme();
+  const canCancel = durationSec < MIN_RECORDING_DURATION_SEC;
   // Array of 19 bars for waveform visualization
   const [waveformBars, setWaveformBars] = useState<number[]>(
     new Array(19).fill(0.1),
@@ -62,7 +64,11 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={onCancel}
+      onRequestClose={() => {
+        if (canCancel) {
+          onCancel();
+        }
+      }}
     >
       <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
         <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
@@ -105,24 +111,29 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  onPress={onCancel}
-                  style={[
-                    styles.cancelHeaderButton,
-                    {
-                      backgroundColor: colors.surfaceAlt,
-                      borderColor: colors.border,
-                    },
-                  ]}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  accessibilityLabel="Discard recording"
-                >
-                  <MaterialIcons
-                    name="close"
-                    size={20}
-                    color={colors.textMuted}
-                  />
-                </TouchableOpacity>
+                {canCancel ? (
+                  <TouchableOpacity
+                    onPress={onCancel}
+                    style={[
+                      styles.cancelHeaderButton,
+                      {
+                        backgroundColor: colors.surfaceAlt,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityLabel="Discard recording"
+                    testID="discard-recording-button"
+                  >
+                    <MaterialIcons
+                      name="close"
+                      size={20}
+                      color={colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.cancelHeaderSpacer} />
+                )}
               </View>
 
               {/* Centered Timer */}
@@ -302,6 +313,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cancelHeaderSpacer: {
+    width: 32,
+    height: 32,
   },
   recordingPill: {
     flexDirection: "row",
