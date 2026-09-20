@@ -177,7 +177,7 @@ export class GoogleDriveService {
     month: number | string,
     token: string,
   ): Promise<string> {
-    const cacheKey = `${year}:${month}`;
+const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
     const pendingRequest = this.monthFolderRequests.get(cacheKey);
     if (pendingRequest) {
       return pendingRequest;
