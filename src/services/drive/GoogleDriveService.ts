@@ -33,6 +33,14 @@ export type DriveTransferListener = (event: DriveTransferEvent) => void;
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
   private monthFolderRequests: Map<string, Promise<string>> = new Map();
+  private uploadRequests: Map<
+    string,
+    Promise<{
+      audioFileId: string | null;
+      sidecarFileId: string;
+      raceDetected?: boolean;
+    }>
+  > = new Map();
   private isConfigured: boolean = false;
   private transferListeners: Set<DriveTransferListener> = new Set();
 
@@ -290,6 +298,25 @@ export class GoogleDriveService {
    * Uploads entry JSON sidecar and audio file hierarchically.
    */
   async uploadEntry(entry: JournalEntry): Promise<{
+    audioFileId: string | null;
+    sidecarFileId: string;
+    raceDetected?: boolean;
+  }> {
+    const pendingRequest = this.uploadRequests.get(entry.id);
+    if (pendingRequest) {
+      return pendingRequest;
+    }
+
+    const request = this.uploadEntryInternal(entry);
+    this.uploadRequests.set(entry.id, request);
+    try {
+      return await request;
+    } finally {
+      this.uploadRequests.delete(entry.id);
+    }
+  }
+
+  private async uploadEntryInternal(entry: JournalEntry): Promise<{
     audioFileId: string | null;
     sidecarFileId: string;
     raceDetected?: boolean;

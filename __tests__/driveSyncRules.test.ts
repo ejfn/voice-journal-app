@@ -278,6 +278,87 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     expect((File as any).mockUpload).not.toHaveBeenCalled();
   });
 
+  it("serializes concurrent uploadEntry calls for the same entry", async () => {
+    const t0 = 1758290000000;
+    const entry: JournalEntry = {
+      id: "entry-concurrent-upload",
+      title: "Concurrent Upload",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path:
+        "file:///mock/document/audio/2026/09/entry-concurrent-upload.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: null,
+      last_accessed_at: t0,
+    };
+    await entriesDao.insertEntry(entry);
+
+    let audioCreateCount = 0;
+    let sidecarCreateCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload.mockClear();
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const decodedUrl = decodeURIComponent(urlStr);
+        if (decodedUrl.includes("application/vnd.google-apps.folder")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "folder-id" }] }),
+            {
+              status: 200,
+            },
+          );
+        }
+        if (
+          decodedUrl.includes("name = 'entry-concurrent-upload.m4a'") ||
+          decodedUrl.includes("name = 'entry-concurrent-upload.json'")
+        ) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr === "https://www.googleapis.com/drive/v3/files"
+        ) {
+          audioCreateCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return new Response(
+            JSON.stringify({ id: `audio-id-${audioCreateCount}` }),
+            { status: 200 },
+          );
+        }
+        if (
+          init?.method === "POST" &&
+          urlStr.includes("/upload/drive/v3/files?uploadType=multipart")
+        ) {
+          sidecarCreateCount += 1;
+          return new Response(
+            JSON.stringify({ id: `sidecar-id-${sidecarCreateCount}` }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      driveService.uploadEntry(entry),
+      driveService.uploadEntry(entry),
+    ]);
+
+    expect(first).toEqual(second);
+    expect(audioCreateCount).toBe(1);
+    expect(sidecarCreateCount).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).toHaveBeenCalledTimes(1);
+  });
+
   it("shares concurrent month folder resolution", async () => {
     const createdFolders: string[] = [];
     global.fetch = jest.fn(
