@@ -156,6 +156,73 @@ describe("UploadQueueService", () => {
     });
   });
 
+  it("handles race condition when local metadata changes while upload is in flight", async () => {
+    (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
+      mockQueueItem,
+    ]);
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue(mockEntry);
+    (syncQueueDao.getItemById as jest.Mock).mockResolvedValue(mockQueueItem);
+    // Simulate uploadEntry reporting raceDetected: true (e.g. transcript finished during upload)
+    (googleDriveService.uploadEntry as jest.Mock).mockResolvedValue({
+      audioFileId: "drive-audio-1",
+      sidecarFileId: "drive-sidecar-1",
+      raceDetected: true,
+    });
+
+    const listenerEvents: UploadEvent[] = [];
+    service.addListener((event) => listenerEvents.push(event));
+
+    await service.processQueue();
+
+    // Must NOT delete the item from the queue!
+    expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
+    // Must update action to METADATA_ONLY and reset status to PENDING
+    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+      "queue-1",
+      "METADATA_ONLY",
+    );
+    expect(syncQueueDao.updateStatus).toHaveBeenCalledWith(
+      "queue-1",
+      "PENDING",
+      0,
+    );
+    // Must NOT emit 'synced' event because metadata is still unsynced
+    expect(listenerEvents).not.toContainEqual(
+      expect.objectContaining({ status: "synced" }),
+    );
+  });
+
+  it("handles race condition when queue item is re-enqueued as PENDING while upload is in flight", async () => {
+    (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
+      mockQueueItem,
+    ]);
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue(mockEntry);
+    // While upload was in flight, another caller called enqueueUpload, resetting status to PENDING
+    (syncQueueDao.getItemById as jest.Mock).mockResolvedValue({
+      ...mockQueueItem,
+      status: "PENDING",
+    });
+    (googleDriveService.uploadEntry as jest.Mock).mockResolvedValue({
+      audioFileId: "drive-audio-1",
+      sidecarFileId: "drive-sidecar-1",
+      raceDetected: false,
+    });
+
+    await service.processQueue();
+
+    // Must NOT delete the item from queue
+    expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
+    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+      "queue-1",
+      "METADATA_ONLY",
+    );
+    expect(syncQueueDao.updateStatus).toHaveBeenCalledWith(
+      "queue-1",
+      "PENDING",
+      0,
+    );
+  });
+
   it("calculates graduated upload backoff delays correctly", () => {
     expect(getUploadBackoffDelayMs(0)).toBe(5000);
     expect(getUploadBackoffDelayMs(1)).toBe(15000);

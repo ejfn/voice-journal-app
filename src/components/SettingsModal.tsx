@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
-import { uploadQueueService } from "../services/drive/UploadQueueService";
+import { smartSyncService } from "../services/drive/SmartSyncService";
 import { geminiService } from "../services/ai/GeminiService";
 import { transcriptionQueueService } from "../services/ai/TranscriptionQueueService";
 import { useTheme } from "../theme/ThemeContext";
@@ -215,9 +215,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         icon: "cloud-done",
         type: "success",
       });
-      // Automatically queue all local entries for cloud backup upon connecting
-      uploadQueueService.enqueueAllUnsynced().catch((err) => {
-        console.warn("Upload queue error after sign in:", err);
+      // Automatically trigger smart sync upon connecting Google Drive
+      smartSyncService.sync({ force: true, reason: "sign_in" }).catch((err) => {
+        console.warn("Smart sync error after sign in:", err);
       });
     } catch (err) {
       showToast({
@@ -252,10 +252,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleManualSync = async () => {
     setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTwoWay();
-      await googleDriveService.runLruEviction();
-      uploadQueueService.processQueue().catch((err) => {
-        console.warn("Upload queue error after manual sync:", err);
+      const result = await smartSyncService.sync({
+        force: true,
+        reason: "manual",
       });
       await refreshStatus();
       if (onSyncCompleted) {

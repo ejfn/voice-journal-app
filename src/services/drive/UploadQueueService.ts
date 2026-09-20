@@ -93,6 +93,7 @@ export class UploadQueueService {
   ): Promise<void> {
     const existing = await syncQueueDao.getItemByEntryId(entryId);
     if (existing) {
+      await syncQueueDao.updateAction(existing.id, action);
       await syncQueueDao.updateStatus(existing.id, "PENDING", 0);
     } else {
       await syncQueueDao.enqueue({
@@ -203,12 +204,33 @@ export class UploadQueueService {
 
         try {
           // Upload audio and sidecar to Google Drive
-          await googleDriveService.uploadEntry(entry);
+          const uploadResult = await googleDriveService.uploadEntry(entry);
 
-          // Mark completed and remove from queue
-          await syncQueueDao.deleteItem(item.id);
-          this.activeUploadingEntryIds.delete(entry.id);
-          this.notifyListeners({ entryId: entry.id, status: "synced" });
+          // Check if local metadata changed during upload (e.g. transcript finished, user edited notes)
+          const currentItem = await syncQueueDao.getItemById(item.id);
+          const wasReEnqueued = Boolean(
+            currentItem && currentItem.status === "PENDING",
+          );
+          const raceDetected = Boolean(
+            uploadResult && uploadResult.raceDetected,
+          );
+
+          if (raceDetected || wasReEnqueued) {
+            // Local metadata changed while upload was in flight! Re-mark PENDING with METADATA_ONLY
+            await syncQueueDao.updateAction(item.id, "METADATA_ONLY");
+            await syncQueueDao.updateStatus(item.id, "PENDING", 0);
+            this.activeUploadingEntryIds.delete(entry.id);
+            setTimeout(() => {
+              this.processQueue().catch((err) => {
+                console.warn("Upload queue retry after race error:", err);
+              });
+            }, 100);
+          } else {
+            // Mark completed and remove from queue
+            await syncQueueDao.deleteItem(item.id);
+            this.activeUploadingEntryIds.delete(entry.id);
+            this.notifyListeners({ entryId: entry.id, status: "synced" });
+          }
         } catch (error) {
           this.activeUploadingEntryIds.delete(entry.id);
           const currentRetries = item.retry_count ?? 0;

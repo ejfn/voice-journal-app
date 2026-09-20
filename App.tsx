@@ -32,6 +32,7 @@ import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService"
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
 import { googleDriveService } from "./src/services/drive/GoogleDriveService";
 import { uploadQueueService } from "./src/services/drive/UploadQueueService";
+import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
@@ -98,11 +99,13 @@ const MainScreen: React.FC = () => {
         transcriptionQueueService.processQueue().catch((err) => {
           console.warn("Transcription queue startup error:", err);
         });
-        uploadQueueService.enqueueAllUnsynced().catch((err) => {
-          console.warn("Upload queue startup error:", err);
-        });
+        smartSyncService.startAutoSync();
       })
       .catch((err) => console.warn("Database init error:", err));
+
+    return () => {
+      smartSyncService.stopAutoSync();
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -126,11 +129,22 @@ const MainScreen: React.FC = () => {
         loadData();
       }
     });
+    const unsubscribeSmartSync = smartSyncService.addListener((event) => {
+      if (event.status === "syncing") {
+        setIsSyncing(true);
+      } else if (event.status === "synced") {
+        setIsSyncing(false);
+        loadData();
+      } else {
+        setIsSyncing(false);
+      }
+    });
 
     return () => {
       unsubscribePlayback();
       unsubscribeTranscription();
       unsubscribeUpload();
+      unsubscribeSmartSync();
     };
   }, [loadData]);
 
@@ -140,17 +154,20 @@ const MainScreen: React.FC = () => {
     transcriptionQueueService.processQueue().catch((err) => {
       console.warn("Queue refresh error:", err);
     });
-    uploadQueueService.enqueueAllUnsynced().catch((err) => {
-      console.warn("Upload queue refresh error:", err);
-    });
+    smartSyncService
+      .sync({ force: true, reason: "pull_refresh" })
+      .catch((err) => {
+        console.warn("Smart sync error on pull refresh:", err);
+      });
     setIsRefreshing(false);
   };
 
   const handleDriveSync = async () => {
-    setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTwoWay();
-      await googleDriveService.runLruEviction();
+      const result = await smartSyncService.sync({
+        force: true,
+        reason: "manual",
+      });
       await loadData();
       showToast({
         message: `Sync Complete: ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
@@ -163,8 +180,6 @@ const MainScreen: React.FC = () => {
         icon: "cloud-off",
         type: "error",
       });
-    } finally {
-      setIsSyncing(false);
     }
   };
 

@@ -152,6 +152,7 @@ export class GoogleDriveService {
   async uploadEntry(entry: JournalEntry): Promise<{
     audioFileId: string | null;
     sidecarFileId: string;
+    raceDetected?: boolean;
   }> {
     const token = await this.getAccessToken();
     const date = new Date(entry.created_at);
@@ -207,14 +208,23 @@ export class GoogleDriveService {
     }
 
     // 2. Upload / Update Sidecar JSON (contains up-to-date audioFileId, machine-agnostic path)
+    // Re-query latest entry from SQLite so any transcript, summary, or user edits
+    // that completed during the audio upload step are captured in this payload
+    const freshEntry = (await entriesDao.getEntryById(entry.id)) || entry;
+    const snapshotUpdatedAt =
+      freshEntry.updated_at != null
+        ? freshEntry.updated_at
+        : freshEntry.created_at;
+
     const entryToUpload: JournalEntry = {
-      ...entry,
+      ...freshEntry,
       drive_audio_file_id: audioFileId,
       local_audio_path: null, // Device-specific absolute sandbox paths should NOT be stored in cloud sidecars
     };
     const sidecarPayload = JSON.stringify(entryToUpload, null, 2);
 
-    let sidecarFileId = entry.drive_sidecar_file_id;
+    let sidecarFileId =
+      freshEntry.drive_sidecar_file_id || entry.drive_sidecar_file_id;
     if (sidecarFileId) {
       // Update existing sidecar file on Drive
       const updateRes = await fetch(
@@ -280,6 +290,29 @@ export class GoogleDriveService {
       );
     }
 
+    // Check if local entry changed while sidecar upload was in flight
+    const postUploadEntry = await entriesDao.getEntryById(entry.id);
+    const postUploadUpdatedAt =
+      postUploadEntry?.updated_at != null
+        ? postUploadEntry.updated_at
+        : (postUploadEntry?.created_at ?? 0);
+    const raceDetected = Boolean(
+      postUploadEntry && postUploadUpdatedAt > snapshotUpdatedAt,
+    );
+
+    if (raceDetected) {
+      // Local metadata changed during upload (e.g. transcript finished or user edited notes).
+      // Record Drive file IDs, but set drive_synced_at to snapshotUpdatedAt so postUploadUpdatedAt > drive_synced_at
+      // ensures the entry remains flagged as unsynced in SQLite.
+      await entriesDao.updateSyncStatus(
+        entry.id,
+        sidecarFileId,
+        audioFileId,
+        snapshotUpdatedAt,
+      );
+      return { audioFileId, sidecarFileId, raceDetected: true };
+    }
+
     // Update entry sync status in SQLite with current timestamp
     await entriesDao.updateSyncStatus(
       entry.id,
@@ -288,7 +321,7 @@ export class GoogleDriveService {
       Date.now(),
     );
 
-    return { audioFileId, sidecarFileId };
+    return { audioFileId, sidecarFileId, raceDetected: false };
   }
 
   /**
@@ -462,6 +495,12 @@ export class GoogleDriveService {
       const unsyncedEntries = await entriesDao.getUnsyncedEntries();
       for (const entry of unsyncedEntries) {
         try {
+          // Skip if already actively uploading in the background queue
+          const queueItem = await syncQueueDao.getItemByEntryId(entry.id);
+          if (queueItem && queueItem.status === "PROCESSING") {
+            continue;
+          }
+
           const cloudSidecar = driveSidecarsMap.get(entry.id);
           const localUpdatedTime = entry.updated_at || entry.created_at;
 
@@ -479,9 +518,24 @@ export class GoogleDriveService {
               drive_sidecar_file_id:
                 entry.drive_sidecar_file_id || cloudSidecar?.id || null,
             };
-            await this.uploadEntry(entryToUpload);
-            uploadedCount++;
-            await syncQueueDao.deleteByEntryId(entry.id);
+            const uploadResult = await this.uploadEntry(entryToUpload);
+            if (uploadResult.raceDetected) {
+              // Local metadata changed while uploading; ensure queued for metadata sync pass
+              const existing = await syncQueueDao.getItemByEntryId(entry.id);
+              if (existing) {
+                await syncQueueDao.updateAction(existing.id, "METADATA_ONLY");
+                await syncQueueDao.updateStatus(existing.id, "PENDING", 0);
+              } else {
+                await syncQueueDao.enqueue({
+                  entry_id: entry.id,
+                  action: "METADATA_ONLY",
+                  status: "PENDING",
+                });
+              }
+            } else {
+              uploadedCount++;
+              await syncQueueDao.deleteByEntryId(entry.id);
+            }
           }
         } catch (uploadErr) {
           console.warn(`Upload failed for entry ${entry.id}:`, uploadErr);
