@@ -32,6 +32,7 @@ export type DriveTransferListener = (event: DriveTransferEvent) => void;
 
 export class GoogleDriveService {
   private folderIdCache: Map<string, string> = new Map();
+  private monthFolderRequests: Map<string, Promise<string>> = new Map();
   private isConfigured: boolean = false;
   private transferListeners: Set<DriveTransferListener> = new Set();
 
@@ -176,10 +177,54 @@ export class GoogleDriveService {
     month: number | string,
     token: string,
   ): Promise<string> {
+    const cacheKey = `${year}:${month}`;
+    const pendingRequest = this.monthFolderRequests.get(cacheKey);
+    if (pendingRequest) {
+      return pendingRequest;
+    }
+
+    const request = this.resolveMonthFolderUncached(year, month, token);
+    this.monthFolderRequests.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      this.monthFolderRequests.delete(cacheKey);
+    }
+  }
+
+  private async resolveMonthFolderUncached(
+    year: number | string,
+    month: number | string,
+    token: string,
+  ): Promise<string> {
     const rootId = await this.getOrCreateFolder("VoiceJournal", "root", token);
     const yearId = await this.getOrCreateFolder(String(year), rootId, token);
     const mStr = String(month).padStart(2, "0");
     return this.getOrCreateFolder(mStr, yearId, token);
+  }
+
+  private async findFileId(
+    name: string,
+    parentId: string,
+    token: string,
+    mimeType: string,
+  ): Promise<string | null> {
+    const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const query = encodeURIComponent(
+      `name = '${escapedName}' and '${parentId}' in parents and mimeType = '${mimeType}' and trashed = false`,
+    );
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id)&pageSize=1`,
+      { headers: { Authorization: "Bearer " + token } },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to find Google Drive file "${name}": ${await response.text()}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.files?.[0]?.id || null;
   }
 
   /**
@@ -212,6 +257,16 @@ export class GoogleDriveService {
 
       if (localAudioUri) {
         const audioFile = new File(localAudioUri);
+        let reusedAudioFile = false;
+        if (audioFile.exists && !audioFileId) {
+          audioFileId = await this.findFileId(
+            `${entry.id}.m4a`,
+            monthFolderId,
+            token,
+            "audio/mp4",
+          );
+          reusedAudioFile = Boolean(audioFileId);
+        }
         if (audioFile.exists && !audioFileId) {
           // Create audio file placeholder with metadata in Drive
           const createAudioRes = await fetch(
@@ -248,6 +303,19 @@ export class GoogleDriveService {
             );
           }
         }
+        if (audioFile.exists && audioFileId && reusedAudioFile) {
+          await audioFile.upload(
+            `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
+            {
+              httpMethod: "PATCH",
+              headers: {
+                Authorization: "Bearer " + token,
+                "Content-Type": "audio/mp4",
+              },
+              uploadType: UploadType.BINARY_CONTENT,
+            },
+          );
+        }
       }
 
       // 2. Upload / Update Sidecar JSON (contains up-to-date audioFileId, machine-agnostic path)
@@ -268,6 +336,14 @@ export class GoogleDriveService {
 
       let sidecarFileId =
         freshEntry.drive_sidecar_file_id || entry.drive_sidecar_file_id;
+      if (!sidecarFileId) {
+        sidecarFileId = await this.findFileId(
+          `${entry.id}.json`,
+          monthFolderId,
+          token,
+          "application/json",
+        );
+      }
       if (sidecarFileId) {
         // Update existing sidecar file on Drive
         const updateRes = await fetch(

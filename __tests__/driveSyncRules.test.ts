@@ -104,6 +104,95 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     unsubscribe();
   });
 
+  it("reuses existing entry files when a retry has no saved Drive IDs", async () => {
+    const entry: JournalEntry = {
+      id: "entry-retry",
+      title: "Retry",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 12,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/document/audio/entry-retry.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    const createRequests: string[] = [];
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const query = decodeURIComponent(urlStr);
+        if (query.includes("application/vnd.google-apps.folder")) {
+          return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-retry.m4a'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-audio-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (query.includes("name = 'entry-retry.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "existing-sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        if (init?.method === "POST") {
+          createRequests.push(urlStr);
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    const result = await driveService.uploadEntry(entry);
+
+    expect(result).toEqual({
+      audioFileId: "existing-audio-id",
+      sidecarFileId: "existing-sidecar-id",
+      raceDetected: false,
+    });
+    expect(createRequests).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).toHaveBeenCalledWith(
+      expect.stringContaining("existing-audio-id"),
+      expect.any(Object),
+    );
+  });
+
+  it("shares concurrent month folder resolution", async () => {
+    const createdFolders: string[] = [];
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          createdFolders.push(body.name);
+          return new Response(JSON.stringify({ id: `folder-${body.name}` }), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      driveService.resolveMonthFolder(2026, 9, "token"),
+      driveService.resolveMonthFolder(2026, 9, "token"),
+    ]);
+
+    expect(first).toBe("folder-09");
+    expect(second).toBe(first);
+    expect(createdFolders).toEqual(["VoiceJournal", "2026", "09"]);
+  });
+
   it("emits download transfer notifications for success and failure paths", async () => {
     const t0 = 1758290100000;
     const downloadableEntry: JournalEntry = {
@@ -261,6 +350,17 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
             json: async () => ({
               files: [{ id: "mock-folder-id", name: "folder" }],
             }),
+          } as Response;
+        }
+
+        // Exact-name retry lookups find no existing files for this test.
+        if (
+          decodedUrl.includes("name = 'entry-uuid-new.m4a'") ||
+          decodedUrl.includes("name = 'entry-uuid-new.json'")
+        ) {
+          return {
+            ok: true,
+            json: async () => ({ files: [] }),
           } as Response;
         }
 
