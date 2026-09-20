@@ -10,10 +10,7 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import {
-  SafeAreaProvider,
-  SafeAreaView,
-} from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as FileSystem from "expo-file-system/legacy";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
@@ -28,7 +25,7 @@ import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
 import { syncQueueDao } from "./src/db/dao/syncQueueDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
-import { geminiService } from "./src/services/ai/GeminiService";
+import { transcriptionQueueService } from "./src/services/ai/TranscriptionQueueService";
 import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
@@ -88,20 +85,34 @@ const MainScreen: React.FC = () => {
 
   useEffect(() => {
     initDatabase()
-      .then(() => loadData())
+      .then(() => {
+        loadData();
+        transcriptionQueueService.processQueue().catch((err) => {
+          console.warn("Queue startup error:", err);
+        });
+      })
       .catch((err) => console.warn("Database init error:", err));
   }, [loadData]);
 
   useEffect(() => {
-    const unsubscribe = audioPlaybackService.addListener((state) => {
+    const unsubscribePlayback = audioPlaybackService.addListener((state) => {
       setPlayingEntryId(state.isPlaying ? state.entryId : null);
     });
-    return unsubscribe;
-  }, []);
+    const unsubscribeQueue = transcriptionQueueService.addListener(() => {
+      loadData();
+    });
+    return () => {
+      unsubscribePlayback();
+      unsubscribeQueue();
+    };
+  }, [loadData]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await loadData();
+    transcriptionQueueService.processQueue().catch((err) => {
+      console.warn("Queue refresh error:", err);
+    });
     setIsRefreshing(false);
   };
 
@@ -111,15 +122,17 @@ const MainScreen: React.FC = () => {
       const result = await googleDriveService.syncTwoWay();
       await googleDriveService.runLruEviction();
       await loadData();
-      Alert.alert(
-        "Sync Complete",
-        `Synchronized timeline.\n• ${result.uploadedCount} clip(s) uploaded to Drive\n• ${result.downloadedCount} new clip(s) downloaded`,
-      );
+      showToast({
+        message: `Sync Complete: ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
+        icon: "cloud-done",
+        type: "success",
+      });
     } catch (err) {
-      Alert.alert(
-        "Drive Sync Notice",
-        (err as Error).message || "Could not sync with Google Drive.",
-      );
+      showToast({
+        message: (err as Error).message || "Could not sync with Google Drive.",
+        icon: "cloud-off",
+        type: "error",
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -129,10 +142,11 @@ const MainScreen: React.FC = () => {
   const handleStartRecording = async () => {
     const hasPermission = await audioRecordingService.requestPermissions();
     if (!hasPermission) {
-      Alert.alert(
-        "Permission Required",
-        "Microphone access is needed to record voice journal entries.",
-      );
+      showToast({
+        message: "Microphone access is needed to record voice entries",
+        icon: "mic-off",
+        type: "warning",
+      });
       return;
     }
 
@@ -190,29 +204,15 @@ const MainScreen: React.FC = () => {
         return;
       }
 
-      setIsProcessingAI(true);
       const entryId = currentRecordingId || generateUUID();
       const now = Date.now();
 
-      let aiResult = {
-        title: "Voice Journal Entry",
-        transcript: "Recorded speech",
-        tags: ["journal"],
-        summary: "Recorded voice entry.",
-      };
-
-      try {
-        aiResult = await geminiService.analyzeAudio(localUri);
-      } catch (aiErr) {
-        console.warn("Gemini analysis skipped/failed:", aiErr);
-      }
-
       const newEntry: JournalEntry = {
         id: entryId,
-        title: aiResult.title,
-        summary: aiResult.summary,
-        transcript: aiResult.transcript,
-        tags: aiResult.tags,
+        title: "Voice Recording",
+        summary: "Queued for AI transcription...",
+        transcript: "",
+        tags: ["voice"],
         duration_sec: durationSec,
         source_type: "recorded",
         local_audio_path: localUri,
@@ -222,42 +222,36 @@ const MainScreen: React.FC = () => {
         created_at: now,
         updated_at: now,
         last_accessed_at: now,
+        transcription_status: "queued",
       };
 
       await entriesDao.insertEntry(newEntry);
-      await syncQueueDao.enqueue({
-        entry_id: entryId,
-        action: "ANALYZE_AND_UPLOAD",
-      });
 
-      // Attempt background upload if user is signed in to Google Drive
-      if (googleDriveService.getCurrentUser()) {
-        googleDriveService
-          .uploadEntry(newEntry)
-          .then(async () => {
-            await syncQueueDao.deleteByEntryId(entryId);
-          })
-          .catch((uploadErr) => {
-            console.warn("Deferred background Drive upload:", uploadErr);
-          });
-      }
-
+      // Dismiss recording modal immediately so user can continue using the app
       setIsRecordingVisible(false);
       setCurrentRecordingId(null);
       setIsProcessingAI(false);
 
+      showToast({
+        message: "Recording saved • Transcribing in background",
+        icon: "check-circle",
+        type: "success",
+      });
+
       await loadData();
 
-      // Open review modal
-      setReviewEntry(newEntry);
-      setIsReviewVisible(true);
+      // Process transcription in background queue
+      transcriptionQueueService.processQueue().catch((err) => {
+        console.warn("Background transcription error:", err);
+      });
     } catch (err) {
       setIsProcessingAI(false);
       setIsRecordingVisible(false);
-      Alert.alert(
-        "Recording Error",
-        (err as Error).message || "Failed to save recording.",
-      );
+      showToast({
+        message: (err as Error).message || "Failed to save recording.",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
@@ -267,16 +261,21 @@ const MainScreen: React.FC = () => {
       const imported = await audioImportService.importAudioFiles();
       if (imported.length > 0) {
         await loadData();
-        Alert.alert(
-          "Import Complete",
-          `Imported ${imported.length} audio file(s). Enqueued for AI transcription and Drive sync.`,
-        );
+        showToast({
+          message: `Imported ${imported.length} audio file(s) • Transcribing in background`,
+          icon: "check-circle",
+          type: "success",
+        });
+        transcriptionQueueService.processQueue().catch((err) => {
+          console.warn("Background import transcription error:", err);
+        });
       }
     } catch (err) {
-      Alert.alert(
-        "Import Error",
-        (err as Error).message || "Failed to import audio.",
-      );
+      showToast({
+        message: (err as Error).message || "Failed to import audio.",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
@@ -296,10 +295,11 @@ const MainScreen: React.FC = () => {
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
-        Alert.alert(
-          "Streaming Cloud Audio",
-          "Downloading audio clip on demand...",
-        );
+        showToast({
+          message: "Streaming audio from Google Drive...",
+          icon: "cloud-download",
+          type: "info",
+        });
         const cachedPath = await googleDriveService.downloadAudioOnDemand(
           entry.id,
         );
@@ -311,10 +311,11 @@ const MainScreen: React.FC = () => {
         await loadData();
       }
     } catch (err) {
-      Alert.alert(
-        "Playback Error",
-        (err as Error).message || "Could not play audio.",
-      );
+      showToast({
+        message: (err as Error).message || "Could not play audio.",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
@@ -442,8 +443,12 @@ const MainScreen: React.FC = () => {
                   key={clip.id}
                   entry={clip}
                   isPlaying={playingEntryId === clip.id}
+                  isItemSyncing={isSyncing}
                   onPlayPress={() => handlePlayClip(clip)}
                   onPress={() => handleOpenReview(clip)}
+                  onRetryTranscription={(id) =>
+                    transcriptionQueueService.retryEntry(id)
+                  }
                 />
               ))}
             </View>
@@ -456,7 +461,11 @@ const MainScreen: React.FC = () => {
                   { backgroundColor: colors.surfaceAlt },
                 ]}
               >
-                <Text style={styles.emptyIcon}>🎙️</Text>
+                <MaterialIcons
+                  name="mic-none"
+                  size={32}
+                  color={colors.textMuted}
+                />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>
                 {searchQuery || selectedTag !== "all"
@@ -486,11 +495,7 @@ const MainScreen: React.FC = () => {
             activeOpacity={0.8}
             accessibilityLabel="Import Audio Files"
           >
-            <MaterialIcons
-              name="file-download"
-              size={22}
-              color={colors.text}
-            />
+            <MaterialIcons name="file-download" size={22} color={colors.text} />
           </TouchableOpacity>
 
           {/* Bottom: Record Voice */}
@@ -530,6 +535,9 @@ const MainScreen: React.FC = () => {
           onSave={handleSaveReview}
           onDelete={handleDeleteEntry}
           onClose={() => setIsReviewVisible(false)}
+          onRetryTranscription={(id) =>
+            transcriptionQueueService.retryEntry(id)
+          }
         />
 
         {/* Settings & Sync Modal */}
@@ -596,9 +604,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 16,
   },
-  emptyIcon: {
-    fontSize: 28,
-  },
   emptyTitle: {
     fontSize: 18,
     fontWeight: "600",
@@ -631,9 +636,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  secondaryFabIcon: {
-    fontSize: 23,
-  },
   primaryFab: {
     width: 68,
     height: 68,
@@ -644,8 +646,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 6,
-  },
-  primaryFabIcon: {
-    fontSize: 30,
   },
 });

@@ -42,6 +42,10 @@ describe("Gemini AI Service", () => {
 
     const result = await service.analyzeAudio("file:///test/path.m4a");
 
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.any(Object),
+    );
     expect(result.title).toBe("Science poster prep");
     expect(result.transcript).toBe(
       "Today we worked on our presentation poster for science class.",

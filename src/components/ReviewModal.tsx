@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  ActivityIndicator,
 } from "react-native";
 import { JournalEntry } from "../db/schema";
 import {
@@ -19,6 +20,10 @@ import {
 import { useTheme } from "../theme/ThemeContext";
 import { formatDuration, formatTimer } from "../utils/paths";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
+import {
+  computeStorageStatus,
+  getStorageBadgeConfig,
+} from "../utils/storageStatus";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -26,6 +31,7 @@ interface ReviewModalProps {
   onSave: (updatedEntry: JournalEntry) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  onRetryTranscription?: (id: string) => void;
 }
 
 export const ReviewModal: React.FC<ReviewModalProps> = ({
@@ -34,6 +40,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onSave,
   onDelete,
   onClose,
+  onRetryTranscription,
 }) => {
   const { colors, isDark } = useTheme();
 
@@ -135,6 +142,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     1,
     Math.max(0, playbackState.currentTimeSec / durationSec),
   );
+  const storageStatus = computeStorageStatus(entry);
+  const storageBadge = getStorageBadgeConfig(storageStatus, colors);
+  const isUntranscribed =
+    entry.transcription_status && entry.transcription_status !== "completed";
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
@@ -219,9 +230,14 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   ]}
                   activeOpacity={1}
                   onPress={(e) => {
-                    const width = 200;
-                    const clickX = e.nativeEvent.locationX;
-                    handleSeek(clickX / width);
+                    const { locationX } = e.nativeEvent;
+                    // Approximate full width of progress bar (parent width minus paddings)
+                    const totalWidth = 200;
+                    const ratio = Math.max(
+                      0,
+                      Math.min(1, locationX / totalWidth),
+                    );
+                    handleSeek(ratio);
                   }}
                 >
                   <View
@@ -236,6 +252,103 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
+
+          {/* Storage & Cloud Sync Status Badge */}
+          <View
+            style={[
+              styles.statusBarContainer,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View style={styles.statusRow}>
+              <MaterialIcons
+                name={storageBadge.iconName}
+                size={18}
+                color={storageBadge.color}
+                style={{ marginRight: 8 }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[styles.statusTitle, { color: storageBadge.color }]}
+                >
+                  {storageBadge.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.statusDescription,
+                    { color: colors.textMuted },
+                  ]}
+                >
+                  {storageBadge.description}
+                </Text>
+              </View>
+            </View>
+
+            {isUntranscribed && (
+              <View
+                style={[
+                  styles.reviewTranscriptionRow,
+                  { borderTopColor: colors.border },
+                ]}
+              >
+                {entry.transcription_status === "processing" ? (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.primary}
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text
+                      style={[
+                        styles.reviewTranscriptionText,
+                        { color: colors.primary },
+                      ]}
+                    >
+                      Transcribing with Gemini 3.5...
+                    </Text>
+                  </View>
+                ) : entry.transcription_status === "queued" ? (
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <MaterialIcons
+                      name="schedule"
+                      size={16}
+                      color={colors.warning}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.reviewTranscriptionText,
+                        { color: colors.warning },
+                      ]}
+                    >
+                      Queued for transcription (waiting for connection)
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={{ flexDirection: "row", alignItems: "center" }}
+                    onPress={() => onRetryTranscription?.(entry.id)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialIcons
+                      name="refresh"
+                      size={16}
+                      color={colors.danger}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.reviewTranscriptionText,
+                        { color: colors.danger },
+                      ]}
+                    >
+                      Transcription failed • Tap to retry
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
 
           {/* Title Editor */}
@@ -606,6 +719,33 @@ const styles = StyleSheet.create({
   },
   deleteText: {
     fontSize: 14,
+    fontWeight: "600",
+  },
+  statusBarContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  statusTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  statusDescription: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  reviewTranscriptionRow: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+  },
+  reviewTranscriptionText: {
+    fontSize: 12.5,
     fontWeight: "600",
   },
 });

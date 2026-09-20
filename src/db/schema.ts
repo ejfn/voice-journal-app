@@ -1,3 +1,6 @@
+export type TranscriptionStatus =
+  "queued" | "processing" | "completed" | "failed";
+
 export interface JournalEntry {
   id: string;
   title: string;
@@ -14,6 +17,9 @@ export interface JournalEntry {
   updated_at?: number; // Epoch timestamp ms for edits/sync detection
   drive_synced_at?: number | null; // Epoch timestamp ms for Drive sync status
   last_accessed_at: number; // Epoch timestamp ms for LRU
+  transcription_status?: TranscriptionStatus;
+  transcription_retry_count?: number;
+  transcription_next_retry_at?: number | null;
 }
 
 export interface JournalEntryRow {
@@ -32,6 +38,9 @@ export interface JournalEntryRow {
   updated_at?: number | null;
   drive_synced_at?: number | null;
   last_accessed_at: number;
+  transcription_status?: string | null;
+  transcription_retry_count?: number | null;
+  transcription_next_retry_at?: number | null;
 }
 
 export interface SyncQueueItem {
@@ -59,7 +68,10 @@ CREATE TABLE IF NOT EXISTS entries (
   created_at INTEGER NOT NULL,
   updated_at INTEGER,
   drive_synced_at INTEGER,
-  last_accessed_at INTEGER NOT NULL
+  last_accessed_at INTEGER NOT NULL,
+  transcription_status TEXT DEFAULT 'completed',
+  transcription_retry_count INTEGER DEFAULT 0,
+  transcription_next_retry_at INTEGER
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(

@@ -75,6 +75,27 @@ export const initDatabase = async (
   }
   try {
     await db.execAsync(
+      "ALTER TABLE entries ADD COLUMN transcription_status TEXT DEFAULT 'completed';",
+    );
+  } catch {
+    // Ignore if column already exists
+  }
+  try {
+    await db.execAsync(
+      "ALTER TABLE entries ADD COLUMN transcription_retry_count INTEGER DEFAULT 0;",
+    );
+  } catch {
+    // Ignore if column already exists
+  }
+  try {
+    await db.execAsync(
+      "ALTER TABLE entries ADD COLUMN transcription_next_retry_at INTEGER;",
+    );
+  } catch {
+    // Ignore if column already exists
+  }
+  try {
+    await db.execAsync(
       "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
     );
   } catch {

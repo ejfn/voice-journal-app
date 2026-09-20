@@ -1,24 +1,44 @@
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from "react-native";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { JournalEntry } from "../db/schema";
 import { useTheme } from "../theme/ThemeContext";
 import { formatDuration, formatTime } from "../utils/paths";
+import {
+  computeStorageStatus,
+  getStorageBadgeConfig,
+} from "../utils/storageStatus";
 
 interface EntryCardProps {
   entry: JournalEntry;
   isPlaying: boolean;
+  isItemSyncing?: boolean;
   onPlayPress: () => void;
   onPress: () => void;
+  onRetryTranscription?: (entryId: string) => void;
 }
 
 export const EntryCard: React.FC<EntryCardProps> = ({
   entry,
   isPlaying,
+  isItemSyncing = false,
   onPlayPress,
   onPress,
+  onRetryTranscription,
 }) => {
   const { colors } = useTheme();
+  const storageStatus = computeStorageStatus(entry, {
+    isItemSyncing,
+  });
+  const storageBadge = getStorageBadgeConfig(storageStatus, colors);
+  const isUntranscribed =
+    entry.transcription_status && entry.transcription_status !== "completed";
 
   return (
     <TouchableOpacity
@@ -40,10 +60,34 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           >
             {entry.title || "Voice Note"}
           </Text>
-          <Text style={[styles.metaText, { color: colors.textMuted }]}>
-            {formatTime(entry.created_at)} •{" "}
-            {formatDuration(entry.duration_sec)}
-          </Text>
+          <View style={styles.metaRow}>
+            <Text style={[styles.metaText, { color: colors.textMuted }]}>
+              {formatTime(entry.created_at)} •{" "}
+              {formatDuration(entry.duration_sec)}
+            </Text>
+            <View
+              style={[
+                styles.storageBadge,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              accessibilityLabel={storageBadge.description}
+            >
+              <MaterialIcons
+                name={storageBadge.iconName}
+                size={12}
+                color={storageBadge.color}
+                style={{ marginRight: 3 }}
+              />
+              <Text
+                style={[styles.storageBadgeText, { color: storageBadge.color }]}
+              >
+                {storageBadge.label}
+              </Text>
+            </View>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -65,6 +109,71 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           />
         </TouchableOpacity>
       </View>
+
+      {/* Background Transcription Indicator Banner */}
+      {isUntranscribed && (
+        <View
+          style={[
+            styles.transcriptionBanner,
+            {
+              backgroundColor: colors.surfaceAlt,
+              borderColor:
+                entry.transcription_status === "processing"
+                  ? colors.primary
+                  : entry.transcription_status === "queued"
+                    ? colors.warning
+                    : colors.danger,
+            },
+          ]}
+        >
+          {entry.transcription_status === "processing" ? (
+            <View style={styles.transcriptionInner}>
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+                style={styles.spinner}
+              />
+              <Text
+                style={[styles.transcriptionText, { color: colors.primary }]}
+              >
+                Transcribing with Gemini 3.5...
+              </Text>
+            </View>
+          ) : entry.transcription_status === "queued" ? (
+            <View style={styles.transcriptionInner}>
+              <MaterialIcons
+                name="schedule"
+                size={14}
+                color={colors.warning}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[styles.transcriptionText, { color: colors.warning }]}
+              >
+                Queued for transcription (offline)
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.transcriptionInner}
+              onPress={() => onRetryTranscription?.(entry.id)}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons
+                name="refresh"
+                size={14}
+                color={colors.danger}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[styles.transcriptionText, { color: colors.danger }]}
+              >
+                Transcription failed • Tap to retry
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {entry.summary ? (
         <Text
@@ -143,9 +252,27 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     marginBottom: 3,
   },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   metaText: {
     fontSize: 12.5,
     fontWeight: "500",
+  },
+  storageBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  storageBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   playButton: {
     width: 40,
@@ -154,20 +281,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  playIcon: {
-    fontSize: 14,
-    marginLeft: 2,
-  },
-  pauseIcon: {
+  transcriptionBanner: {
     flexDirection: "row",
-    gap: 4,
     alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 10,
   },
-  pauseBar: {
-    width: 3.5,
-    height: 14,
-    borderRadius: 2,
+  transcriptionInner: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  transcriptionText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  spinner: {
+    marginRight: 6,
   },
   summary: {
     fontSize: 13.5,
