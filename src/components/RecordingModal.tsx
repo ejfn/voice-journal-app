@@ -21,7 +21,7 @@ interface RecordingModalProps {
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
-  onCancel: () => void;
+  onCancel?: () => void;
 }
 
 export const RecordingModal: React.FC<RecordingModalProps> = ({
@@ -33,10 +33,8 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
   onPause,
   onResume,
   onStop,
-  onCancel,
 }) => {
   const { colors } = useTheme();
-  const canCancel = durationSec < MIN_RECORDING_DURATION_SEC;
   // Array of 19 bars for waveform visualization
   const [waveformBars, setWaveformBars] = useState<number[]>(
     new Array(19).fill(0.1),
@@ -64,11 +62,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={() => {
-        if (canCancel) {
-          onCancel();
-        }
-      }}
+      onRequestClose={() => {}}
     >
       <View style={[styles.overlay, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
         <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
@@ -111,29 +105,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                   </Text>
                 </View>
 
-                {canCancel ? (
-                  <TouchableOpacity
-                    onPress={onCancel}
-                    style={[
-                      styles.cancelHeaderButton,
-                      {
-                        backgroundColor: colors.surfaceAlt,
-                        borderColor: colors.border,
-                      },
-                    ]}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    accessibilityLabel="Discard recording"
-                    testID="discard-recording-button"
-                  >
-                    <MaterialIcons
-                      name="close"
-                      size={20}
-                      color={colors.textMuted}
-                    />
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.cancelHeaderSpacer} />
-                )}
+                <View style={styles.cancelHeaderSpacer} />
               </View>
 
               {/* Centered Timer */}
@@ -163,7 +135,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
               <Text style={[styles.statusHint, { color: colors.textMuted }]}>
                 {isPaused
                   ? durationSec < MIN_RECORDING_DURATION_SEC
-                    ? `Recording paused (< ${MIN_RECORDING_DURATION_SEC}s). Tap resume to continue, or discard.`
+                    ? `Recording paused (< ${MIN_RECORDING_DURATION_SEC}s). Tap resume to continue, or stop.`
                     : "Recording paused. Tap resume to continue, or stop to save."
                   : durationSec < MIN_RECORDING_DURATION_SEC
                     ? `Speak naturally. Minimum ${MIN_RECORDING_DURATION_SEC} seconds to save.`
@@ -233,8 +205,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                         {
                           backgroundColor: colors.danger,
                           shadowColor: colors.danger,
-                          opacity:
-                            durationSec < MIN_RECORDING_DURATION_SEC ? 0.45 : 1,
+                          opacity: 1,
                         },
                       ]}
                       onPress={onStop}
@@ -249,10 +220,7 @@ export const RecordingModal: React.FC<RecordingModalProps> = ({
                       styles.actionLabel,
                       styles.doneLabel,
                       {
-                        color:
-                          durationSec < MIN_RECORDING_DURATION_SEC
-                            ? colors.textMuted
-                            : colors.text,
+                        color: colors.text,
                       },
                     ]}
                   >
