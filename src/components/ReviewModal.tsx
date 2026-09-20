@@ -352,7 +352,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             <MaterialIcons name="close" size={22} color={colors.textMuted} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>
-            Review Entry
+            Voice Note
           </Text>
           <TouchableOpacity
             onPress={handleSaveAndClose}
@@ -537,7 +537,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
                   color: colors.text,
-                  height: 75,
+                  height: 90,
                 },
               ]}
               value={summary}
