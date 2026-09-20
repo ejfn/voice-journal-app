@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Platform,
   StatusBar,
   ActivityIndicator,
+  Keyboard,
 } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import { JournalEntry } from "../db/schema";
@@ -46,7 +47,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onClose,
   onRetryTranscription,
 }) => {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { showToast } = useToast();
 
   const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(entry);
@@ -62,6 +63,51 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     durationSec: 0,
     entryId: null,
   });
+
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+      },
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        setKeyboardHeight(0);
+      },
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleTranscriptFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 150);
+  };
+
+  const handleSummaryFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 160, animated: true });
+    }, 150);
+  };
+
+  const [tagSectionY, setTagSectionY] = useState(260);
+
+  const handleTagFocus = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, tagSectionY - 20),
+        animated: true,
+      });
+    }, 150);
+  };
 
   useEffect(() => {
     setCurrentEntry(entry);
@@ -172,6 +218,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     if (clean && !tags.includes(clean)) {
       setTags([...tags, clean]);
       setNewTagInput("");
+      handleTagFocus();
     }
   };
 
@@ -259,9 +306,21 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         </View>
 
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          ref={scrollViewRef}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingBottom:
+                Platform.OS === "ios"
+                  ? 40
+                  : keyboardHeight > 0
+                    ? keyboardHeight + 40
+                    : 40,
+            },
+          ]}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="none"
+          showsVerticalScrollIndicator={true}
         >
           {/* Audio Player Bar */}
           <View
@@ -345,11 +404,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             <View style={styles.statusRow}>
               <MaterialIcons
                 name={storageBadge.iconName}
-                size={18}
+                size={15}
                 color={storageBadge.color}
-                style={{ marginRight: 8 }}
+                style={{ marginRight: 6 }}
               />
-              <View style={{ flex: 1 }}>
+              <Text style={{ flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
                 <Text
                   style={[styles.statusTitle, { color: storageBadge.color }]}
                 >
@@ -361,9 +420,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     { color: colors.textMuted },
                   ]}
                 >
+                  {" • "}
                   {storageBadge.description}
                 </Text>
-              </View>
+              </Text>
             </View>
 
             {isUntranscribed && (
@@ -470,6 +530,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               ]}
               value={summary}
               onChangeText={setSummary}
+              onFocus={handleSummaryFocus}
               multiline
               placeholder="Key takeaway..."
               placeholderTextColor={colors.textMuted}
@@ -477,7 +538,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </View>
 
           {/* Tags Editor */}
-          <View style={styles.section}>
+          <View
+            style={styles.section}
+            onLayout={(e) => setTagSectionY(e.nativeEvent.layout.y)}
+          >
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
               TAGS
             </Text>
@@ -527,6 +591,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleAddTag}
                 returnKeyType="done"
+                onFocus={handleTagFocus}
               />
               <TouchableOpacity
                 style={[styles.addTagBtn, { backgroundColor: colors.primary }]}
@@ -539,71 +604,61 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
           {/* Verbatim Transcript */}
           <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
-              VERBATIM TRANSCRIPT
-            </Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>
+                VERBATIM TRANSCRIPT
+              </Text>
+              {transcript.trim().length > 0 && (
+                <Text
+                  style={[styles.wordCountText, { color: colors.textMuted }]}
+                >
+                  {transcript.trim().split(/\s+/).length} words
+                </Text>
+              )}
+            </View>
             <TextInput
               style={[
-                styles.textArea,
+                styles.transcriptInput,
                 {
                   backgroundColor: colors.surface,
                   borderColor: colors.border,
                   color: colors.text,
-                  minHeight: 130,
                 },
               ]}
               value={transcript}
               onChangeText={setTranscript}
-              multiline
+              onFocus={handleTranscriptFocus}
+              multiline={true}
+              scrollEnabled={true}
+              textAlignVertical="top"
               placeholder="Audio transcript..."
               placeholderTextColor={colors.textMuted}
             />
           </View>
 
-          {/* Bottom Actions: Cancel & Delete aligned together */}
-          <View style={styles.bottomActions}>
-            <TouchableOpacity
-              style={[
-                styles.cancelButton,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                },
-              ]}
-              onPress={handleClose}
-              activeOpacity={0.7}
-              accessibilityLabel="Cancel editing"
-            >
-              <Text style={[styles.cancelButtonText, { color: colors.text }]}>
-                Cancel
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.deleteButton,
-                {
-                  borderColor: colors.danger,
-                  backgroundColor: isDark
-                    ? "rgba(239, 68, 68, 0.12)"
-                    : "#FEF2F2",
-                },
-              ]}
-              onPress={handleDelete}
-              activeOpacity={0.7}
-              accessibilityLabel="Delete entry"
-            >
-              <MaterialIcons
-                name="delete-outline"
-                size={18}
-                color={colors.danger}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={[styles.deleteText, { color: colors.danger }]}>
-                Delete Entry
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* Delete Entry Button */}
+          <TouchableOpacity
+            style={[
+              styles.deleteButton,
+              {
+                borderColor: colors.danger,
+                backgroundColor: colors.surface,
+              },
+            ]}
+            onPress={handleDelete}
+            activeOpacity={0.7}
+            accessibilityLabel="Delete entry"
+          >
+            <MaterialIcons
+              name="delete-outline"
+              size={18}
+              color={colors.danger}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.deleteText, { color: colors.danger }]}>
+              Delete Entry
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
@@ -653,10 +708,10 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   playerContainer: {
-    padding: 16,
+    padding: 14,
     borderRadius: 16,
     borderWidth: 1,
-    marginBottom: 20,
+    marginBottom: 14,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
@@ -700,11 +755,20 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 18,
   },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 7,
+  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.8,
-    marginBottom: 7,
+  },
+  wordCountText: {
+    fontSize: 11,
+    fontWeight: "500",
   },
   input: {
     borderWidth: 1,
@@ -721,6 +785,17 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     fontSize: 14,
     lineHeight: 20,
+    textAlignVertical: "top",
+  },
+  transcriptInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14.5,
+    lineHeight: 22,
+    minHeight: 180,
+    maxHeight: 280,
     textAlignVertical: "top",
   },
   tagWrap: {
@@ -772,31 +847,15 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "600",
   },
-  bottomActions: {
-    marginTop: 24,
-    flexDirection: "row",
-    gap: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    borderWidth: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
   deleteButton: {
-    flex: 1,
     flexDirection: "row",
-    borderWidth: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 26,
+    marginBottom: 16,
   },
   deleteText: {
     fontSize: 14,
@@ -804,29 +863,29 @@ const styles = StyleSheet.create({
   },
   statusBarContainer: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginBottom: 14,
   },
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
   },
   statusTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
   },
   statusDescription: {
-    fontSize: 12,
-    marginTop: 1,
+    fontSize: 11.5,
   },
   reviewTranscriptionRow: {
-    marginTop: 8,
-    paddingTop: 8,
+    marginTop: 6,
+    paddingTop: 6,
     borderTopWidth: 1,
   },
   reviewTranscriptionText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "600",
   },
 });
