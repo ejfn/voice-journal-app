@@ -41,6 +41,8 @@ interface ReviewModalProps {
   onRetryTranscription?: (id: string) => void;
 }
 
+const WAVEFORM_CURSOR_WIDTH = 2;
+
 export function getDeterministicWaveform(
   id: string,
   count: number = 35,
@@ -341,18 +343,13 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 
   useEffect(() => {
     Animated.timing(cursorPosition, {
-      toValue: progressRatio * containerWidth,
+      toValue:
+        progressRatio * Math.max(0, containerWidth - WAVEFORM_CURSOR_WIDTH),
       duration: playbackState.isPlaying ? 120 : 0,
       easing: Easing.linear,
       useNativeDriver: true,
     }).start();
-  }, [
-    containerWidth,
-    cursorPosition,
-    playbackState.isPlaying,
-    progressRatio,
-    waveformBars.length,
-  ]);
+  }, [containerWidth, cursorPosition, playbackState.isPlaying, progressRatio]);
 
   if (!activeEntry) return null;
 
@@ -457,6 +454,27 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               <TouchableOpacity
                 style={styles.waveformScrubberTransparent}
                 activeOpacity={0.9}
+                accessible
+                accessibilityRole="adjustable"
+                accessibilityLabel="Playback waveform scrubber"
+                accessibilityValue={{
+                  min: 0,
+                  max: 100,
+                  now: Math.round(progressRatio * 100),
+                  text: `${formatTimer(playbackState.currentTimeSec)} of ${formatDuration(durationSec)}`,
+                }}
+                accessibilityActions={[
+                  { name: "increment", label: "Seek forward 5 percent" },
+                  { name: "decrement", label: "Seek backward 5 percent" },
+                ]}
+                onAccessibilityAction={(event) => {
+                  if (event.nativeEvent.actionName === "increment") {
+                    void handleSeek(Math.min(1, progressRatio + 0.05));
+                  }
+                  if (event.nativeEvent.actionName === "decrement") {
+                    void handleSeek(Math.max(0, progressRatio - 0.05));
+                  }
+                }}
                 onLayout={(e) => {
                   setContainerWidth(e.nativeEvent.layout.width || 150);
                 }}
@@ -494,15 +512,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       styles.waveformCursor,
                       {
                         backgroundColor: colors.waveformActive,
-                        transform: [
-                          {
-                            translateX: cursorPosition.interpolate({
-                              inputRange: [0, containerWidth],
-                              outputRange: [-1, containerWidth - 1],
-                              extrapolate: "clamp",
-                            }),
-                          },
-                        ],
+                        transform: [{ translateX: cursorPosition }],
                       },
                     ]}
                   />
