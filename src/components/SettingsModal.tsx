@@ -431,6 +431,154 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </View>
           </View>
 
+          {/* Section: Google Drive Cloud Sync */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleContainer}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Google Drive Cloud Sync
+                </Text>
+                <Text
+                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
+                >
+                  Automatically backup journal recordings and transcripts
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={[
+                styles.statusPillRow,
+                { backgroundColor: colors.surfaceAlt },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: googleUser
+                      ? colors.success
+                      : colors.textMuted,
+                  },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.statusPillText,
+                  { color: googleUser ? colors.text : colors.textMuted },
+                ]}
+                numberOfLines={1}
+              >
+                {googleUser
+                  ? `Connected: ${googleUser.email}`
+                  : "Not connected to cloud"}
+              </Text>
+            </View>
+
+            <View style={styles.buttonRow}>
+              {googleUser ? (
+                <>
+                  <TouchableOpacity
+                    key="sync-now-button"
+                    style={[
+                      styles.secondaryButton,
+                      {
+                        backgroundColor: colors.primary,
+                      },
+                    ]}
+                    onPress={handleManualSync}
+                    disabled={isSyncing}
+                  >
+                    {isSyncing ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <View style={styles.buttonContent}>
+                        <MaterialIcons
+                          name="sync"
+                          size={18}
+                          color="#FFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text
+                          style={[
+                            styles.secondaryButtonText,
+                            { color: "#FFF" },
+                          ]}
+                        >
+                          Sync Now
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    key="sign-out-button"
+                    style={[
+                      styles.outlineButton,
+                      {
+                        borderColor: colors.danger,
+                        paddingHorizontal: 16,
+                      },
+                    ]}
+                    onPress={() => setConfirmSignOut(true)}
+                  >
+                    <View style={styles.buttonContent}>
+                      <MaterialIcons
+                        name="logout"
+                        size={16}
+                        color={colors.danger}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.outlineButtonText,
+                          { color: colors.danger },
+                        ]}
+                      >
+                        Sign Out
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  key="sign-in-button"
+                  style={[
+                    styles.primaryButton,
+                    { backgroundColor: colors.primary },
+                  ]}
+                  onPress={handleGoogleSignIn}
+                  disabled={isSigningIn}
+                  activeOpacity={0.8}
+                >
+                  {isSigningIn ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <View style={styles.buttonContent}>
+                      <MaterialIcons
+                        name="cloud-upload"
+                        size={18}
+                        color="#FFF"
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text style={styles.primaryButtonText}>
+                        Connect Google Account
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
           {/* Section: Gemini AI Transcription (BYOK) */}
           <View
             style={[
@@ -678,154 +826,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                 </TouchableOpacity>
               ) : null}
-            </View>
-          </View>
-
-          {/* Section: Google Drive Cloud Sync */}
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-              },
-            ]}
-          >
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleContainer}>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  Google Drive Cloud Sync
-                </Text>
-                <Text
-                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
-                >
-                  Automatically backup journal recordings and transcripts
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.statusPillRow,
-                { backgroundColor: colors.surfaceAlt },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statusDot,
-                  {
-                    backgroundColor: googleUser
-                      ? colors.success
-                      : colors.textMuted,
-                  },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusPillText,
-                  { color: googleUser ? colors.text : colors.textMuted },
-                ]}
-                numberOfLines={1}
-              >
-                {googleUser
-                  ? `Connected: ${googleUser.email}`
-                  : "Not connected to cloud"}
-              </Text>
-            </View>
-
-            <View style={styles.buttonRow}>
-              {googleUser ? (
-                <>
-                  <TouchableOpacity
-                    key="sync-now-button"
-                    style={[
-                      styles.secondaryButton,
-                      {
-                        backgroundColor: colors.primary,
-                      },
-                    ]}
-                    onPress={handleManualSync}
-                    disabled={isSyncing}
-                  >
-                    {isSyncing ? (
-                      <ActivityIndicator size="small" color="#FFF" />
-                    ) : (
-                      <View style={styles.buttonContent}>
-                        <MaterialIcons
-                          name="sync"
-                          size={18}
-                          color="#FFF"
-                          style={{ marginRight: 6 }}
-                        />
-                        <Text
-                          style={[
-                            styles.secondaryButtonText,
-                            { color: "#FFF" },
-                          ]}
-                        >
-                          Sync Now
-                        </Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    key="sign-out-button"
-                    style={[
-                      styles.outlineButton,
-                      {
-                        borderColor: colors.danger,
-                        paddingHorizontal: 16,
-                      },
-                    ]}
-                    onPress={() => setConfirmSignOut(true)}
-                  >
-                    <View style={styles.buttonContent}>
-                      <MaterialIcons
-                        name="logout"
-                        size={16}
-                        color={colors.danger}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text
-                        style={[
-                          styles.outlineButtonText,
-                          { color: colors.danger },
-                        ]}
-                      >
-                        Sign Out
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  key="sign-in-button"
-                  style={[
-                    styles.primaryButton,
-                    { backgroundColor: colors.primary },
-                  ]}
-                  onPress={handleGoogleSignIn}
-                  disabled={isSigningIn}
-                  activeOpacity={0.8}
-                >
-                  {isSigningIn ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <View style={styles.buttonContent}>
-                      <MaterialIcons
-                        name="cloud-upload"
-                        size={18}
-                        color="#FFF"
-                        style={{ marginRight: 8 }}
-                      />
-                      <Text style={styles.primaryButtonText}>
-                        Connect Google Account
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              )}
             </View>
           </View>
 
