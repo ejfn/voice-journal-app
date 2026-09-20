@@ -263,10 +263,17 @@ export class GoogleDriveService {
           bestMatch = file;
           continue;
         }
-        if ((file.createdTime ?? "") !== (bestMatch.createdTime ?? "")) {
-          return bestMatch.id || null;
+        const createdTimeCompare = (file.createdTime ?? "").localeCompare(
+          bestMatch.createdTime ?? "",
+        );
+        if (createdTimeCompare < 0) {
+          bestMatch = file;
+          continue;
         }
-        if ((file.id ?? "").localeCompare(bestMatch.id ?? "") < 0) {
+        if (
+          createdTimeCompare === 0 &&
+          (file.id ?? "").localeCompare(bestMatch.id ?? "") < 0
+        ) {
           bestMatch = file;
         }
       }
