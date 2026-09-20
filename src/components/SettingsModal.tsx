@@ -992,7 +992,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Version {getAppVersion()}
             </Text>
             <Text style={[styles.aboutSubtitle, { color: colors.textMuted }]}>
-              Offline-first multimodal voice journal
+              Speak your mind. AI captures the rest.
             </Text>
           </View>
         </ScrollView>
