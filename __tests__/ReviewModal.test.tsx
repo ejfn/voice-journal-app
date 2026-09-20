@@ -90,11 +90,14 @@ describe("ReviewModal", () => {
     "renders concise label and short description for $name status",
     ({ expectedLabel, expectedShort, forbiddenText, entry }) => {
       const tree = renderModal(entry);
+      // The local react-test-renderer declaration does not expose
+      // findAllByType; cast root to access it for test introspection.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const root = tree.root as any;
-      const texts = root.findAllByType("Text");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const renderedText = texts.map((t: any) => String(t.props.children)).join(" ");
+      const texts = (tree.root as any).findAllByType("Text");
+      const renderedText = texts
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((t: any) => String(t.props.children))
+        .join(" ");
 
       expect(renderedText).toContain(expectedLabel);
       expect(renderedText).toContain(expectedShort);
