@@ -257,7 +257,7 @@ const cacheKey = `${String(year)}:${String(month).padStart(2, "0")}`;
       if (localAudioUri) {
         const audioFile = new File(localAudioUri);
         let reusedAudioFile = false;
-        if (audioFile.exists && !audioFileId) {
+        if (!audioFileId) {
           audioFileId = await this.findFileId(
             `${entry.id}.m4a`,
             monthFolderId,
