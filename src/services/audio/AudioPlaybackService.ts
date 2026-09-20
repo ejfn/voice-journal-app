@@ -445,7 +445,8 @@ class AudioPlaybackService {
   private async performStop(): Promise<void> {
     this.stopProgressTracker();
 
-    await this.persistRegeneratedWaveform();
+    // Detach sample subscription and disable audio sampling first,
+    // ensuring no late samples arrive while persistence is in-flight.
     if (this.sampleSubscription) {
       try {
         this.sampleSubscription.remove();
@@ -454,6 +455,14 @@ class AudioPlaybackService {
       }
       this.sampleSubscription = null;
     }
+    try {
+      this.activePlayer?.setAudioSamplingEnabled?.(false);
+    } catch {
+      // Ignore
+    }
+
+    await this.persistRegeneratedWaveform();
+
     if (this.playerSubscription) {
       try {
         this.playerSubscription.remove();
