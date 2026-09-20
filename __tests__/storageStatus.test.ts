@@ -45,6 +45,16 @@ describe("Storage Status Computation (Issue #11)", () => {
     expect(badge.description).toBe("Uploading");
   });
 
+  it("uses download-specific syncing badge details during active download", () => {
+    const status = computeStorageStatus(baseEntry, { isItemSyncing: true });
+    expect(status).toBe("syncing");
+
+    const badge = getStorageBadgeConfig(status, lightColors, "download");
+    expect(badge.iconName).toBe("cloud-download");
+    expect(badge.label).toBe("Syncing");
+    expect(badge.description).toBe("Downloading");
+  });
+
   it("does not treat a global SmartSync scan as per-entry syncing (issue #28)", () => {
     // Startup/reconciliation only checks Drive — no entry-level transfer.
     // isItemSyncing must stay false unless this entry is actively transferring.

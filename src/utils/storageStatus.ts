@@ -92,6 +92,7 @@ export interface StorageBadgeConfig {
 export function getStorageBadgeConfig(
   status: StorageSyncStatus,
   colors: ThemeColors,
+  transferDirection: "upload" | "download" = "upload",
 ): StorageBadgeConfig {
   switch (status) {
     case "synced":
@@ -105,10 +106,12 @@ export function getStorageBadgeConfig(
     case "syncing":
       return {
         status,
-        iconName: "cloud-upload",
+        iconName:
+          transferDirection === "download" ? "cloud-download" : "cloud-upload",
         label: "Syncing",
         color: colors.primary,
-        description: "Uploading",
+        description:
+          transferDirection === "download" ? "Downloading" : "Uploading",
       };
     case "cloud-only":
       return {

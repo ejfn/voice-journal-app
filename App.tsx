@@ -126,6 +126,29 @@ const MainScreen: React.FC = () => {
         loadData();
       }
     });
+    const unsubscribeDriveTransfer = googleDriveService.addTransferListener(
+      (event) => {
+        if (event.status === "uploading") {
+          setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
+          return;
+        }
+        if (event.status === "downloading") {
+          setDownloadingEntryId(event.entryId);
+          return;
+        }
+
+        setUploadingEntryIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.entryId);
+          return next;
+        });
+        setDownloadingEntryId((prev) => (prev === event.entryId ? null : prev));
+
+        if (event.status === "synced" || event.status === "uploaded") {
+          loadData();
+        }
+      },
+    );
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
     // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
@@ -138,6 +161,7 @@ const MainScreen: React.FC = () => {
       unsubscribePlayback();
       unsubscribeTranscription();
       unsubscribeUpload();
+      unsubscribeDriveTransfer();
       unsubscribeSmartSync();
     };
   }, [loadData]);

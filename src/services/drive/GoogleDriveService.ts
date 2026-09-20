@@ -18,7 +18,7 @@ export interface DriveFolderInfo {
  */
 export type DriveTransferEvent = {
   entryId: string;
-  status: "uploading" | "downloading" | "synced" | "failed";
+  status: "uploading" | "downloading" | "uploaded" | "synced" | "failed";
 };
 
 export type DriveTransferListener = (event: DriveTransferEvent) => void;
@@ -347,7 +347,7 @@ export class GoogleDriveService {
         );
         this.notifyTransferListeners({
           entryId: entry.id,
-          status: "synced",
+          status: "uploaded",
         });
         return { audioFileId, sidecarFileId, raceDetected: true };
       }
@@ -671,29 +671,46 @@ export class GoogleDriveService {
       throw new Error(`Entry ${entryId} has no cloud audio file ID`);
     }
 
-    const token = await this.getAccessToken();
-    const downloadUrl = `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?alt=media`;
+    this.notifyTransferListeners({
+      entryId,
+      status: "downloading",
+    });
 
-    const dir = localPath.substring(0, localPath.lastIndexOf("/") + 1);
-    const directory = new Directory(dir);
-    if (!directory.exists) {
-      directory.create({ intermediates: true, idempotent: true });
+    try {
+      const token = await this.getAccessToken();
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?alt=media`;
+
+      const dir = localPath.substring(0, localPath.lastIndexOf("/") + 1);
+      const directory = new Directory(dir);
+      if (!directory.exists) {
+        directory.create({ intermediates: true, idempotent: true });
+      }
+
+      await File.downloadFileAsync(downloadUrl, localFile, {
+        headers: { Authorization: "Bearer " + token },
+        idempotent: true,
+      });
+
+      await entriesDao.setAudioCached(entryId, true, localPath);
+      await entriesDao.markAudioAccessed(entryId);
+      this.notifyTransferListeners({
+        entryId,
+        status: "synced",
+      });
+
+      // Auto-maintain storage threshold in background after downloading new audio
+      this.runLruEviction().catch((err) => {
+        console.warn("Auto LRU eviction after download warning:", err);
+      });
+
+      return localPath;
+    } catch (error) {
+      this.notifyTransferListeners({
+        entryId,
+        status: "failed",
+      });
+      throw error;
     }
-
-    await File.downloadFileAsync(downloadUrl, localFile, {
-      headers: { Authorization: `Bearer ${token}` },
-      idempotent: true,
-    });
-
-    await entriesDao.setAudioCached(entryId, true, localPath);
-    await entriesDao.markAudioAccessed(entryId);
-
-    // Auto-maintain storage threshold in background after downloading new audio
-    this.runLruEviction().catch((err) => {
-      console.warn("Auto LRU eviction after download warning:", err);
-    });
-
-    return localPath;
   }
 
   /**
