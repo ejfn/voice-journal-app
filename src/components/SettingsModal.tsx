@@ -707,38 +707,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </View>
             </View>
 
-            {/* Hint / AI Studio Link */}
+            {/* Plain Text Hint / AI Studio Link */}
             <TouchableOpacity
-              style={[
-                styles.byokHintCard,
-                {
-                  backgroundColor: colors.surfaceAlt,
-                  borderColor: colors.border,
-                  marginTop: 10,
-                  marginBottom: 4,
-                },
-              ]}
+              style={styles.byokHintPlainRow}
               onPress={handleOpenAIStudio}
               activeOpacity={0.7}
             >
-              <View style={styles.byokHintLeft}>
-                <MaterialIcons
-                  name="vpn-key"
-                  size={16}
-                  color={colors.primary}
-                  style={{ marginRight: 8 }}
-                />
-                <Text
-                  style={[styles.byokHintText, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  Need a key? Get one free at Google AI Studio
+              <Text
+                style={[styles.byokHintPlainText, { color: colors.textMuted }]}
+              >
+                Need an API key?{" "}
+                <Text style={{ color: colors.primary, fontWeight: "600" }}>
+                  Get one free at Google AI Studio
                 </Text>
-              </View>
+              </Text>
               <MaterialIcons
                 name="open-in-new"
-                size={14}
+                size={13}
                 color={colors.primary}
+                style={{ marginLeft: 4 }}
               />
             </TouchableOpacity>
 
@@ -1229,26 +1216,16 @@ const styles = StyleSheet.create({
   aboutSubtitle: {
     fontSize: 12,
   },
-  byokHintCard: {
+  byokHintPlainRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 12,
+    marginTop: 8,
+    marginBottom: 2,
+    paddingHorizontal: 2,
   },
-  byokHintLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    marginRight: 8,
-  },
-  byokHintText: {
+  byokHintPlainText: {
     fontSize: 12.5,
-    fontWeight: "500",
-    flex: 1,
+    lineHeight: 17,
   },
   inputContainer: {
     width: "100%",
