@@ -1,7 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import { entriesDao } from "../../db/dao/entriesDao";
-import { syncQueueDao } from "../../db/dao/syncQueueDao";
+import { uploadQueueService } from "../drive/UploadQueueService";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
 import { generateUUID } from "../../utils/uuid";
@@ -75,10 +75,7 @@ export class AudioImportService {
       };
 
       await entriesDao.insertEntry(entry);
-      await syncQueueDao.enqueue({
-        entry_id: entryId,
-        action: "ANALYZE_AND_UPLOAD",
-      });
+      uploadQueueService.enqueueUpload(entryId, "ANALYZE_AND_UPLOAD");
 
       importedResults.push({
         entryId,

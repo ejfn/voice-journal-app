@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { settingsDao } from "../db/dao/settingsDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
+import { smartSyncService } from "../services/drive/SmartSyncService";
 import { geminiService } from "../services/ai/GeminiService";
 import { transcriptionQueueService } from "../services/ai/TranscriptionQueueService";
 import { useTheme } from "../theme/ThemeContext";
@@ -214,6 +215,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         icon: "cloud-done",
         type: "success",
       });
+      // Automatically trigger smart sync upon connecting Google Drive
+      smartSyncService.sync({ force: true, reason: "sign_in" }).catch((err) => {
+        console.warn("Smart sync error after sign in:", err);
+      });
     } catch (err) {
       showToast({
         message: (err as Error).message || "Google Sign-In failed",
@@ -247,8 +252,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleManualSync = async () => {
     setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTwoWay();
-      await googleDriveService.runLruEviction();
+      const result = await smartSyncService.sync({
+        force: true,
+        reason: "manual",
+      });
       await refreshStatus();
       if (onSyncCompleted) {
         onSyncCompleted();

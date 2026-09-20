@@ -53,6 +53,25 @@ export const syncQueueDao = {
     }
   },
 
+  async getItemById(id: string): Promise<SyncQueueItem | null> {
+    const db = getDatabase();
+    return db.getFirstAsync<SyncQueueItem>(
+      `SELECT * FROM sync_queue WHERE id = ?`,
+      [id],
+    );
+  },
+
+  async updateAction(
+    id: string,
+    action: SyncQueueItem["action"],
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(`UPDATE sync_queue SET action = ? WHERE id = ?`, [
+      action,
+      id,
+    ]);
+  },
+
   async deleteItem(id: string): Promise<void> {
     const db = getDatabase();
     await db.runAsync(`DELETE FROM sync_queue WHERE id = ?`, [id]);

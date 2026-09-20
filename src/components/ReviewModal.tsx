@@ -12,7 +12,10 @@ import {
   StatusBar,
   ActivityIndicator,
 } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 import { JournalEntry } from "../db/schema";
+import { entriesDao } from "../db/dao/entriesDao";
+import { googleDriveService } from "../services/drive/GoogleDriveService";
 import {
   audioPlaybackService,
   PlaybackState,
@@ -24,6 +27,7 @@ import {
   computeStorageStatus,
   getStorageBadgeConfig,
 } from "../utils/storageStatus";
+import { useToast } from "./common/Toast";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -43,7 +47,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onRetryTranscription,
 }) => {
   const { colors, isDark } = useTheme();
+  const { showToast } = useToast();
 
+  const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(entry);
+  const [isDownloadingAudio, setIsDownloadingAudio] = useState(false);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [transcript, setTranscript] = useState("");
@@ -57,6 +64,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   });
 
   useEffect(() => {
+    setCurrentEntry(entry);
     if (entry) {
       setTitle(entry.title);
       setSummary(entry.summary);
@@ -82,21 +90,80 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   }, [entry]);
 
   const handlePlayPause = async () => {
-    if (!entry) return;
+    const active = currentEntry || entry;
+    if (!active || isDownloadingAudio) return;
+
     if (playbackState.isPlaying) {
       await audioPlaybackService.pause();
-    } else if (entry.local_audio_path) {
+      return;
+    }
+
+    const localPath = active.local_audio_path;
+    let isLocal = active.is_audio_cached === 1 && Boolean(localPath);
+
+    if (isLocal && localPath) {
+      try {
+        const info = await FileSystem.getInfoAsync(localPath);
+        if (!info.exists) {
+          isLocal = false;
+        }
+      } catch {
+        isLocal = false;
+      }
+    }
+
+    if (isLocal && localPath) {
       await audioPlaybackService.play(
-        entry.id,
-        entry.local_audio_path,
-        entry.duration_sec,
+        active.id,
+        localPath,
+        active.duration_sec,
       );
+      await entriesDao.markAudioAccessed(active.id);
+    } else if (active.drive_audio_file_id) {
+      setIsDownloadingAudio(true);
+      showToast({
+        message: "Downloading audio from Google Drive...",
+        icon: "cloud-download",
+        type: "info",
+      });
+
+      try {
+        const cachedPath = await googleDriveService.downloadAudioOnDemand(
+          active.id,
+        );
+        setCurrentEntry((prev) =>
+          prev
+            ? { ...prev, local_audio_path: cachedPath, is_audio_cached: 1 }
+            : null,
+        );
+        await audioPlaybackService.play(
+          active.id,
+          cachedPath,
+          active.duration_sec,
+        );
+      } catch (err) {
+        showToast({
+          message:
+            (err as Error).message || "Failed to download audio from Drive",
+          icon: "error-outline",
+          type: "error",
+        });
+      } finally {
+        setIsDownloadingAudio(false);
+      }
+    } else {
+      showToast({
+        message: "Audio file is not available.",
+        icon: "error-outline",
+        type: "error",
+      });
     }
   };
 
   const handleSeek = async (ratio: number) => {
-    if (!entry) return;
-    const targetSec = Math.round(ratio * (entry.duration_sec || 1));
+    const active = currentEntry || entry;
+    if (!active) return;
+    const targetSec = Math.round(ratio * (active.duration_sec || 1));
     await audioPlaybackService.seekTo(targetSec);
   };
 
@@ -113,10 +180,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   };
 
   const handleSaveAndClose = () => {
-    if (!entry) return;
+    const active = currentEntry || entry;
+    if (!active) return;
     audioPlaybackService.stop();
     onSave({
-      ...entry,
+      ...active,
       title: title.trim() || "Untitled Voice Entry",
       summary: summary.trim(),
       transcript: transcript.trim(),
@@ -125,9 +193,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   };
 
   const handleDelete = () => {
-    if (!entry) return;
+    const active = currentEntry || entry;
+    if (!active) return;
     audioPlaybackService.stop();
-    onDelete(entry.id);
+    onDelete(active.id);
   };
 
   const handleClose = () => {
@@ -135,17 +204,20 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     onClose();
   };
 
-  if (!entry) return null;
+  const activeEntry = currentEntry || entry;
+  if (!activeEntry) return null;
 
-  const durationSec = entry.duration_sec || playbackState.durationSec || 1;
+  const durationSec =
+    activeEntry.duration_sec || playbackState.durationSec || 1;
   const progressRatio = Math.min(
     1,
     Math.max(0, playbackState.currentTimeSec / durationSec),
   );
-  const storageStatus = computeStorageStatus(entry);
+  const storageStatus = computeStorageStatus(activeEntry);
   const storageBadge = getStorageBadgeConfig(storageStatus, colors);
   const isUntranscribed =
-    entry.transcription_status && entry.transcription_status !== "completed";
+    activeEntry.transcription_status &&
+    activeEntry.transcription_status !== "completed";
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
@@ -205,16 +277,25 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   { backgroundColor: colors.primary },
                 ]}
                 onPress={handlePlayPause}
+                disabled={isDownloadingAudio}
                 activeOpacity={0.8}
                 accessibilityLabel={
-                  playbackState.isPlaying ? "Pause Audio" : "Play Audio"
+                  isDownloadingAudio
+                    ? "Downloading Audio"
+                    : playbackState.isPlaying
+                      ? "Pause Audio"
+                      : "Play Audio"
                 }
               >
-                <MaterialIcons
-                  name={playbackState.isPlaying ? "pause" : "play-arrow"}
-                  size={24}
-                  color="#FFFFFF"
-                />
+                {isDownloadingAudio ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <MaterialIcons
+                    name={playbackState.isPlaying ? "pause" : "play-arrow"}
+                    size={24}
+                    color="#FFFFFF"
+                  />
+                )}
               </TouchableOpacity>
 
               <View style={styles.playerTimeInfo}>
@@ -292,7 +373,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   { borderTopColor: colors.border },
                 ]}
               >
-                {entry.transcription_status === "processing" ? (
+                {activeEntry.transcription_status === "processing" ? (
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <ActivityIndicator
                       size="small"
@@ -308,7 +389,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       Transcribing with Gemini 3.5...
                     </Text>
                   </View>
-                ) : entry.transcription_status === "queued" ? (
+                ) : activeEntry.transcription_status === "queued" ? (
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <MaterialIcons
                       name="schedule"
@@ -328,7 +409,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 ) : (
                   <TouchableOpacity
                     style={{ flexDirection: "row", alignItems: "center" }}
-                    onPress={() => onRetryTranscription?.(entry.id)}
+                    onPress={() => onRetryTranscription?.(activeEntry.id)}
                     activeOpacity={0.7}
                   >
                     <MaterialIcons

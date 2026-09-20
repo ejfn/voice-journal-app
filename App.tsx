@@ -31,6 +31,8 @@ import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
 import { googleDriveService } from "./src/services/drive/GoogleDriveService";
+import { uploadQueueService } from "./src/services/drive/UploadQueueService";
+import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
@@ -68,6 +70,12 @@ const MainScreen: React.FC = () => {
 
   // Playback State
   const [playingEntryId, setPlayingEntryId] = useState<string | null>(null);
+  const [downloadingEntryId, setDownloadingEntryId] = useState<string | null>(
+    null,
+  );
+  const [uploadingEntryIds, setUploadingEntryIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -89,22 +97,54 @@ const MainScreen: React.FC = () => {
       .then(() => {
         loadData();
         transcriptionQueueService.processQueue().catch((err) => {
-          console.warn("Queue startup error:", err);
+          console.warn("Transcription queue startup error:", err);
         });
+        smartSyncService.startAutoSync();
       })
       .catch((err) => console.warn("Database init error:", err));
+
+    return () => {
+      smartSyncService.stopAutoSync();
+    };
   }, [loadData]);
 
   useEffect(() => {
     const unsubscribePlayback = audioPlaybackService.addListener((state) => {
       setPlayingEntryId(state.isPlaying ? state.entryId : null);
     });
-    const unsubscribeQueue = transcriptionQueueService.addListener(() => {
-      loadData();
+    const unsubscribeTranscription = transcriptionQueueService.addListener(
+      () => {
+        loadData();
+      },
+    );
+    const unsubscribeUpload = uploadQueueService.addListener((event) => {
+      if (event.status === "uploading") {
+        setUploadingEntryIds((prev) => new Set(prev).add(event.entryId));
+      } else {
+        setUploadingEntryIds((prev) => {
+          const next = new Set(prev);
+          next.delete(event.entryId);
+          return next;
+        });
+        loadData();
+      }
     });
+    const unsubscribeSmartSync = smartSyncService.addListener((event) => {
+      if (event.status === "syncing") {
+        setIsSyncing(true);
+      } else if (event.status === "synced") {
+        setIsSyncing(false);
+        loadData();
+      } else {
+        setIsSyncing(false);
+      }
+    });
+
     return () => {
       unsubscribePlayback();
-      unsubscribeQueue();
+      unsubscribeTranscription();
+      unsubscribeUpload();
+      unsubscribeSmartSync();
     };
   }, [loadData]);
 
@@ -114,14 +154,20 @@ const MainScreen: React.FC = () => {
     transcriptionQueueService.processQueue().catch((err) => {
       console.warn("Queue refresh error:", err);
     });
+    smartSyncService
+      .sync({ force: true, reason: "pull_refresh" })
+      .catch((err) => {
+        console.warn("Smart sync error on pull refresh:", err);
+      });
     setIsRefreshing(false);
   };
 
   const handleDriveSync = async () => {
-    setIsSyncing(true);
     try {
-      const result = await googleDriveService.syncTwoWay();
-      await googleDriveService.runLruEviction();
+      const result = await smartSyncService.sync({
+        force: true,
+        reason: "manual",
+      });
       await loadData();
       showToast({
         message: `Sync Complete: ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
@@ -134,8 +180,6 @@ const MainScreen: React.FC = () => {
         icon: "cloud-off",
         type: "error",
       });
-    } finally {
-      setIsSyncing(false);
     }
   };
 
@@ -231,6 +275,9 @@ const MainScreen: React.FC = () => {
 
       await entriesDao.insertEntry(newEntry);
 
+      // Enqueue for background Google Drive upload
+      uploadQueueService.enqueueUpload(newEntry.id, "ANALYZE_AND_UPLOAD");
+
       // Dismiss recording modal immediately so user can continue using the app
       setIsRecordingVisible(false);
       setCurrentRecordingId(null);
@@ -293,34 +340,60 @@ const MainScreen: React.FC = () => {
 
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
+    if (downloadingEntryId === entry.id) {
+      return;
+    }
+
     if (playingEntryId === entry.id) {
       await audioPlaybackService.pause();
       return;
     }
 
     try {
-      if (entry.is_audio_cached === 1 && entry.local_audio_path) {
+      let localPath = entry.local_audio_path;
+      let isCached = entry.is_audio_cached === 1 && Boolean(localPath);
+
+      if (isCached && localPath) {
+        try {
+          const info = await FileSystem.getInfoAsync(localPath);
+          if (!info.exists) {
+            isCached = false;
+          }
+        } catch {
+          isCached = false;
+        }
+      }
+
+      if (isCached && localPath) {
         await audioPlaybackService.play(
           entry.id,
-          entry.local_audio_path,
+          localPath,
           entry.duration_sec,
         );
         await entriesDao.markAudioAccessed(entry.id);
       } else if (entry.drive_audio_file_id) {
+        setDownloadingEntryId(entry.id);
         showToast({
-          message: "Streaming audio from Google Drive...",
+          message: "Downloading audio from Google Drive...",
           icon: "cloud-download",
           type: "info",
         });
+
         const cachedPath = await googleDriveService.downloadAudioOnDemand(
           entry.id,
         );
+        await loadData();
         await audioPlaybackService.play(
           entry.id,
           cachedPath,
           entry.duration_sec,
         );
-        await loadData();
+      } else {
+        showToast({
+          message: "Audio file is not available.",
+          icon: "error-outline",
+          type: "error",
+        });
       }
     } catch (err) {
       showToast({
@@ -328,6 +401,8 @@ const MainScreen: React.FC = () => {
         icon: "error-outline",
         type: "error",
       });
+    } finally {
+      setDownloadingEntryId(null);
     }
   };
 
@@ -347,16 +422,7 @@ const MainScreen: React.FC = () => {
     await loadData();
 
     // Trigger background upload if signed in to Google Drive
-    if (googleDriveService.getCurrentUser()) {
-      googleDriveService
-        .uploadEntry(entryToSave)
-        .then(async () => {
-          await syncQueueDao.deleteByEntryId(entryToSave.id);
-        })
-        .catch((err) => {
-          console.warn("Deferred background Drive upload after edit:", err);
-        });
-    }
+    uploadQueueService.enqueueUpload(entryToSave.id, "METADATA_ONLY");
   };
 
   const handleDeleteEntry = (id: string) => {
@@ -455,7 +521,8 @@ const MainScreen: React.FC = () => {
                   key={clip.id}
                   entry={clip}
                   isPlaying={playingEntryId === clip.id}
-                  isItemSyncing={isSyncing}
+                  isDownloading={downloadingEntryId === clip.id}
+                  isItemSyncing={isSyncing || uploadingEntryIds.has(clip.id)}
                   onPlayPress={() => handlePlayClip(clip)}
                   onPress={() => handleOpenReview(clip)}
                   onRetryTranscription={(id) =>
@@ -546,7 +613,11 @@ const MainScreen: React.FC = () => {
           entry={reviewEntry}
           onSave={handleSaveReview}
           onDelete={handleDeleteEntry}
-          onClose={() => setIsReviewVisible(false)}
+          onClose={async () => {
+            setIsReviewVisible(false);
+            setReviewEntry(null);
+            await loadData();
+          }}
           onRetryTranscription={(id) =>
             transcriptionQueueService.retryEntry(id)
           }

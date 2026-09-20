@@ -13,6 +13,7 @@ jest.mock("../src/db/dao/entriesDao");
 jest.mock("../src/db/dao/syncQueueDao");
 jest.mock("../src/services/ai/GeminiService");
 jest.mock("../src/services/drive/GoogleDriveService");
+jest.mock("../src/services/drive/UploadQueueService");
 jest.mock("expo-file-system/legacy");
 
 describe("TranscriptionQueueService", () => {
