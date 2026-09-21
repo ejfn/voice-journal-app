@@ -1,10 +1,22 @@
-import { GeminiService } from "../src/services/ai/GeminiService";
+import {
+  GeminiService,
+  ANALYZE_AUDIO_PROMPT,
+} from "../src/services/ai/GeminiService";
 
 describe("Gemini AI Service", () => {
   let service: GeminiService;
 
   beforeEach(() => {
     service = new GeminiService("test-api-key");
+  });
+
+  it("includes balanced speaker context and diary guidelines in ANALYZE_AUDIO_PROMPT", () => {
+    expect(ANALYZE_AUDIO_PROMPT).not.toMatch(/near-field/i);
+    expect(ANALYZE_AUDIO_PROMPT).not.toMatch(/far-field/i);
+    expect(ANALYZE_AUDIO_PROMPT).toContain("first-person");
+    expect(ANALYZE_AUDIO_PROMPT).toContain('"the user"');
+    expect(ANALYZE_AUDIO_PROMPT).toContain('"the speaker"');
+    expect(ANALYZE_AUDIO_PROMPT).toContain("Never describe physical actions");
   });
 
   it("cleans tags to all-lowercase without hashtags", () => {

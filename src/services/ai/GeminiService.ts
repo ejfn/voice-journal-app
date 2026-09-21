@@ -8,6 +8,30 @@ export interface GeminiAnalysisResult {
   summary: string;
 }
 
+export const ANALYZE_AUDIO_PROMPT = `
+You are a voice journal assistant analyzing audio recorded on a personal smartphone.
+
+Speaker Context:
+- Personal diary entry: When the phone owner is speaking into their device (personal thoughts, reflections, daily logs), adopt their perspective using first-person ("I...") or concise diary style.
+- External speaker: When recording someone else (e.g. a lecture, presentation, doctor visit, or someone speaking across a room), summarize the subject matter objectively without forcing "I".
+- Conversation: When multiple people are speaking, summarize the dialogue and key points naturally.
+
+Instructions:
+1. Transcript:
+   - Transcribe actual spoken words verbatim, cleaning out distracting filler words (um, uh, like).
+   - Transcribe speech only. Never describe physical actions, ambient sounds, or what the person is doing (do not write "The user is doing...", "The speaker sighs", etc.).
+   - Include speaker labels only when necessary to distinguish different speakers in a conversation.
+2. Summary:
+   - Provide a clear 1-sentence executive summary of the entry.
+   - Never refer to the speaker in the third person as "the user" or "the speaker".
+3. Title:
+   - Create a short, natural diary headline title (3 to 6 words).
+4. Tags:
+   - Generate 3 to 5 relevant, specific, single-word lowercase tags without hashtags (e.g. school, science, poster, running, cooking). Never use uppercase and never prefix with '#'.
+
+Return pure JSON conforming to the schema.
+`.trim();
+
 export class GeminiService {
   private apiKey: string;
 
@@ -99,16 +123,6 @@ export class GeminiService {
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${effectiveKey}`;
 
-    const promptText = `
-You are a precise voice journal assistant. Analyze this recorded voice journal audio entry:
-1. Transcribe the speech verbatim, cleaning out distracting filler words (um, uh, like).
-2. Create a short, natural diary headline title (3 to 6 words).
-3. Generate 3 to 5 relevant, specific, single-word lowercase tags without hashtags (e.g. school, science, poster, running, cooking). Never use uppercase and never prefix with '#'.
-4. Provide a clear 1-sentence executive summary of what happened or what was discussed.
-
-Return pure JSON conforming to the schema.
-    `.trim();
-
     const requestBody = {
       contents: [
         {
@@ -120,7 +134,7 @@ Return pure JSON conforming to the schema.
               },
             },
             {
-              text: promptText,
+              text: ANALYZE_AUDIO_PROMPT,
             },
           ],
         },
@@ -137,7 +151,7 @@ Return pure JSON conforming to the schema.
             transcript: {
               type: "STRING",
               description:
-                "Verbatim transcript of speech, cleaned of filler words",
+                "Verbatim transcript of spoken speech, cleaned of filler words. Do not describe actions or use third-person commentary like 'the speaker/user is doing'.",
             },
             tags: {
               type: "ARRAY",
@@ -146,7 +160,8 @@ Return pure JSON conforming to the schema.
             },
             summary: {
               type: "STRING",
-              description: "1-sentence executive summary of the entry",
+              description:
+                "1-sentence summary. Use first-person ('I...') for phone owner, or objective topic summary for external/distant speakers. Never use 'the user is doing...' or 'the speaker is doing...'.",
             },
           },
           required: ["title", "transcript", "tags", "summary"],
