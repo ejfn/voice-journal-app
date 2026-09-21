@@ -200,8 +200,8 @@ export const entriesDao = {
   ): Promise<void> {
     const db = getDatabase();
     await db.runAsync(
-      `UPDATE entries SET transcription_status = ?, updated_at = ? WHERE id = ?`,
-      [status, Date.now(), id],
+      `UPDATE entries SET transcription_status = ? WHERE id = ?`,
+      [status, id],
     );
   },
 
@@ -261,10 +261,9 @@ export const entriesDao = {
       `UPDATE entries SET
         transcription_status = ?,
         transcription_retry_count = ?,
-        transcription_next_retry_at = ?,
-        updated_at = ?
+        transcription_next_retry_at = ?
        WHERE id = ?`,
-      [status, retryCount, nextRetryAt, Date.now(), id],
+      [status, retryCount, nextRetryAt, id],
     );
   },
 
@@ -274,10 +273,9 @@ export const entriesDao = {
       `UPDATE entries SET
         transcription_status = 'queued',
         transcription_retry_count = 0,
-        transcription_next_retry_at = NULL,
-        updated_at = ?
+        transcription_next_retry_at = NULL
        WHERE id = ?`,
-      [Date.now(), id],
+      [id],
     );
   },
 
