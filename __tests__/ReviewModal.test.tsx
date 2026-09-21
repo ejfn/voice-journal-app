@@ -93,7 +93,7 @@ describe("ReviewModal", () => {
     {
       name: "local-only",
       entry: baseEntry,
-      expectedLabel: "On device",
+      expectedLabel: "Local",
       expectedDescription: "Pending backup",
       forbiddenText: "Stored on device only",
     },
@@ -107,8 +107,8 @@ describe("ReviewModal", () => {
         is_audio_cached: 0,
         local_audio_path: null,
       } as JournalEntry,
-      expectedLabel: "Cloud only",
-      expectedDescription: "Tap to download",
+      expectedLabel: "Cloud",
+      expectedDescription: "Tap play to download",
       forbiddenText: "Tap to stream or download",
     },
   ])(

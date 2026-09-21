@@ -117,16 +117,16 @@ export function getStorageBadgeConfig(
       return {
         status,
         iconName: "cloud-download",
-        label: "Cloud only",
+        label: "Cloud",
         color: colors.accent,
-        description: "Tap to download",
+        description: "Tap play to download",
       };
     case "local-only":
     default:
       return {
         status,
         iconName: "cloud-off",
-        label: "On device",
+        label: "Local",
         color: colors.textMuted,
         description: "Pending backup",
       };

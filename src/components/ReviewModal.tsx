@@ -506,96 +506,91 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             ]}
           >
             <View style={styles.statusRow}>
-              <MaterialIcons
-                name={storageBadge.iconName}
-                size={15}
-                color={storageBadge.color}
-                style={{ marginRight: 6 }}
-              />
-              <Text style={{ flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
-                <Text
-                  style={[styles.statusTitle, { color: storageBadge.color }]}
-                >
-                  {storageBadge.label}
-                </Text>
-                <Text
-                  style={[
-                    styles.statusDescription,
-                    { color: colors.textMuted },
-                  ]}
-                >
-                  {" • "}
-                  {storageBadge.description}
-                </Text>
-              </Text>
-            </View>
-
-            {isUntranscribed && (
-              <View
-                style={[
-                  styles.reviewTranscriptionRow,
-                  { borderTopColor: colors.border },
-                ]}
-              >
-                {activeEntry.transcription_status === "processing" ? (
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.primary}
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text
-                      style={[
-                        styles.reviewTranscriptionText,
-                        { color: colors.primary },
-                      ]}
-                    >
-                      Transcribing with Gemini 3.5...
-                    </Text>
-                  </View>
-                ) : activeEntry.transcription_status === "queued" ? (
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <MaterialIcons
-                      name="schedule"
-                      size={16}
-                      color={colors.warning}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text
-                      style={[
-                        styles.reviewTranscriptionText,
-                        { color: colors.warning },
-                      ]}
-                    >
-                      {storageStatus === "cloud-only"
-                        ? "Queued for transcription (download audio to transcribe)"
-                        : "Queued for transcription (waiting for connection)"}
-                    </Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={{ flexDirection: "row", alignItems: "center" }}
-                    onPress={() => onRetryTranscription?.(activeEntry.id)}
-                    activeOpacity={0.7}
+              <View style={styles.statusItem}>
+                <MaterialIcons
+                  name={storageBadge.iconName}
+                  size={15}
+                  color={storageBadge.color}
+                  style={{ marginRight: 6 }}
+                />
+                <Text numberOfLines={1} ellipsizeMode="tail">
+                  <Text
+                    style={[styles.statusTitle, { color: storageBadge.color }]}
                   >
-                    <MaterialIcons
-                      name="refresh"
-                      size={16}
-                      color={colors.danger}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text
-                      style={[
-                        styles.reviewTranscriptionText,
-                        { color: colors.danger },
-                      ]}
-                    >
-                      Transcription failed • Tap to retry
-                    </Text>
-                  </TouchableOpacity>
-                )}
+                    {storageBadge.label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.statusDescription,
+                      { color: colors.textMuted },
+                    ]}
+                  >
+                    {" • "}
+                    {storageBadge.description}
+                  </Text>
+                </Text>
               </View>
-            )}
+
+              {isUntranscribed && (
+                <View style={styles.statusItem}>
+                  {activeEntry.transcription_status === "processing" ? (
+                    <View style={styles.statusItem}>
+                      <ActivityIndicator
+                        size="small"
+                        color={colors.primary}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.reviewTranscriptionText,
+                          { color: colors.primary },
+                        ]}
+                      >
+                        Transcribing...
+                      </Text>
+                    </View>
+                  ) : activeEntry.transcription_status === "queued" ? (
+                    <View style={styles.statusItem}>
+                      <MaterialIcons
+                        name="schedule"
+                        size={15}
+                        color={colors.warning}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.reviewTranscriptionText,
+                          { color: colors.warning },
+                        ]}
+                      >
+                        Queued for transcription
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.statusItem}
+                      onPress={() => onRetryTranscription?.(activeEntry.id)}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialIcons
+                        name="refresh"
+                        size={15}
+                        color={colors.danger}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.reviewTranscriptionText,
+                          { color: colors.danger },
+                        ]}
+                      >
+                        Transcription failed • Tap to retry
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+            </View>
           </View>
 
           {/* Title Editor */}
@@ -932,6 +927,13 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  statusItem: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   statusTitle: {
     fontSize: 12,
@@ -939,11 +941,6 @@ const styles = StyleSheet.create({
   },
   statusDescription: {
     fontSize: 11.5,
-  },
-  reviewTranscriptionRow: {
-    marginTop: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
   },
   reviewTranscriptionText: {
     fontSize: 12,

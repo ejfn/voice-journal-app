@@ -311,42 +311,37 @@ export const PlaybackVisualizer: React.FC<PlaybackVisualizerProps> = ({
         </TouchableOpacity>
 
         {/* Primary Play/Pause Button */}
-        <View style={styles.centerControlWrapper}>
-          <TouchableOpacity
-            style={[
-              styles.primaryPlayButton,
-              {
-                backgroundColor: colors.primary,
-                shadowColor: colors.primary,
-              },
-            ]}
-            onPress={onPlayPause}
-            disabled={isDownloading}
-            activeOpacity={0.85}
-            accessibilityLabel={
-              isDownloading
-                ? "Downloading Audio"
-                : isPlaying
-                  ? "Pause Audio"
-                  : "Play Audio"
-            }
-            testID="playback-play-pause"
-          >
-            {isDownloading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <MaterialIcons
-                name={isPlaying ? "pause" : "play-arrow"}
-                size={34}
-                color="#FFFFFF"
-                style={!isPlaying ? { marginLeft: 3 } : undefined}
-              />
-            )}
-          </TouchableOpacity>
-          <Text style={[styles.controlLabel, { color: colors.textMuted }]}>
-            {isDownloading ? "Downloading..." : isPlaying ? "Pause" : "Play"}
-          </Text>
-        </View>
+        <TouchableOpacity
+          style={[
+            styles.primaryPlayButton,
+            {
+              backgroundColor: colors.primary,
+              shadowColor: colors.primary,
+            },
+          ]}
+          onPress={onPlayPause}
+          disabled={isDownloading}
+          activeOpacity={0.85}
+          accessibilityLabel={
+            isDownloading
+              ? "Downloading Audio"
+              : isPlaying
+                ? "Pause Audio"
+                : "Play Audio"
+          }
+          testID="playback-play-pause"
+        >
+          {isDownloading ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <MaterialIcons
+              name={isPlaying ? "pause" : "play-arrow"}
+              size={34}
+              color="#FFFFFF"
+              style={!isPlaying ? { marginLeft: 3 } : undefined}
+            />
+          )}
+        </TouchableOpacity>
 
         {/* Forward 10 Seconds */}
         <TouchableOpacity
@@ -466,25 +461,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  centerControlWrapper: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
   primaryPlayButton: {
-    width: 86,
-    height: 52,
-    borderRadius: 26,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: "center",
     justifyContent: "center",
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.25,
     shadowRadius: 5,
     elevation: 4,
-  },
-  controlLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 6,
-    letterSpacing: 0.1,
   },
 });
