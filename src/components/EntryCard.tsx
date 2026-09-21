@@ -43,8 +43,6 @@ export const EntryCard: React.FC<EntryCardProps> = ({
     colors,
     isDownloading ? "download" : "upload",
   );
-  const isUntranscribed =
-    entry.transcription_status && entry.transcription_status !== "completed";
 
   return (
     <TouchableOpacity
@@ -93,6 +91,34 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                 {storageBadge.label}
               </Text>
             </View>
+            {entry.transcription_status === "queued" && (
+              <View
+                style={[
+                  styles.storageBadge,
+                  {
+                    backgroundColor: colors.surfaceAlt,
+                    borderColor: colors.border,
+                  },
+                ]}
+                accessibilityLabel={
+                  storageStatus === "cloud-only"
+                    ? "Queued for transcription (audio in cloud)"
+                    : "Queued for transcription"
+                }
+              >
+                <MaterialIcons
+                  name="schedule"
+                  size={12}
+                  color={colors.warning}
+                  style={{ marginRight: 3 }}
+                />
+                <Text
+                  style={[styles.storageBadgeText, { color: colors.warning }]}
+                >
+                  Queued
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -127,8 +153,9 @@ export const EntryCard: React.FC<EntryCardProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Background Transcription Indicator Banner */}
-      {isUntranscribed && (
+      {/* Background Active / Failed Transcription Indicator Banner */}
+      {(entry.transcription_status === "processing" ||
+        entry.transcription_status === "failed") && (
         <View
           style={[
             styles.transcriptionBanner,
@@ -137,9 +164,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               borderColor:
                 entry.transcription_status === "processing"
                   ? colors.primary
-                  : entry.transcription_status === "queued"
-                    ? colors.warning
-                    : colors.danger,
+                  : colors.danger,
             },
           ]}
         >
@@ -154,20 +179,6 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                 style={[styles.transcriptionText, { color: colors.primary }]}
               >
                 Transcribing with Gemini 3.5...
-              </Text>
-            </View>
-          ) : entry.transcription_status === "queued" ? (
-            <View style={styles.transcriptionInner}>
-              <MaterialIcons
-                name="schedule"
-                size={14}
-                color={colors.warning}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[styles.transcriptionText, { color: colors.warning }]}
-              >
-                Queued for transcription (offline)
               </Text>
             </View>
           ) : (
@@ -273,7 +284,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 6,
   },
   metaText: {
     fontSize: 12.5,

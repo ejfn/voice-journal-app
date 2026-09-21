@@ -200,8 +200,8 @@ export const entriesDao = {
   ): Promise<void> {
     const db = getDatabase();
     await db.runAsync(
-      `UPDATE entries SET transcription_status = ?, updated_at = ? WHERE id = ?`,
-      [status, Date.now(), id],
+      `UPDATE entries SET transcription_status = ? WHERE id = ?`,
+      [status, id],
     );
   },
 
@@ -241,8 +241,9 @@ export const entriesDao = {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
-       WHERE (transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
-          OR transcription_status = 'processing'
+       WHERE ((transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
+          OR transcription_status = 'processing')
+         AND is_audio_cached = 1
        ORDER BY created_at ASC`,
       [now],
     );
@@ -260,10 +261,9 @@ export const entriesDao = {
       `UPDATE entries SET
         transcription_status = ?,
         transcription_retry_count = ?,
-        transcription_next_retry_at = ?,
-        updated_at = ?
+        transcription_next_retry_at = ?
        WHERE id = ?`,
-      [status, retryCount, nextRetryAt, Date.now(), id],
+      [status, retryCount, nextRetryAt, id],
     );
   },
 
@@ -273,10 +273,9 @@ export const entriesDao = {
       `UPDATE entries SET
         transcription_status = 'queued',
         transcription_retry_count = 0,
-        transcription_next_retry_at = NULL,
-        updated_at = ?
+        transcription_next_retry_at = NULL
        WHERE id = ?`,
-      [Date.now(), id],
+      [id],
     );
   },
 
@@ -287,7 +286,9 @@ export const entriesDao = {
     const row = await db.getFirstAsync<{ nextTime: number | null }>(
       `SELECT MIN(transcription_next_retry_at) as nextTime
        FROM entries
-       WHERE transcription_status = 'queued' AND transcription_next_retry_at > ?`,
+       WHERE transcription_status = 'queued'
+         AND transcription_next_retry_at > ?
+         AND is_audio_cached = 1`,
       [now],
     );
     return row?.nextTime ?? null;

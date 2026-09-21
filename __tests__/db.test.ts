@@ -591,4 +591,90 @@ describe("Database & FTS5 DAO", () => {
     expect(resetEntry?.transcription_retry_count).toBe(0);
     expect(resetEntry?.transcription_next_retry_at).toBeNull();
   });
+
+  it("does not modify updated_at when transcription status changes or fails, preserving synced state", async () => {
+    const entryId = "entry-preserve-updated-at-test";
+    const initialUpdatedAt = 1000000;
+    await entriesDao.insertEntry({
+      id: entryId,
+      title: "Synced Note",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: ["test"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: "file:///test.m4a",
+      drive_audio_file_id: "audio-123",
+      drive_sidecar_file_id: "sidecar-456",
+      drive_synced_at: initialUpdatedAt,
+      is_audio_cached: 1,
+      created_at: initialUpdatedAt,
+      updated_at: initialUpdatedAt,
+      last_accessed_at: initialUpdatedAt,
+      transcription_status: "queued",
+    });
+
+    // 1. Transition to processing
+    await entriesDao.updateTranscriptionStatus(entryId, "processing");
+    let entry = await entriesDao.getEntryById(entryId);
+    expect(entry?.updated_at).toBe(initialUpdatedAt);
+
+    // 2. Record failure
+    await entriesDao.recordTranscriptionFailure(
+      entryId,
+      1,
+      initialUpdatedAt + 10000,
+      "failed",
+    );
+    entry = await entriesDao.getEntryById(entryId);
+    expect(entry?.updated_at).toBe(initialUpdatedAt);
+    expect(entry?.transcription_status).toBe("failed");
+
+    // 3. Reset retry
+    await entriesDao.resetTranscriptionRetry(entryId);
+    entry = await entriesDao.getEntryById(entryId);
+    expect(entry?.updated_at).toBe(initialUpdatedAt);
+    expect(entry?.transcription_status).toBe("queued");
+  });
+
+  it("excludes cloud-only entries (is_audio_cached = 0) from getQueuedEntries and getNextScheduledRetryTime", async () => {
+    const cloudEntryId = "entry-cloud-only-transcription-test";
+    const now = 2000000;
+    await entriesDao.insertEntry({
+      id: cloudEntryId,
+      title: "Cloud Only Entry",
+      summary: "Waiting...",
+      transcript: "",
+      tags: ["cloud"],
+      duration_sec: 25,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: "drive-audio-123",
+      drive_sidecar_file_id: "drive-sidecar-123",
+      is_audio_cached: 0,
+      created_at: now,
+      last_accessed_at: now,
+      transcription_status: "queued",
+      transcription_next_retry_at: now + 5000,
+    });
+
+    const queued = await entriesDao.getQueuedEntries(now + 10000);
+    expect(queued.some((e) => e.id === cloudEntryId)).toBe(false);
+
+    const nextScheduled = await entriesDao.getNextScheduledRetryTime(now);
+    expect(nextScheduled).toBeNull();
+
+    // When downloaded locally, is_audio_cached becomes 1
+    await entriesDao.setAudioCached(
+      cloudEntryId,
+      true,
+      "file:///mock/downloaded.m4a",
+    );
+    const queuedAfterDownload = await entriesDao.getQueuedEntries(now + 10000);
+    expect(queuedAfterDownload.some((e) => e.id === cloudEntryId)).toBe(true);
+
+    const nextScheduledAfterDownload =
+      await entriesDao.getNextScheduledRetryTime(now);
+    expect(nextScheduledAfterDownload).toBe(now + 5000);
+  });
 });
