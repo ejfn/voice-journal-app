@@ -65,7 +65,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
   const [savedUserKey, setSavedUserKey] = useState<string>("");
   const [hasEnvFallback, setHasEnvFallback] = useState<boolean>(false);
-  const [isKeyVisible, setIsKeyVisible] = useState<boolean>(false);
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
   const [isSavingKey, setIsSavingKey] = useState<boolean>(false);
   const [keyValidationStatus, setKeyValidationStatus] = useState<
@@ -678,7 +677,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }}
                   placeholder="AIzaSy..."
                   placeholderTextColor={colors.textMuted}
-                  secureTextEntry={!isKeyVisible}
+                  secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
                   selectTextOnFocus
@@ -699,17 +698,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     />
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  onPress={() => setIsKeyVisible((prev) => !prev)}
-                  style={styles.inputIconButton}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <MaterialIcons
-                    name={isKeyVisible ? "visibility-off" : "visibility"}
-                    size={18}
-                    color={colors.textMuted}
-                  />
-                </TouchableOpacity>
               </View>
             </View>
 
