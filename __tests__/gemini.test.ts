@@ -17,6 +17,10 @@ describe("Gemini AI Service", () => {
     expect(ANALYZE_AUDIO_PROMPT).toContain('"the user"');
     expect(ANALYZE_AUDIO_PROMPT).toContain('"the speaker"');
     expect(ANALYZE_AUDIO_PROMPT).toContain("Never describe physical actions");
+    // Language awareness
+    expect(ANALYZE_AUDIO_PROMPT).toContain("Language Awareness");
+    expect(ANALYZE_AUDIO_PROMPT).toContain("original language spoken");
+    expect(ANALYZE_AUDIO_PROMPT).toContain("Never translate");
   });
 
   it("cleans tags to all-lowercase without hashtags", () => {
