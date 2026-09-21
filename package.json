@@ -38,6 +38,7 @@
     "jest-expo": "^57.0.5",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.9.8",
+    "sharp": "^0.35.4",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.0"
   },
@@ -50,6 +51,7 @@
     "test": "jest",
     "test:silent": "jest --silent",
     "typecheck": "tsc --noEmit",
+    "generate:assets": "node scripts/generate-assets.js",
     "qualitycheck": "npm-run-all typecheck lint test:silent"
   },
   "private": true
