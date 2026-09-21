@@ -14,9 +14,6 @@ outputs:
   eas-branch:
     description: "EAS Update branch"
     value: ${{ steps.detect.outputs.eas-branch }}
-  is-latest-release:
-    description: "Whether this release is marked as the latest release on GitHub"
-    value: ${{ steps.detect.outputs.is-latest-release }}
 
 runs:
   using: "composite"
@@ -24,8 +21,6 @@ runs:
     - name: Detect version and context
       id: detect
       shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
       run: |
         # Get git info
         GIT_COMMIT=$(git rev-parse HEAD)
@@ -46,18 +41,11 @@ runs:
           COMMIT_COUNT=$(git rev-list --count HEAD)
         fi
 
-        IS_LATEST="false"
         if [ "${{ github.event_name }}" = "release" ]; then
           # Release event - use actual version for expo.version, normalized for runtime
           RAW_VERSION="${{ github.event.release.tag_name }}"
           VERSION="${RAW_VERSION#v}"
           FULL_VERSION="${RAW_VERSION}+${GIT_HASH_SHORT}"
-
-          # Check if this release is marked as Latest on GitHub
-          LATEST_TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
-          if [ -n "$LATEST_TAG" ] && [ "$RAW_VERSION" = "$LATEST_TAG" ]; then
-            IS_LATEST="true"
-          fi
 
           if [[ $RAW_VERSION =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="${BASH_REMATCH[1]}"
@@ -108,7 +96,6 @@ runs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "runtime-version=$RUNTIME_VERSION" >> $GITHUB_OUTPUT
         echo "eas-branch=$EAS_BRANCH" >> $GITHUB_OUTPUT
-        echo "is-latest-release=$IS_LATEST" >> $GITHUB_OUTPUT
 
         # Verbose output for debugging
         echo "Final outputs:"
@@ -116,7 +103,6 @@ runs:
         echo "  version: $VERSION"
         echo "  runtime-version: $RUNTIME_VERSION"
         echo "  eas-branch: $EAS_BRANCH"
-        echo "  is-latest-release: $IS_LATEST"
 
     - name: Inject version into app.json
       shell: bash

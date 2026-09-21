@@ -18,7 +18,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check if OTA Needed
+    runs-on: ubuntu-latest
+    outputs:
+      should-update: ${{ steps.check.outputs.should-update }}
+    steps:
+      - name: Check if latest release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            LATEST_TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+            if [ -n "$LATEST_TAG" ] && [ "${{ github.event.release.tag_name }}" = "$LATEST_TAG" ]; then
+              echo "should-update=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+          echo "should-update=true" >> $GITHUB_OUTPUT
+
   ota-update:
+    name: Publish OTA Update
+    needs: check
+    if: needs.check.outputs.should-update == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -28,39 +51,30 @@ jobs:
           ref: ${{ github.event.release.tag_name || inputs.branch_name || github.ref }}
           fetch-depth: 0
 
-      - name: Detect version and inject into app.json
-        id: version
-        uses: ./.github/actions/git-version
-
-      - name: Skip OTA update for Latest release
-        if: steps.version.outputs.is-latest-release == 'true'
-        run: echo "Release is marked as Latest. Skipping OTA update (new APK will be built instead)."
-
       - name: Setup Node.js
-        if: steps.version.outputs.is-latest-release != 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
-        if: steps.version.outputs.is-latest-release != 'true'
         run: npm ci
 
       - name: Run quality checks
-        if: steps.version.outputs.is-latest-release != 'true'
         run: npm run qualitycheck
 
       - name: Setup Expo
-        if: steps.version.outputs.is-latest-release != 'true'
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           packager: npm
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
       - name: Publish OTA Update
-        if: steps.version.outputs.is-latest-release != 'true'
         run: eas update --branch ${{ steps.version.outputs.eas-branch }} --environment ${{ steps.version.outputs.eas-branch }} --message "Update ${{ steps.version.outputs.full-version }}"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
