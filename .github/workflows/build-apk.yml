@@ -2,8 +2,7 @@ name: Build APK
 
 on:
   release:
-    types: [prereleased, released]
-  workflow_dispatch:
+    types: [released]
 
 permissions:
   contents: write
@@ -20,37 +19,45 @@ jobs:
           ref: ${{ github.event.release.tag_name || github.sha }}
           fetch-depth: 0
 
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
+      - name: Skip APK build for non-latest release
+        if: steps.version.outputs.is-latest-release != 'true'
+        run: echo "Release is not marked as Latest. Skipping APK build."
+
       - name: Setup Node.js
+        if: steps.version.outputs.is-latest-release == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
+        if: steps.version.outputs.is-latest-release == 'true'
         run: npm ci
 
       - name: Run quality checks
+        if: steps.version.outputs.is-latest-release == 'true'
         run: npm run qualitycheck
 
       - name: Setup Expo
+        if: steps.version.outputs.is-latest-release == 'true'
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           packager: npm
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Detect version and inject into app.json
-        id: version
-        uses: ./.github/actions/git-version
-
       - name: Build APK
-        if: steps.version.outputs.eas-branch == 'production' || steps.version.outputs.eas-branch == 'preview'
+        if: steps.version.outputs.is-latest-release == 'true'
         run: eas build --platform android --profile ${{ steps.version.outputs.eas-branch }} --wait
         env:
           CI: 1
 
       - name: Get build artifact URL
-        if: steps.version.outputs.eas-branch == 'production' || steps.version.outputs.eas-branch == 'preview'
+        if: steps.version.outputs.is-latest-release == 'true'
         id: build-url
         run: |
           # Get the latest SUCCESSFUL build for this project
@@ -61,12 +68,12 @@ jobs:
           CI: 1
 
       - name: Download APK
-        if: github.event_name == 'release'
+        if: steps.version.outputs.is-latest-release == 'true'
         run: |
           curl -L -o voice-journal-app-${{ steps.version.outputs.version }}.apk "${{ steps.build-url.outputs.build_url }}"
 
       - name: Upload APK to Release
-        if: github.event_name == 'release'
+        if: steps.version.outputs.is-latest-release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: voice-journal-app-${{ steps.version.outputs.version }}.apk
