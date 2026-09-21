@@ -152,6 +152,6 @@ describe("Storage Status Computation (Issue #11)", () => {
     const badge = getStorageBadgeConfig(status, lightColors);
     expect(badge.iconName).toBe("cloud-download");
     expect(badge.label).toBe("Cloud");
-    expect(badge.description).toBe("Tap play to download");
+    expect(badge.description).toBe("Tap to download");
   });
 });

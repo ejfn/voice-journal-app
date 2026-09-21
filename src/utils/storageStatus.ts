@@ -119,7 +119,7 @@ export function getStorageBadgeConfig(
         iconName: "cloud-download",
         label: "Cloud",
         color: colors.accent,
-        description: "Tap play to download",
+        description: "Tap to download",
       };
     case "local-only":
     default:

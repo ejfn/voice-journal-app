@@ -17,6 +17,7 @@ import { File } from "expo-file-system";
 import { JournalEntry } from "../db/schema";
 import { entriesDao } from "../db/dao/entriesDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
+import { uploadQueueService } from "../services/drive/UploadQueueService";
 import {
   audioPlaybackService,
   PlaybackState,
@@ -39,6 +40,7 @@ interface ReviewModalProps {
   onDelete: (id: string) => void;
   onClose: () => void;
   onRetryTranscription?: (id: string) => void;
+  onSync?: (id: string) => void;
 }
 
 export const ReviewModal: React.FC<ReviewModalProps> = ({
@@ -48,6 +50,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   onDelete,
   onClose,
   onRetryTranscription,
+  onSync,
 }) => {
   const { colors } = useTheme();
   const { showToast } = useToast();
@@ -212,6 +215,95 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     });
     return unsubscribe;
   }, [entry]);
+
+  useEffect(() => {
+    if (!entry) return;
+    const unsubscribe = uploadQueueService.addListener(async (event) => {
+      if (event.entryId === entry.id && event.status === "synced") {
+        try {
+          const refreshed = await entriesDao.getEntryById(entry.id);
+          if (refreshed) {
+            setCurrentEntry(refreshed);
+          }
+        } catch {
+          // Ignore refresh error
+        }
+      }
+    });
+    return unsubscribe;
+  }, [entry]);
+
+  const handleSyncPress = async () => {
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    if (storageStatus === "cloud-only") {
+      if (isDownloadingAudio) return;
+      setIsDownloadingAudio(true);
+      showToast({
+        message: "Downloading audio from Google Drive...",
+        icon: "cloud-download",
+        type: "info",
+      });
+
+      try {
+        const cachedPath = await googleDriveService.downloadAudioOnDemand(
+          active.id,
+        );
+        setCurrentEntry((prev) =>
+          prev
+            ? { ...prev, local_audio_path: cachedPath, is_audio_cached: 1 }
+            : null,
+        );
+        showToast({
+          message: "Audio downloaded",
+          icon: "cloud-done",
+          type: "success",
+        });
+      } catch (err) {
+        showToast({
+          message:
+            (err as Error).message || "Failed to download audio from Drive",
+          icon: "error-outline",
+          type: "error",
+        });
+      } finally {
+        setIsDownloadingAudio(false);
+      }
+    } else if (storageStatus === "local-only") {
+      if (onSync) {
+        onSync(active.id);
+        return;
+      }
+
+      if (!googleDriveService.getCurrentUser()) {
+        showToast({
+          message: "Sign in to Google Drive in Settings to backup",
+          icon: "cloud-off",
+          type: "info",
+        });
+        return;
+      }
+
+      try {
+        await uploadQueueService.enqueueUpload(
+          active.id,
+          active.drive_audio_file_id ? "METADATA_ONLY" : "ANALYZE_AND_UPLOAD",
+        );
+        showToast({
+          message: "Backing up to Google Drive...",
+          icon: "cloud-upload",
+          type: "info",
+        });
+      } catch (err) {
+        showToast({
+          message: (err as Error).message || "Failed to queue backup",
+          icon: "error-outline",
+          type: "error",
+        });
+      }
+    }
+  };
 
   const handlePlayPause = async () => {
     const active = currentEntry || entry;
@@ -425,6 +517,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     activeEntry.duration_sec || playbackState.durationSec || 1;
   const storageStatus = computeStorageStatus(activeEntry);
   const storageBadge = getStorageBadgeConfig(storageStatus, colors);
+  const isSyncTappable =
+    !isDownloadingAudio &&
+    storageStatus !== "syncing" &&
+    (storageStatus === "cloud-only" || storageStatus === "local-only");
   const isUntranscribed =
     activeEntry.transcription_status &&
     activeEntry.transcription_status !== "completed";
@@ -505,13 +601,28 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
-            <View style={styles.statusRow}>
-              <MaterialIcons
-                name={storageBadge.iconName}
-                size={15}
-                color={storageBadge.color}
-                style={{ marginRight: 6 }}
-              />
+            <TouchableOpacity
+              style={styles.statusRow}
+              onPress={handleSyncPress}
+              disabled={!isSyncTappable}
+              activeOpacity={0.7}
+              accessibilityRole={isSyncTappable ? "button" : undefined}
+              accessibilityLabel={`${storageBadge.label}, ${storageBadge.description}`}
+            >
+              {isDownloadingAudio ? (
+                <ActivityIndicator
+                  size="small"
+                  color={storageBadge.color}
+                  style={{ marginRight: 6 }}
+                />
+              ) : (
+                <MaterialIcons
+                  name={storageBadge.iconName}
+                  size={15}
+                  color={storageBadge.color}
+                  style={{ marginRight: 6 }}
+                />
+              )}
               <Text style={{ flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
                 <Text
                   style={[styles.statusTitle, { color: storageBadge.color }]}
@@ -528,7 +639,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   {storageBadge.description}
                 </Text>
               </Text>
-            </View>
+            </TouchableOpacity>
 
             {isUntranscribed && (
               <View

@@ -5,6 +5,7 @@ import { ThemeProvider } from "../src/theme/ThemeContext";
 import { ToastProvider } from "../src/components/common/Toast";
 import { JournalEntry } from "../src/db/schema";
 import { audioPlaybackService } from "../src/services/audio/AudioPlaybackService";
+import { googleDriveService } from "../src/services/drive/GoogleDriveService";
 
 jest.mock("../src/services/audio/AudioPlaybackService", () => ({
   audioPlaybackService: {
@@ -108,7 +109,7 @@ describe("ReviewModal", () => {
         local_audio_path: null,
       } as JournalEntry,
       expectedLabel: "Cloud",
-      expectedDescription: "Tap play to download",
+      expectedDescription: "Tap to download",
       forbiddenText: "Tap to stream or download",
     },
   ])(
@@ -148,6 +149,86 @@ describe("ReviewModal", () => {
       forwardNodes[0].props.onPress();
     });
     expect(audioPlaybackService.skip).toHaveBeenCalledWith(10);
+  });
+
+  it("downloads audio on demand when cloud-only sync button is pressed", async () => {
+    const cloudEntry: JournalEntry = {
+      ...baseEntry,
+      drive_audio_file_id: "audio-file-123",
+      drive_sidecar_file_id: "sidecar-file-456",
+      drive_synced_at: 2000,
+      is_audio_cached: 0,
+      local_audio_path: null,
+    };
+    const downloadSpy = jest
+      .spyOn(googleDriveService, "downloadAudioOnDemand")
+      .mockResolvedValue("file:///cached/path.m4a");
+
+    const tree = renderModal(cloudEntry);
+    const syncButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Cloud, Tap to download",
+    }) as { props: { disabled?: boolean; onPress: () => void } }[];
+
+    expect(syncButtons.length).toBeGreaterThan(0);
+    expect(syncButtons[0].props.disabled).toBe(false);
+
+    await act(async () => {
+      await syncButtons[0].props.onPress();
+    });
+
+    expect(downloadSpy).toHaveBeenCalledWith(cloudEntry.id);
+    downloadSpy.mockRestore();
+  });
+
+  it("triggers sync when local-only sync button is pressed", async () => {
+    const onSync = jest.fn();
+    let tree: ReactTestRenderer;
+    void act(() => {
+      tree = renderer.create(
+        <ThemeProvider>
+          <ToastProvider>
+            <ReviewModal
+              visible
+              entry={baseEntry}
+              onSave={jest.fn()}
+              onDelete={jest.fn()}
+              onClose={jest.fn()}
+              onSync={onSync}
+            />
+          </ToastProvider>
+        </ThemeProvider>,
+      );
+    });
+
+    const syncButtons = tree!.root.findAllByProps({
+      accessibilityLabel: "Local, Pending backup",
+    }) as { props: { disabled?: boolean; onPress: () => void } }[];
+
+    expect(syncButtons.length).toBeGreaterThan(0);
+    expect(syncButtons[0].props.disabled).toBe(false);
+
+    await act(async () => {
+      await syncButtons[0].props.onPress();
+    });
+
+    expect(onSync).toHaveBeenCalledWith(baseEntry.id);
+  });
+
+  it("disables sync button when entry is already synced", () => {
+    const syncedEntry: JournalEntry = {
+      ...baseEntry,
+      drive_audio_file_id: "audio-file-123",
+      drive_sidecar_file_id: "sidecar-file-456",
+      drive_synced_at: 2000,
+      updated_at: 1500,
+    };
+    const tree = renderModal(syncedEntry);
+    const syncButtons = tree.root.findAllByProps({
+      accessibilityLabel: "Synced, Backed up",
+    }) as { props: { disabled?: boolean } }[];
+
+    expect(syncButtons.length).toBeGreaterThan(0);
+    expect(syncButtons[0].props.disabled).toBe(true);
   });
 
   it("preserves dirty fields and updates untouched fields on same-entry refresh", async () => {
