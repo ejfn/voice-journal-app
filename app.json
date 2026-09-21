@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "VoiceJournal",
+    "name": "Voice Journal",
     "slug": "voice-journal-app",
     "version": "0.1.0",
     "runtimeVersion": "v0.1.0",
@@ -47,7 +47,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow VoiceJournal to access your microphone for journal recordings.",
+          "microphonePermission": "Allow Voice Journal to access your microphone for journal recordings.",
           "enableBackgroundPlayback": true,
           "enableBackgroundRecording": true,
           "recordAudioAndroid": true

@@ -981,7 +981,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* About / Version Info */}
           <View style={styles.aboutContainer}>
             <Text style={[styles.aboutTitle, { color: colors.text }]}>
-              VoiceJournal
+              Voice Journal
             </Text>
             <Text style={[styles.aboutVersion, { color: colors.textMuted }]}>
               Version {getAppVersion()}

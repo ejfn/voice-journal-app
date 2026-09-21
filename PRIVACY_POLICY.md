@@ -4,13 +4,13 @@
 
 ## Overview
 
-VoiceJournal ("the App", "we", "our") is a personal voice diary application. This Privacy Policy explains how the App handles your information. **VoiceJournal has no backend server.** All your data is stored locally on your device or in your own Google Drive account. We never see, collect, or transmit your personal data to any developer-controlled server.
+Voice Journal ("the App", "we", "our") is a personal voice diary application. This Privacy Policy explains how the App handles your information. **Voice Journal has no backend server.** All your data is stored locally on your device or in your own Google Drive account. We never see, collect, or transmit your personal data to any developer-controlled server.
 
 ---
 
 ## 1. Information We Collect
 
-VoiceJournal does **not** collect any personal information on our behalf. The App operates entirely on your device.
+Voice Journal does **not** collect any personal information on our behalf. The App operates entirely on your device.
 
 The following data is created by you and stored **only on your device** in a local SQLite database:
 
@@ -32,7 +32,7 @@ The App requires access to your device's microphone to record voice journal entr
 If you choose to enable AI transcription, you must provide your own Google Gemini API key (Bring Your Own Key — BYOK). When enabled:
 
 - Your audio recordings are sent **directly from your device** to the [Google Gemini API](https://ai.google.dev/) (`gemini-3.5-flash-lite` model).
-- Audio is **never** routed through or stored on any VoiceJournal developer-controlled server.
+- Audio is **never** routed through or stored on any Voice Journal developer-controlled server.
 - Google processes the audio and returns structured text (title, transcript, summary, tags) back to your device.
 - Your API key and usage are governed by [Google's Privacy Policy](https://policies.google.com/privacy) and the [Google Gemini API Terms of Service](https://ai.google.dev/terms).
 
@@ -70,13 +70,13 @@ No other third-party analytics, advertising, or tracking services are used.
 
 - **On-device data**: All recordings, transcripts, and metadata remain on your device under your full control. You can delete individual entries or all data at any time within the App.
 - **Google Drive data**: Files you have backed up to Google Drive remain in your personal Drive account. You can delete them at any time from within the App or directly through Google Drive.
-- **Uninstalling the App**: Uninstalling VoiceJournal removes all locally stored data. Google Drive files remain in your Drive until you delete them.
+- **Uninstalling the App**: Uninstalling Voice Journal removes all locally stored data. Google Drive files remain in your Drive until you delete them.
 
 ---
 
 ## 7. No Developer Access to Your Data
 
-VoiceJournal operates with a zero-knowledge architecture:
+Voice Journal operates with a zero-knowledge architecture:
 
 - There is **no backend server** operated by the developer.
 - The developer has **no access** to your recordings, transcripts, API keys, or any other personal data.
@@ -86,7 +86,7 @@ VoiceJournal operates with a zero-knowledge architecture:
 
 ## 8. Children's Privacy
 
-VoiceJournal is not directed at children under the age of 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided personal information through the App, please contact us so we can take appropriate action.
+Voice Journal is not directed at children under the age of 13. We do not knowingly collect personal information from children under 13. If you believe a child has provided personal information through the App, please contact us so we can take appropriate action.
 
 ---
 
@@ -110,4 +110,4 @@ If you have questions or concerns about this Privacy Policy, please open an issu
 
 ---
 
-*VoiceJournal — Speak your mind. AI captures the rest.*
+*Voice Journal — Speak your mind. AI captures the rest.*
