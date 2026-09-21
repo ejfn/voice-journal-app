@@ -241,8 +241,9 @@ export const entriesDao = {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
-       WHERE (transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
-          OR transcription_status = 'processing'
+       WHERE ((transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
+          OR transcription_status = 'processing')
+         AND is_audio_cached = 1
        ORDER BY created_at ASC`,
       [now],
     );
@@ -287,7 +288,9 @@ export const entriesDao = {
     const row = await db.getFirstAsync<{ nextTime: number | null }>(
       `SELECT MIN(transcription_next_retry_at) as nextTime
        FROM entries
-       WHERE transcription_status = 'queued' AND transcription_next_retry_at > ?`,
+       WHERE transcription_status = 'queued'
+         AND transcription_next_retry_at > ?
+         AND is_audio_cached = 1`,
       [now],
     );
     return row?.nextTime ?? null;

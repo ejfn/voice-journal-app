@@ -198,4 +198,75 @@ describe("TranscriptionQueueService", () => {
       status: "failed",
     });
   });
+
+  it("skips cloud-only entries (is_audio_cached = 0) without sending to Gemini or marking as failed", async () => {
+    const cloudEntry: JournalEntry = {
+      ...mockEntry,
+      id: "entry-cloud-1",
+      is_audio_cached: 0,
+      local_audio_path: null,
+      drive_audio_file_id: "drive-audio-cloud-1",
+      drive_sidecar_file_id: "drive-sidecar-cloud-1",
+    };
+    (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([cloudEntry]);
+
+    const listenerEvents: TranscriptionEvent[] = [];
+    service.addListener((event) => listenerEvents.push(event));
+
+    await service.processQueue();
+
+    expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+    expect(entriesDao.updateTranscriptionStatus).not.toHaveBeenCalled();
+    expect(listenerEvents).toHaveLength(0);
+  });
+
+  it("skips cloud entries with missing local audio path without marking as failed", async () => {
+    const cloudEntryWithoutPath: JournalEntry = {
+      ...mockEntry,
+      id: "entry-cloud-2",
+      is_audio_cached: 1,
+      local_audio_path: null,
+      drive_audio_file_id: "drive-audio-cloud-2",
+      drive_sidecar_file_id: "drive-sidecar-cloud-2",
+    };
+    (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+      cloudEntryWithoutPath,
+    ]);
+
+    await service.processQueue();
+
+    expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+    expect(entriesDao.updateTranscriptionStatus).not.toHaveBeenCalled();
+    expect(entriesDao.setAudioCached).toHaveBeenCalledWith(
+      "entry-cloud-2",
+      false,
+      null,
+    );
+  });
+
+  it("skips cloud entries whose local audio file does not exist, updating is_audio_cached to 0 without failing", async () => {
+    const cloudEntryWithMissingFile: JournalEntry = {
+      ...mockEntry,
+      id: "entry-cloud-3",
+      is_audio_cached: 1,
+      local_audio_path: "file:///mock/missing.m4a",
+      drive_audio_file_id: "drive-audio-cloud-3",
+      drive_sidecar_file_id: "drive-sidecar-cloud-3",
+    };
+    (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+      cloudEntryWithMissingFile,
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+
+    await service.processQueue();
+
+    expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+    expect(entriesDao.updateTranscriptionStatus).not.toHaveBeenCalled();
+    expect(entriesDao.setAudioCached).toHaveBeenCalledWith(
+      "entry-cloud-3",
+      false,
+      null,
+    );
+  });
 });

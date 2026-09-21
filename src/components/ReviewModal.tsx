@@ -567,7 +567,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                         { color: colors.warning },
                       ]}
                     >
-                      Queued for transcription (waiting for connection)
+                      {storageStatus === "cloud-only"
+                        ? "Queued for transcription (download audio to transcribe)"
+                        : "Queued for transcription (waiting for connection)"}
                     </Text>
                   </View>
                 ) : (

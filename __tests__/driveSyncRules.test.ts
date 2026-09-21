@@ -3,6 +3,7 @@ import { entriesDao } from "../src/db/dao/entriesDao";
 import { initDatabase, setDatabaseConnection } from "../src/db/database";
 import { JournalEntry } from "../src/db/schema";
 import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
+import { transcriptionQueueService } from "../src/services/ai/TranscriptionQueueService";
 import { createTestDb } from "./helpers/testDb";
 import { File } from "expo-file-system";
 
@@ -617,6 +618,40 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     ]);
 
     unsubscribe();
+  });
+
+  it("triggers transcriptionQueueService.processQueue() when a queued entry is downloaded on demand", async () => {
+    const t0 = 1758290000000;
+    const queuedCloudEntry: JournalEntry = {
+      id: "entry-queued-download",
+      title: "Queued Cloud Clip",
+      summary: "",
+      transcript: "",
+      tags: [],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: "drive-audio-queued-id",
+      drive_sidecar_file_id: "drive-sidecar-queued-id",
+      is_audio_cached: 0,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: t0,
+      last_accessed_at: t0,
+      transcription_status: "queued",
+    };
+    await entriesDao.insertEntry(queuedCloudEntry);
+
+    const processQueueSpy = jest
+      .spyOn(transcriptionQueueService, "processQueue")
+      .mockResolvedValueOnce();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+    await driveService.downloadAudioOnDemand(queuedCloudEntry.id);
+
+    expect(processQueueSpy).toHaveBeenCalled();
+    processQueueSpy.mockRestore();
   });
 
   it("Rule 1: Always upload if local is newer (updated) or missing in Drive", async () => {

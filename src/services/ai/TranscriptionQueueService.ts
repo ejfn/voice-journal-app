@@ -93,22 +93,46 @@ export class TranscriptionQueueService {
       const queuedEntries = await entriesDao.getQueuedEntries(now);
 
       for (const entry of queuedEntries) {
-        // If entry has no local audio or file does not exist, mark failed
+        const isCloudEntry = Boolean(
+          entry.drive_audio_file_id || entry.drive_sidecar_file_id,
+        );
+
+        // Never attempt transcription on cloud-only entries until downloaded to local
+        if (entry.is_audio_cached === 0 && isCloudEntry) {
+          continue;
+        }
+
+        // If entry has no local audio path, check if it's cloud-only or genuinely missing
         if (!entry.local_audio_path) {
+          if (isCloudEntry) {
+            if (entry.is_audio_cached !== 0) {
+              await entriesDao.setAudioCached(entry.id, false, null);
+            }
+            continue;
+          }
           await entriesDao.updateTranscriptionStatus(entry.id, "failed");
           this.notifyListeners({ entryId: entry.id, status: "failed" });
           continue;
         }
 
+        let fileExists = false;
         try {
           const audioFile = new File(entry.local_audio_path);
-          if (!audioFile.exists) {
-            await entriesDao.updateTranscriptionStatus(entry.id, "failed");
-            this.notifyListeners({ entryId: entry.id, status: "failed" });
+          fileExists = audioFile.exists;
+        } catch {
+          fileExists = false;
+        }
+
+        if (!fileExists) {
+          if (isCloudEntry) {
+            if (entry.is_audio_cached !== 0) {
+              await entriesDao.setAudioCached(entry.id, false, null);
+            }
             continue;
           }
-        } catch {
-          // If filesystem check fails, attempt analysis anyway
+          await entriesDao.updateTranscriptionStatus(entry.id, "failed");
+          this.notifyListeners({ entryId: entry.id, status: "failed" });
+          continue;
         }
 
         // Mark as actively processing

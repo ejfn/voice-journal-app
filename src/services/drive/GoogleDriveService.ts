@@ -6,6 +6,7 @@ import { settingsDao } from "../../db/dao/settingsDao";
 import { syncQueueDao } from "../../db/dao/syncQueueDao";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
+import { transcriptionQueueService } from "../ai/TranscriptionQueueService";
 
 export interface DriveFolderInfo {
   id: string;
@@ -967,6 +968,18 @@ export class GoogleDriveService {
         direction: "download",
         status: "downloaded",
       });
+
+      // If entry was queued for transcription, process it now that audio is local
+      const freshEntry = await entriesDao.getEntryById(entryId);
+      if (
+        freshEntry &&
+        (freshEntry.transcription_status === "queued" ||
+          freshEntry.transcription_status === "processing")
+      ) {
+        transcriptionQueueService.processQueue().catch((err) => {
+          console.warn("Queue processing error after on-demand download:", err);
+        });
+      }
 
       // Auto-maintain storage threshold in background after downloading new audio
       this.runLruEviction().catch((err) => {
