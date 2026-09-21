@@ -8,8 +8,28 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    name: Check if Latest Release
+    runs-on: ubuntu-latest
+    outputs:
+      is-latest: ${{ steps.check.outputs.is-latest }}
+    steps:
+      - name: Check release status
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+          if [ -n "$LATEST_TAG" ] && [ "${{ github.event.release.tag_name }}" = "$LATEST_TAG" ]; then
+            echo "is-latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "is-latest=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
     name: Build APK
+    needs: check
+    if: needs.check.outputs.is-latest == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -19,45 +39,35 @@ jobs:
           ref: ${{ github.event.release.tag_name || github.sha }}
           fetch-depth: 0
 
-      - name: Detect version and inject into app.json
-        id: version
-        uses: ./.github/actions/git-version
-
-      - name: Skip APK build for non-latest release
-        if: steps.version.outputs.is-latest-release != 'true'
-        run: echo "Release is not marked as Latest. Skipping APK build."
-
       - name: Setup Node.js
-        if: steps.version.outputs.is-latest-release == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
-        if: steps.version.outputs.is-latest-release == 'true'
         run: npm ci
 
       - name: Run quality checks
-        if: steps.version.outputs.is-latest-release == 'true'
         run: npm run qualitycheck
 
       - name: Setup Expo
-        if: steps.version.outputs.is-latest-release == 'true'
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           packager: npm
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Detect version and inject into app.json
+        id: version
+        uses: ./.github/actions/git-version
+
       - name: Build APK
-        if: steps.version.outputs.is-latest-release == 'true'
         run: eas build --platform android --profile ${{ steps.version.outputs.eas-branch }} --wait
         env:
           CI: 1
 
       - name: Get build artifact URL
-        if: steps.version.outputs.is-latest-release == 'true'
         id: build-url
         run: |
           # Get the latest SUCCESSFUL build for this project
@@ -68,12 +78,10 @@ jobs:
           CI: 1
 
       - name: Download APK
-        if: steps.version.outputs.is-latest-release == 'true'
         run: |
           curl -L -o voice-journal-app-${{ steps.version.outputs.version }}.apk "${{ steps.build-url.outputs.build_url }}"
 
       - name: Upload APK to Release
-        if: steps.version.outputs.is-latest-release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: voice-journal-app-${{ steps.version.outputs.version }}.apk
