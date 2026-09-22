@@ -86,6 +86,7 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
     transcription_retry_count: row.transcription_retry_count ?? 0,
     transcription_next_retry_at: row.transcription_next_retry_at ?? null,
     waveform_data: parsedWaveform,
+    deleted_at: row.deleted_at ?? null,
   };
 };
 
@@ -124,8 +125,8 @@ export const entriesDao = {
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
         is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
         transcription_status, transcription_retry_count, transcription_next_retry_at,
-        waveform_data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        waveform_data, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -146,6 +147,7 @@ export const entriesDao = {
         retryCount,
         nextRetryAt,
         waveformJson,
+        entry.deleted_at ?? null,
       ],
     );
   },
@@ -171,7 +173,7 @@ export const entriesDao = {
         source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
         drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
         drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?,
-        waveform_data = COALESCE(?, waveform_data)
+        waveform_data = COALESCE(?, waveform_data), deleted_at = ?
       WHERE id = ?`,
       [
         entry.title,
@@ -189,6 +191,7 @@ export const entriesDao = {
         entry.last_accessed_at || Date.now(),
         transcriptionStatus,
         waveformJson,
+        entry.deleted_at !== undefined ? entry.deleted_at : null,
         entry.id,
       ],
     );
@@ -244,6 +247,7 @@ export const entriesDao = {
        WHERE ((transcription_status = 'queued' AND (transcription_next_retry_at IS NULL OR transcription_next_retry_at <= ?))
           OR transcription_status = 'processing')
          AND is_audio_cached = 1
+         AND deleted_at IS NULL
        ORDER BY created_at ASC`,
       [now],
     );
@@ -288,13 +292,42 @@ export const entriesDao = {
        FROM entries
        WHERE transcription_status = 'queued'
          AND transcription_next_retry_at > ?
-         AND is_audio_cached = 1`,
+         AND is_audio_cached = 1
+         AND deleted_at IS NULL`,
       [now],
     );
     return row?.nextTime ?? null;
   },
 
-  async deleteEntry(id: string): Promise<JournalEntry | null> {
+  async softDeleteEntry(id: string): Promise<JournalEntry | null> {
+    const db = getDatabase();
+    const now = Date.now();
+    await db.runAsync(
+      `UPDATE entries SET deleted_at = ?, updated_at = ? WHERE id = ?`,
+      [now, now, id],
+    );
+    return this.getEntryById(id);
+  },
+
+  async restoreEntry(id: string): Promise<JournalEntry | null> {
+    const db = getDatabase();
+    const now = Date.now();
+    await db.runAsync(
+      `UPDATE entries SET deleted_at = NULL, updated_at = ? WHERE id = ?`,
+      [now, id],
+    );
+    return this.getEntryById(id);
+  },
+
+  async getBinnedEntries(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
+    );
+    return rows.map(rowToEntry);
+  },
+
+  async permanentlyDeleteEntry(id: string): Promise<JournalEntry | null> {
     const db = getDatabase();
     const entry = await this.getEntryById(id);
     if (entry) {
@@ -324,6 +357,25 @@ export const entriesDao = {
     return entry;
   },
 
+  async deleteEntry(id: string): Promise<JournalEntry | null> {
+    return this.softDeleteEntry(id);
+  },
+
+  async purgeExpiredBinnedEntries(
+    thresholdMs: number = Date.now() - 30 * 24 * 60 * 60 * 1000,
+  ): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?`,
+      [thresholdMs],
+    );
+    const expiredEntries = rows.map(rowToEntry);
+    for (const entry of expiredEntries) {
+      await this.permanentlyDeleteEntry(entry.id);
+    }
+    return expiredEntries;
+  },
+
   async getEntryById(id: string): Promise<JournalEntry | null> {
     const db = getDatabase();
     const row = await db.getFirstAsync<JournalEntryRow>(
@@ -351,7 +403,7 @@ export const entriesDao = {
         SELECT e.* FROM entries e
         JOIN entries_fts fts ON e.id = fts.id,
         json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END)
-        WHERE entries_fts MATCH ? AND json_each.value = ?
+        WHERE entries_fts MATCH ? AND json_each.value = ? AND e.deleted_at IS NULL
         ORDER BY e.created_at DESC
       `;
       params.push(ftsQuery, tag.toLowerCase().replace(/^#/, ""));
@@ -359,7 +411,7 @@ export const entriesDao = {
       sql = `
         SELECT e.* FROM entries e
         JOIN entries_fts fts ON e.id = fts.id
-        WHERE entries_fts MATCH ?
+        WHERE entries_fts MATCH ? AND e.deleted_at IS NULL
         ORDER BY e.created_at DESC
       `;
       params.push(ftsQuery);
@@ -367,12 +419,12 @@ export const entriesDao = {
       sql = `
         SELECT e.* FROM entries e,
         json_each(CASE WHEN json_valid(e.tags) THEN e.tags ELSE '[]' END)
-        WHERE json_each.value = ?
+        WHERE json_each.value = ? AND e.deleted_at IS NULL
         ORDER BY e.created_at DESC
       `;
       params.push(tag.toLowerCase().replace(/^#/, ""));
     } else {
-      sql = `SELECT * FROM entries ORDER BY created_at DESC`;
+      sql = `SELECT * FROM entries WHERE deleted_at IS NULL ORDER BY created_at DESC`;
     }
 
     if (typeof limit === "number") {
@@ -410,9 +462,9 @@ export const entriesDao = {
 
   async updateSyncStatus(
     id: string,
-    sidecarId: string,
-    audioId: string | null,
-    syncedAt: number,
+    sidecarId: string | null | undefined,
+    audioId: string | null | undefined,
+    syncedAt: number | null | undefined,
   ): Promise<void> {
     const db = getDatabase();
     await db.runAsync(
@@ -421,7 +473,7 @@ export const entriesDao = {
         drive_audio_file_id = ?,
         drive_synced_at = ?
       WHERE id = ?`,
-      [sidecarId, audioId, syncedAt, id],
+      [sidecarId ?? null, audioId ?? null, syncedAt ?? null, id],
     );
   },
 
@@ -429,9 +481,10 @@ export const entriesDao = {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
-       WHERE drive_sidecar_file_id IS NULL
-          OR drive_synced_at IS NULL
-          OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
+       WHERE deleted_at IS NULL
+         AND (drive_sidecar_file_id IS NULL
+           OR drive_synced_at IS NULL
+           OR (updated_at IS NOT NULL AND updated_at > drive_synced_at))
        ORDER BY created_at ASC`,
     );
     return rows.map(rowToEntry);
@@ -467,7 +520,7 @@ export const entriesDao = {
   async getAllTags(): Promise<string[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<{ tag: string }>(
-      `SELECT DISTINCT json_each.value as tag FROM entries, json_each(CASE WHEN json_valid(entries.tags) THEN entries.tags ELSE '[]' END) WHERE json_each.value IS NOT NULL AND json_each.value != '' ORDER BY tag ASC`,
+      `SELECT DISTINCT json_each.value as tag FROM entries, json_each(CASE WHEN json_valid(entries.tags) THEN entries.tags ELSE '[]' END) WHERE entries.deleted_at IS NULL AND json_each.value IS NOT NULL AND json_each.value != '' ORDER BY tag ASC`,
     );
     return rows.map((r) => r.tag);
   },

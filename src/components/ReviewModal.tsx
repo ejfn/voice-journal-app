@@ -16,7 +16,10 @@ import {
 import { File } from "expo-file-system";
 import { JournalEntry } from "../db/schema";
 import { entriesDao } from "../db/dao/entriesDao";
-import { googleDriveService } from "../services/drive/GoogleDriveService";
+import {
+  AudioNotFoundError,
+  googleDriveService,
+} from "../services/drive/GoogleDriveService";
 import { uploadQueueService } from "../services/drive/UploadQueueService";
 import {
   audioPlaybackService,
@@ -261,12 +264,30 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           type: "success",
         });
       } catch (err) {
-        showToast({
-          message:
-            (err as Error).message || "Failed to download audio from Drive",
-          icon: "error-outline",
-          type: "error",
-        });
+        if (err instanceof AudioNotFoundError) {
+          setCurrentEntry((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  drive_audio_file_id: null,
+                  is_audio_cached: 0,
+                  local_audio_path: null,
+                }
+              : null,
+          );
+          showToast({
+            message: "Audio file is no longer available in Google Drive.",
+            icon: "error-outline",
+            type: "error",
+          });
+        } else {
+          showToast({
+            message:
+              (err as Error).message || "Failed to download audio from Drive",
+            icon: "error-outline",
+            type: "error",
+          });
+        }
       } finally {
         setIsDownloadingAudio(false);
       }
@@ -358,12 +379,30 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           active.duration_sec,
         );
       } catch (err) {
-        showToast({
-          message:
-            (err as Error).message || "Failed to download audio from Drive",
-          icon: "error-outline",
-          type: "error",
-        });
+        if (err instanceof AudioNotFoundError) {
+          setCurrentEntry((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  drive_audio_file_id: null,
+                  is_audio_cached: 0,
+                  local_audio_path: null,
+                }
+              : null,
+          );
+          showToast({
+            message: "Audio file is no longer available in Google Drive.",
+            icon: "error-outline",
+            type: "error",
+          });
+        } else {
+          showToast({
+            message:
+              (err as Error).message || "Failed to download audio from Drive",
+            icon: "error-outline",
+            type: "error",
+          });
+        }
       } finally {
         setIsDownloadingAudio(false);
       }

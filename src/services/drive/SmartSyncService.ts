@@ -1,6 +1,7 @@
 import { AppState, AppStateStatus } from "react-native";
 import { googleDriveService } from "./GoogleDriveService";
 import { uploadQueueService } from "./UploadQueueService";
+import { entriesDao } from "../../db/dao/entriesDao";
 import { settingsDao } from "../../db/dao/settingsDao";
 
 export type SmartSyncStatus = "idle" | "syncing" | "synced" | "error";
@@ -131,6 +132,10 @@ export class SmartSyncService {
     this.notifyListeners({ status: "syncing", timestamp: Date.now() });
 
     try {
+      // Auto-purge expired binned entries (30-day policy) before sync phases
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      await entriesDao.purgeExpiredBinnedEntries(thirtyDaysAgo);
+
       // Run two-way sync (deletions, download missing, upload unsynced)
       const result = await googleDriveService.syncTwoWay();
       await googleDriveService.runLruEviction();

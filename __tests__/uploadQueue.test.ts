@@ -223,6 +223,23 @@ describe("UploadQueueService", () => {
     );
   });
 
+  it("skips and drops queue item if entry is soft-deleted (deleted_at is set)", async () => {
+    const softDeletedEntry: JournalEntry = {
+      ...mockEntry,
+      deleted_at: Date.now(),
+    };
+    (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
+      mockQueueItem,
+    ]);
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue(softDeletedEntry);
+
+    await service.processQueue();
+
+    // Must delete from sync queue and NOT upload to Drive
+    expect(syncQueueDao.deleteItem).toHaveBeenCalledWith("queue-1");
+    expect(googleDriveService.uploadEntry).not.toHaveBeenCalled();
+  });
+
   it("calculates graduated upload backoff delays correctly", () => {
     expect(getUploadBackoffDelayMs(0)).toBe(5000);
     expect(getUploadBackoffDelayMs(1)).toBe(15000);

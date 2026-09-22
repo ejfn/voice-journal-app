@@ -2,10 +2,12 @@ import { AppState } from "react-native";
 import { SmartSyncService } from "../src/services/drive/SmartSyncService";
 import { googleDriveService } from "../src/services/drive/GoogleDriveService";
 import { uploadQueueService } from "../src/services/drive/UploadQueueService";
+import { entriesDao } from "../src/db/dao/entriesDao";
 import { settingsDao } from "../src/db/dao/settingsDao";
 
 jest.mock("../src/services/drive/GoogleDriveService");
 jest.mock("../src/services/drive/UploadQueueService");
+jest.mock("../src/db/dao/entriesDao");
 jest.mock("../src/db/dao/settingsDao");
 
 describe("SmartSyncService", () => {
@@ -26,6 +28,7 @@ describe("SmartSyncService", () => {
     });
     (googleDriveService.runLruEviction as jest.Mock).mockResolvedValue(0);
     (uploadQueueService.processQueue as jest.Mock).mockResolvedValue(undefined);
+    (entriesDao.purgeExpiredBinnedEntries as jest.Mock).mockResolvedValue([]);
     (settingsDao.setSetting as jest.Mock).mockResolvedValue(undefined);
   });
 
@@ -51,6 +54,7 @@ describe("SmartSyncService", () => {
     const result = await service.sync({ force: true });
 
     expect(result).toEqual({ uploadedCount: 2, downloadedCount: 1 });
+    expect(entriesDao.purgeExpiredBinnedEntries).toHaveBeenCalled();
     expect(googleDriveService.syncTwoWay).toHaveBeenCalled();
     expect(googleDriveService.runLruEviction).toHaveBeenCalled();
     expect(uploadQueueService.processQueue).toHaveBeenCalled();
@@ -141,7 +145,7 @@ describe("SmartSyncService", () => {
     );
   });
 
-  it("registers AppState listener and periodic interval on startAutoSync", () => {
+  it("registers AppState listener and periodic interval on startAutoSync", async () => {
     const addEventListenerSpy = jest.spyOn(AppState, "addEventListener");
 
     service.startAutoSync();
@@ -151,8 +155,12 @@ describe("SmartSyncService", () => {
       expect.any(Function),
     );
 
+    // Drain startup sync microtasks
+    await Promise.resolve();
+
     // Fast forward periodic interval (120s)
     jest.advanceTimersByTime(125_000);
+    await Promise.resolve();
     expect(googleDriveService.syncTwoWay).toHaveBeenCalled();
 
     service.stopAutoSync();

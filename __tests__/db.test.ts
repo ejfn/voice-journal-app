@@ -1,4 +1,5 @@
 import { entriesDao } from "../src/db/dao/entriesDao";
+import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { syncQueueDao } from "../src/db/dao/syncQueueDao";
 import {
   DatabaseConnection,
@@ -676,5 +677,236 @@ describe("Database & FTS5 DAO", () => {
     const nextScheduledAfterDownload =
       await entriesDao.getNextScheduledRetryTime(now);
     expect(nextScheduledAfterDownload).toBe(now + 5000);
+  });
+
+  describe("Soft-delete, Bin, and Auto-purge", () => {
+    it("softDeleteEntry sets deleted_at and hides entry from active queries", async () => {
+      const now = 1789700000000;
+      const entry: JournalEntry = {
+        id: "soft-del-1",
+        title: "Active Entry",
+        summary: "Summary",
+        transcript: "Transcript content",
+        tags: ["secret", "journal"],
+        duration_sec: 30,
+        source_type: "recorded",
+        local_audio_path: "file:///mock/audio.m4a",
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now,
+        last_accessed_at: now,
+        transcription_status: "queued",
+      };
+      await entriesDao.insertEntry(entry);
+
+      // Verify visible before soft-delete
+      let entries = await entriesDao.getEntries();
+      expect(entries.some((e) => e.id === "soft-del-1")).toBe(true);
+
+      let tags = await entriesDao.getAllTags();
+      expect(tags).toContain("secret");
+
+      let unsynced = await entriesDao.getUnsyncedEntries();
+      expect(unsynced.some((e) => e.id === "soft-del-1")).toBe(true);
+
+      let queued = await entriesDao.getQueuedEntries(now + 1000);
+      expect(queued.some((e) => e.id === "soft-del-1")).toBe(true);
+
+      // Soft delete
+      const softDeleted = await entriesDao.softDeleteEntry("soft-del-1");
+      expect(softDeleted?.deleted_at).toBeGreaterThan(0);
+
+      // Verify row is still retrieved by ID
+      const byId = await entriesDao.getEntryById("soft-del-1");
+      expect(byId).not.toBeNull();
+      expect(byId?.deleted_at).toBe(softDeleted?.deleted_at);
+
+      // Verify excluded from active queries
+      entries = await entriesDao.getEntries();
+      expect(entries.some((e) => e.id === "soft-del-1")).toBe(false);
+
+      tags = await entriesDao.getAllTags();
+      expect(tags).not.toContain("secret");
+
+      unsynced = await entriesDao.getUnsyncedEntries();
+      expect(unsynced.some((e) => e.id === "soft-del-1")).toBe(false);
+
+      queued = await entriesDao.getQueuedEntries(now + 1000);
+      expect(queued.some((e) => e.id === "soft-del-1")).toBe(false);
+    });
+
+    it("restoreEntry clears deleted_at and restores entry to active queries", async () => {
+      const now = 1789700000000;
+      await entriesDao.insertEntry({
+        id: "restore-test-1",
+        title: "To Be Restored",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: ["restored-tag"],
+        duration_sec: 15,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now,
+        last_accessed_at: now,
+        deleted_at: now,
+      });
+
+      // Initially excluded because deleted_at is set
+      let entries = await entriesDao.getEntries();
+      expect(entries.some((e) => e.id === "restore-test-1")).toBe(false);
+
+      // Restore
+      const restored = await entriesDao.restoreEntry("restore-test-1");
+      expect(restored?.deleted_at).toBeNull();
+
+      // Now visible in active queries
+      entries = await entriesDao.getEntries();
+      expect(entries.some((e) => e.id === "restore-test-1")).toBe(true);
+
+      const tags = await entriesDao.getAllTags();
+      expect(tags).toContain("restored-tag");
+    });
+
+    it("getBinnedEntries returns only binned entries in reverse chronological order of deletion", async () => {
+      const t0 = 1000000;
+      await entriesDao.insertEntry({
+        id: "binned-old",
+        title: "Deleted earlier",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: t0,
+        last_accessed_at: t0,
+        deleted_at: t0 + 1000,
+      });
+      await entriesDao.insertEntry({
+        id: "binned-recent",
+        title: "Deleted later",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: t0,
+        last_accessed_at: t0,
+        deleted_at: t0 + 5000,
+      });
+      await entriesDao.insertEntry({
+        id: "not-binned",
+        title: "Active",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: t0,
+        last_accessed_at: t0,
+        deleted_at: null,
+      });
+
+      const binned = await entriesDao.getBinnedEntries();
+      expect(binned.length).toBe(2);
+      expect(binned[0].id).toBe("binned-recent");
+      expect(binned[1].id).toBe("binned-old");
+    });
+
+    it("permanentlyDeleteEntry removes row and records a tombstone", async () => {
+      const now = 1789700000000;
+      await entriesDao.insertEntry({
+        id: "perm-del-1",
+        title: "Permanent Delete",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 20,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "drive-aud-1",
+        drive_sidecar_file_id: "drive-sc-1",
+        is_audio_cached: 1,
+        created_at: now,
+        last_accessed_at: now,
+      });
+
+      const deleted = await entriesDao.permanentlyDeleteEntry("perm-del-1");
+      expect(deleted?.id).toBe("perm-del-1");
+
+      // Removed from SQLite
+      const byId = await entriesDao.getEntryById("perm-del-1");
+      expect(byId).toBeNull();
+
+      // Tombstone recorded
+      const isMarked = await deletedEntriesDao.isDeleted("perm-del-1");
+      expect(isMarked).toBe(true);
+    });
+
+    it("purgeExpiredBinnedEntries permanently purges only entries older than threshold", async () => {
+      const cutoff = 5000000;
+      // Older than cutoff -> should be purged
+      await entriesDao.insertEntry({
+        id: "expired-entry",
+        title: "Expired",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "drive-sc-exp",
+        drive_sidecar_file_id: "drive-aud-exp",
+        is_audio_cached: 1,
+        created_at: 1000,
+        last_accessed_at: 1000,
+        deleted_at: cutoff - 1000,
+      });
+
+      // Newer than cutoff -> should remain in bin
+      await entriesDao.insertEntry({
+        id: "recent-entry",
+        title: "Recent",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: 1000,
+        last_accessed_at: 1000,
+        deleted_at: cutoff + 1000,
+      });
+
+      const purged = await entriesDao.purgeExpiredBinnedEntries(cutoff);
+      expect(purged.map((e) => e.id)).toEqual(["expired-entry"]);
+
+      // Expired row removed and tombstone created
+      expect(await entriesDao.getEntryById("expired-entry")).toBeNull();
+      expect(await deletedEntriesDao.isDeleted("expired-entry")).toBe(true);
+
+      // Recent row still exists in DB
+      const remaining = await entriesDao.getEntryById("recent-entry");
+      expect(remaining).not.toBeNull();
+      expect(remaining?.deleted_at).toBe(cutoff + 1000);
+    });
   });
 });

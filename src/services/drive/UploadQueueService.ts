@@ -191,8 +191,8 @@ export class UploadQueueService {
         }
 
         const entry = await entriesDao.getEntryById(item.entry_id);
-        if (!entry) {
-          // Entry was deleted locally; remove from sync queue
+        if (!entry || entry.deleted_at != null) {
+          // Entry deleted or soft-deleted; drop from upload queue
           await syncQueueDao.deleteItem(item.id);
           continue;
         }
