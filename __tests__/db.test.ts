@@ -908,5 +908,52 @@ describe("Database & FTS5 DAO", () => {
       expect(remaining).not.toBeNull();
       expect(remaining?.deleted_at).toBe(cutoff + 1000);
     });
+
+    it("getUnsyncedEntries includes soft-deleted entries only if previously synced to Drive", async () => {
+      const t0 = 1789700000000;
+      // Entry 1: Soft-deleted, never in Drive -> excluded from unsynced
+      await entriesDao.insertEntry({
+        id: "soft-del-local-only",
+        title: "Local only",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: t0,
+        last_accessed_at: t0,
+        deleted_at: t0 + 100,
+        updated_at: t0 + 100,
+      });
+
+      // Entry 2: Soft-deleted, previously in Drive, updated_at > drive_synced_at -> included in unsynced
+      await entriesDao.insertEntry({
+        id: "soft-del-in-drive",
+        title: "In Drive",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "audio-id",
+        drive_sidecar_file_id: "sidecar-id",
+        is_audio_cached: 1,
+        created_at: t0,
+        drive_synced_at: t0 + 50,
+        last_accessed_at: t0,
+        deleted_at: t0 + 100,
+        updated_at: t0 + 100,
+      });
+
+      const unsynced = await entriesDao.getUnsyncedEntries();
+      const unsyncedIds = unsynced.map((e) => e.id);
+      expect(unsyncedIds).not.toContain("soft-del-local-only");
+      expect(unsyncedIds).toContain("soft-del-in-drive");
+    });
   });
 });

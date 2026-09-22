@@ -1445,6 +1445,48 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       expect(healed?.is_audio_cached).toBe(0);
     });
 
+    it("downloadAudioOnDemand deletes artifact if 404 download leaves an invalid file", async () => {
+      const entry: JournalEntry = {
+        id: "artifact-audio-entry",
+        title: "Artifact Audio",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "dead-drive-audio-id",
+        drive_sidecar_file_id: "sidecar-id",
+        is_audio_cached: 0,
+        created_at: 1758290000000,
+        updated_at: 1758290000000,
+        last_accessed_at: 1758290000000,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultExists = false;
+      // Simulate download writing an artifact then failing with 404
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).mockDownload.mockImplementationOnce(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (File as any).defaultExists = true;
+        throw new Error("File not found (404)");
+      });
+
+      global.fetch = jest.fn(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+
+      await expect(
+        driveService.downloadAudioOnDemand("artifact-audio-entry"),
+      ).rejects.toThrow(AudioNotFoundError);
+
+      const healed = await entriesDao.getEntryById("artifact-audio-entry");
+      expect(healed?.drive_audio_file_id).toBeNull();
+      expect(healed?.is_audio_cached).toBe(0);
+    });
+
     it("deleteEntryFromDrive handles 404 for already-deleted files without failing", async () => {
       global.fetch = jest.fn(
         async (url: RequestInfo | URL, init?: RequestInit) => {

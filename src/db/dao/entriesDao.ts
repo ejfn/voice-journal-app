@@ -481,10 +481,15 @@ export const entriesDao = {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
-       WHERE deleted_at IS NULL
-         AND (drive_sidecar_file_id IS NULL
-           OR drive_synced_at IS NULL
-           OR (updated_at IS NOT NULL AND updated_at > drive_synced_at))
+       WHERE (deleted_at IS NULL AND (
+         drive_sidecar_file_id IS NULL
+         OR drive_synced_at IS NULL
+         OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
+       ))
+       OR (deleted_at IS NOT NULL AND drive_sidecar_file_id IS NOT NULL AND (
+         drive_synced_at IS NULL
+         OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
+       ))
        ORDER BY created_at ASC`,
     );
     return rows.map(rowToEntry);

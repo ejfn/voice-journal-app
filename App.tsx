@@ -535,7 +535,7 @@ const MainScreen: React.FC = () => {
     if (!deleteTargetId) return;
     const id = deleteTargetId;
     setDeleteTargetId(null);
-    await entriesDao.deleteEntry(id);
+    const deleted = await entriesDao.deleteEntry(id);
     setIsReviewVisible(false);
     setReviewEntry(null);
     await loadData();
@@ -544,6 +544,10 @@ const MainScreen: React.FC = () => {
       icon: "delete-outline",
       type: "info",
     });
+
+    if (deleted?.drive_sidecar_file_id && googleDriveService.getCurrentUser()) {
+      uploadQueueService.enqueueUpload(id, "METADATA_ONLY");
+    }
   };
 
   // Transform MonthSection into SectionList data structure

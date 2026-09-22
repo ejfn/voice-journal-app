@@ -240,6 +240,35 @@ describe("UploadQueueService", () => {
     expect(googleDriveService.uploadEntry).not.toHaveBeenCalled();
   });
 
+  it("processes queue item if soft-deleted entry has existing drive_sidecar_file_id", async () => {
+    const syncedSoftDeletedEntry: JournalEntry = {
+      ...mockEntry,
+      drive_sidecar_file_id: "sidecar-existing-1",
+      deleted_at: Date.now(),
+    };
+    (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
+      mockQueueItem,
+    ]);
+    (syncQueueDao.getItemById as jest.Mock).mockResolvedValue({
+      ...mockQueueItem,
+      status: "PROCESSING",
+    });
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue(
+      syncedSoftDeletedEntry,
+    );
+    (googleDriveService.uploadEntry as jest.Mock).mockResolvedValue({
+      audioFileId: "audio-1",
+      sidecarFileId: "sidecar-existing-1",
+    });
+
+    await service.processQueue();
+
+    expect(googleDriveService.uploadEntry).toHaveBeenCalledWith(
+      syncedSoftDeletedEntry,
+    );
+    expect(syncQueueDao.deleteItem).toHaveBeenCalledWith("queue-1");
+  });
+
   it("calculates graduated upload backoff delays correctly", () => {
     expect(getUploadBackoffDelayMs(0)).toBe(5000);
     expect(getUploadBackoffDelayMs(1)).toBe(15000);

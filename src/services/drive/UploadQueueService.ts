@@ -191,8 +191,11 @@ export class UploadQueueService {
         }
 
         const entry = await entriesDao.getEntryById(item.entry_id);
-        if (!entry || entry.deleted_at != null) {
-          // Entry deleted or soft-deleted; drop from upload queue
+        if (
+          !entry ||
+          (entry.deleted_at != null && !entry.drive_sidecar_file_id)
+        ) {
+          // Entry permanently deleted or soft-deleted before ever being uploaded; drop from upload queue
           await syncQueueDao.deleteItem(item.id);
           continue;
         }

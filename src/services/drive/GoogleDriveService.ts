@@ -448,7 +448,7 @@ export class GoogleDriveService {
         );
         reusedAudioFile = Boolean(audioFileId);
       }
-      if (audioFile && localAudioExists) {
+      if (audioFile && localAudioExists && entry.deleted_at == null) {
         if (!audioFileId) {
           // Create audio file placeholder with metadata in Drive
           const createAudioRes = await fetch(
@@ -1007,30 +1007,25 @@ export class GoogleDriveService {
         }
 
         if (isNotFound) {
-          // Self-heal dangling file reference
+          // If an empty or error artifact was created during failed download, clean it up
           if (localFile.exists) {
-            // Local file still exists, recover it and flag for re-upload
-            await entriesDao.updateSyncStatus(
-              entryId,
-              entry.drive_sidecar_file_id,
-              null,
-              null,
-            );
-            await entriesDao.setAudioCached(entryId, true, localPath);
-            return localPath;
-          } else {
-            // Local file also absent, clear stale cloud reference
-            await entriesDao.updateSyncStatus(
-              entryId,
-              entry.drive_sidecar_file_id,
-              null,
-              entry.drive_synced_at,
-            );
-            await entriesDao.setAudioCached(entryId, false, null);
-            throw new AudioNotFoundError(
-              "Audio file is no longer available in Google Drive.",
-            );
+            try {
+              localFile.delete();
+            } catch {
+              // Ignore cleanup error
+            }
           }
+          // Clear stale cloud reference and local cache flag
+          await entriesDao.updateSyncStatus(
+            entryId,
+            entry.drive_sidecar_file_id,
+            null,
+            entry.drive_synced_at,
+          );
+          await entriesDao.setAudioCached(entryId, false, null);
+          throw new AudioNotFoundError(
+            "Audio file is no longer available in Google Drive.",
+          );
         }
         throw dlErr;
       }
