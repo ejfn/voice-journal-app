@@ -21,6 +21,7 @@ export interface JournalEntry {
   transcription_retry_count?: number;
   transcription_next_retry_at?: number | null;
   waveform_data?: number[]; // Normalized amplitude sequence (0.0 to 1.0)
+  deleted_at?: number | null; // Epoch timestamp ms if soft-deleted
 }
 
 export interface JournalEntryRow {
@@ -43,6 +44,7 @@ export interface JournalEntryRow {
   transcription_retry_count?: number | null;
   transcription_next_retry_at?: number | null;
   waveform_data?: string | null; // JSON string of number[]
+  deleted_at?: number | null;
 }
 
 export interface SyncQueueItem {
@@ -74,7 +76,8 @@ CREATE TABLE IF NOT EXISTS entries (
   transcription_status TEXT DEFAULT 'completed',
   transcription_retry_count INTEGER DEFAULT 0,
   transcription_next_retry_at INTEGER,
-  waveform_data TEXT
+  waveform_data TEXT,
+  deleted_at INTEGER DEFAULT NULL
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(

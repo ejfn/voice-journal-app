@@ -2,7 +2,10 @@ import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { entriesDao } from "../src/db/dao/entriesDao";
 import { initDatabase, setDatabaseConnection } from "../src/db/database";
 import { JournalEntry } from "../src/db/schema";
-import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
+import {
+  AudioNotFoundError,
+  GoogleDriveService,
+} from "../src/services/drive/GoogleDriveService";
 import { transcriptionQueueService } from "../src/services/ai/TranscriptionQueueService";
 import { createTestDb } from "./helpers/testDb";
 import { File } from "expo-file-system";
@@ -1046,8 +1049,8 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
 
     await entriesDao.insertEntry(entryToDelete);
 
-    // 1. Calling entriesDao.deleteEntry deletes the local file and records a tombstone
-    const deleted = await entriesDao.deleteEntry("entry-to-delete");
+    // 1. Calling entriesDao.permanentlyDeleteEntry deletes the local file and records a tombstone
+    const deleted = await entriesDao.permanentlyDeleteEntry("entry-to-delete");
     expect(deleted).not.toBeNull();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockDelete).toHaveBeenCalledWith(
@@ -1085,6 +1088,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     );
 
     await driveService.deleteEntryFromDrive(deleted!);
+    await deletedEntriesDao.removeDeletion(deleted!.id);
     expect(deletedFileIds).toContain("sidecar-file-del-1");
     expect(deletedFileIds).toContain("audio-file-del-1");
 
@@ -1112,7 +1116,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       last_accessed_at: t0,
     };
     await entriesDao.insertEntry(offlineEntry);
-    await entriesDao.deleteEntry("entry-offline-del");
+    await entriesDao.permanentlyDeleteEntry("entry-offline-del");
 
     deletedFileIds.length = 0;
     global.fetch = jest.fn(
@@ -1150,5 +1154,363 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     // And it should not be present in SQLite
     const entryAfterSync = await entriesDao.getEntryById("entry-offline-del");
     expect(entryAfterSync).toBeNull();
+  });
+
+  it("syncTwoWay download phase skips soft-deleted entries existing locally, preventing resurrection", async () => {
+    const t0 = 1789700000000;
+    // Entry exists locally but has deleted_at set (soft-deleted)
+    await entriesDao.insertEntry({
+      id: "soft-deleted-resurrect-check",
+      title: "Locally Soft-Deleted Note",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: "file:///mock/audio/soft-del.m4a",
+      drive_audio_file_id: "drive-aud-soft",
+      drive_sidecar_file_id: "drive-sc-soft",
+      is_audio_cached: 1,
+      created_at: t0,
+      updated_at: t0,
+      drive_synced_at: t0,
+      last_accessed_at: t0,
+      deleted_at: t0 + 500,
+    });
+
+    // Cloud still reports the sidecar
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      const urlStr = url.toString();
+      if (urlStr.includes("mimeType = 'application/json'")) {
+        return new Response(
+          JSON.stringify({
+            files: [
+              {
+                id: "drive-sc-soft",
+                name: "soft-deleted-resurrect-check.json",
+                modifiedTime: new Date(t0).toISOString(),
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const syncResult = await driveService.syncTwoWay();
+    // Rule 2: entry exists locally -> download count must be 0, never overwritten/re-inserted
+    expect(syncResult.downloadedCount).toBe(0);
+
+    // Entry remains soft-deleted in local DB and is NOT resurrected onto active timeline
+    const entry = await entriesDao.getEntryById("soft-deleted-resurrect-check");
+    expect(entry).not.toBeNull();
+    expect(entry?.deleted_at).toBe(t0 + 500);
+
+    const activeEntries = await entriesDao.getEntries();
+    expect(
+      activeEntries.some((e) => e.id === "soft-deleted-resurrect-check"),
+    ).toBe(false);
+  });
+
+  it("syncTwoWay preserves tombstone in deleted_entries if Drive deletion fails", async () => {
+    // Record a tombstone
+    await deletedEntriesDao.recordDeletion(
+      "failed-del-entry",
+      "sidecar-fail-id",
+      "audio-fail-id",
+    );
+
+    // Mock Drive DELETE call returning error 500
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        if (init?.method === "DELETE") {
+          return new Response("Internal Server Error", { status: 500 });
+        }
+        if (urlStr.includes("mimeType = 'application/json'")) {
+          return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      },
+    );
+
+    // Run syncTwoWay
+    await driveService.syncTwoWay();
+
+    // Tombstone must NOT be removed since Drive deletion failed
+    const isStillMarked = await deletedEntriesDao.isDeleted("failed-del-entry");
+    expect(isStillMarked).toBe(true);
+  });
+
+  describe("Twin Files Synchronization & Deletion Resilience", () => {
+    it("atomic upload fails fast and does not create sidecar if audio upload fails", async () => {
+      const entry: JournalEntry = {
+        id: "atomic-fail-audio",
+        title: "Atomic Fail Audio",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: "file:///mock/audio/atomic.m4a",
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: 1758290000000,
+        updated_at: 1758290000000,
+        last_accessed_at: 1758290000000,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultExists = true;
+
+      let sidecarAttempted = false;
+      global.fetch = jest.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = url.toString();
+          const body =
+            typeof init?.body === "string" && init.body.startsWith("{")
+              ? JSON.parse(init.body)
+              : {};
+          if (
+            urlStr.includes("mimeType = 'application/vnd.google-apps.folder'")
+          ) {
+            return new Response(
+              JSON.stringify({ files: [{ id: "folder-1", name: "09" }] }),
+              { status: 200 },
+            );
+          }
+          if (body.mimeType === "audio/mp4" && init?.method === "POST") {
+            return new Response("Internal Server Error creating audio", {
+              status: 500,
+            });
+          }
+          if (urlStr.includes("/upload/drive/v3/files?uploadType=multipart")) {
+            sidecarAttempted = true;
+            return new Response(JSON.stringify({ id: "sidecar-id" }), {
+              status: 200,
+            });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      );
+
+      await expect(driveService.uploadEntry(entry)).rejects.toThrow(
+        "Failed to create Drive audio placeholder",
+      );
+      expect(sidecarAttempted).toBe(false);
+
+      const updated = await entriesDao.getEntryById("atomic-fail-audio");
+      expect(updated?.drive_synced_at).toBeNull();
+      expect(updated?.drive_sidecar_file_id).toBeNull();
+    });
+
+    it("atomic upload persists audioFileId if sidecar upload fails, avoiding re-upload on retry", async () => {
+      const entry: JournalEntry = {
+        id: "atomic-save-audio",
+        title: "Atomic Save Audio",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 15,
+        source_type: "recorded",
+        local_audio_path: "file:///mock/audio/atomic-save.m4a",
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: 1758290000000,
+        updated_at: 1758290000000,
+        last_accessed_at: 1758290000000,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultExists = true;
+
+      let audioPlaceholderCalls = 0;
+      global.fetch = jest.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = url.toString();
+          const body =
+            typeof init?.body === "string" && init.body.startsWith("{")
+              ? JSON.parse(init.body)
+              : {};
+          if (
+            urlStr.includes("mimeType = 'application/vnd.google-apps.folder'")
+          ) {
+            return new Response(
+              JSON.stringify({ files: [{ id: "folder-1", name: "09" }] }),
+              { status: 200 },
+            );
+          }
+          if (body.mimeType === "audio/mp4" && init?.method === "POST") {
+            audioPlaceholderCalls++;
+            return new Response(JSON.stringify({ id: "saved-audio-id" }), {
+              status: 200,
+            });
+          }
+          if (urlStr.includes("/upload/drive/v3/files?uploadType=multipart")) {
+            return new Response("Sidecar upload failed", { status: 500 });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      );
+
+      await expect(driveService.uploadEntry(entry)).rejects.toThrow(
+        "Failed to upload sidecar JSON",
+      );
+      expect(audioPlaceholderCalls).toBe(1);
+
+      const partial = await entriesDao.getEntryById("atomic-save-audio");
+      expect(partial?.drive_audio_file_id).toBe("saved-audio-id");
+      expect(partial?.drive_synced_at).toBeNull();
+
+      global.fetch = jest.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = url.toString();
+          const body =
+            typeof init?.body === "string" && init.body.startsWith("{")
+              ? JSON.parse(init.body)
+              : {};
+          if (
+            urlStr.includes("mimeType = 'application/vnd.google-apps.folder'")
+          ) {
+            return new Response(
+              JSON.stringify({ files: [{ id: "folder-1", name: "09" }] }),
+              { status: 200 },
+            );
+          }
+          if (body.mimeType === "audio/mp4" && init?.method === "POST") {
+            audioPlaceholderCalls++;
+            return new Response(JSON.stringify({ id: "another-audio-id" }), {
+              status: 200,
+            });
+          }
+          if (urlStr.includes("/upload/drive/v3/files?uploadType=multipart")) {
+            return new Response(JSON.stringify({ id: "saved-sidecar-id" }), {
+              status: 200,
+            });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      );
+
+      const retryResult = await driveService.uploadEntry(partial!);
+      expect(retryResult.audioFileId).toBe("saved-audio-id");
+      expect(retryResult.sidecarFileId).toBe("saved-sidecar-id");
+      expect(audioPlaceholderCalls).toBe(1);
+
+      const synced = await entriesDao.getEntryById("atomic-save-audio");
+      expect(synced?.drive_synced_at).not.toBeNull();
+    });
+
+    it("downloadAudioOnDemand heals dangling drive_audio_file_id when Drive returns 404 and local file is missing", async () => {
+      const entry: JournalEntry = {
+        id: "dangling-audio-entry",
+        title: "Dangling Audio",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "dead-drive-audio-id",
+        drive_sidecar_file_id: "sidecar-id",
+        is_audio_cached: 0,
+        created_at: 1758290000000,
+        updated_at: 1758290000000,
+        last_accessed_at: 1758290000000,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultExists = false;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).mockDownload.mockRejectedValueOnce(
+        new Error("File not found (404)"),
+      );
+
+      global.fetch = jest.fn(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+
+      await expect(
+        driveService.downloadAudioOnDemand("dangling-audio-entry"),
+      ).rejects.toThrow(AudioNotFoundError);
+
+      const healed = await entriesDao.getEntryById("dangling-audio-entry");
+      expect(healed?.drive_audio_file_id).toBeNull();
+      expect(healed?.is_audio_cached).toBe(0);
+    });
+
+    it("downloadAudioOnDemand deletes artifact if 404 download leaves an invalid file", async () => {
+      const entry: JournalEntry = {
+        id: "artifact-audio-entry",
+        title: "Artifact Audio",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "dead-drive-audio-id",
+        drive_sidecar_file_id: "sidecar-id",
+        is_audio_cached: 0,
+        created_at: 1758290000000,
+        updated_at: 1758290000000,
+        last_accessed_at: 1758290000000,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultExists = false;
+      // Simulate download writing an artifact then failing with 404
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).mockDownload.mockImplementationOnce(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (File as any).defaultExists = true;
+        throw new Error("File not found (404)");
+      });
+
+      global.fetch = jest.fn(
+        async () => new Response("Not Found", { status: 404 }),
+      );
+
+      await expect(
+        driveService.downloadAudioOnDemand("artifact-audio-entry"),
+      ).rejects.toThrow(AudioNotFoundError);
+
+      const healed = await entriesDao.getEntryById("artifact-audio-entry");
+      expect(healed?.drive_audio_file_id).toBeNull();
+      expect(healed?.is_audio_cached).toBe(0);
+    });
+
+    it("deleteEntryFromDrive handles 404 for already-deleted files without failing", async () => {
+      global.fetch = jest.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = url.toString();
+          if (init?.method === "DELETE") {
+            if (urlStr.includes("already-gone-sidecar")) {
+              return new Response("Not Found", { status: 404 });
+            }
+            return new Response("{}", { status: 200 });
+          }
+          if (urlStr.includes("mimeType = 'application/json'")) {
+            return new Response(JSON.stringify({ files: [] }), { status: 200 });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      );
+
+      await expect(
+        driveService.deleteEntryFromDrive({
+          id: "entry-404-test",
+          drive_sidecar_file_id: "already-gone-sidecar",
+          drive_audio_file_id: "existing-audio-file",
+        }),
+      ).resolves.not.toThrow();
+    });
   });
 });

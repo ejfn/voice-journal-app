@@ -19,7 +19,6 @@ import { SettingsModal } from "./src/components/SettingsModal";
 import { TagFilterChips } from "./src/components/TagFilterChips";
 import { TimelineHeader } from "./src/components/TimelineHeader";
 import { DayGroup, entriesDao, MonthSection } from "./src/db/dao/entriesDao";
-import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
@@ -27,7 +26,10 @@ import { transcriptionQueueService } from "./src/services/ai/TranscriptionQueueS
 import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
-import { googleDriveService } from "./src/services/drive/GoogleDriveService";
+import {
+  AudioNotFoundError,
+  googleDriveService,
+} from "./src/services/drive/GoogleDriveService";
 import { uploadQueueService } from "./src/services/drive/UploadQueueService";
 import { smartSyncService } from "./src/services/drive/SmartSyncService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
@@ -487,11 +489,20 @@ const MainScreen: React.FC = () => {
         });
       }
     } catch (err) {
-      showToast({
-        message: (err as Error).message || "Could not play audio.",
-        icon: "error-outline",
-        type: "error",
-      });
+      if (err instanceof AudioNotFoundError) {
+        await loadData();
+        showToast({
+          message: "Audio file is no longer available in Google Drive.",
+          icon: "error-outline",
+          type: "error",
+        });
+      } else {
+        showToast({
+          message: (err as Error).message || "Could not play audio.",
+          icon: "error-outline",
+          type: "error",
+        });
+      }
     } finally {
       if (startedDownloadRequest) {
         pendingDownloadRequestsRef.current.delete(entry.id);
@@ -529,21 +540,13 @@ const MainScreen: React.FC = () => {
     setReviewEntry(null);
     await loadData();
     showToast({
-      message: "Entry permanently deleted",
+      message: "Entry deleted",
       icon: "delete-outline",
       type: "info",
     });
 
-    // If user is connected to Google Drive, delete from cloud immediately
-    if (deleted && googleDriveService.getCurrentUser()) {
-      googleDriveService
-        .deleteEntryFromDrive(deleted)
-        .then(async () => {
-          await deletedEntriesDao.removeDeletion(deleted.id);
-        })
-        .catch((err) => {
-          console.warn("Deferred cloud deletion:", err);
-        });
+    if (deleted?.drive_sidecar_file_id && googleDriveService.getCurrentUser()) {
+      uploadQueueService.enqueueUpload(id, "METADATA_ONLY");
     }
   };
 
@@ -703,7 +706,7 @@ const MainScreen: React.FC = () => {
         <ConfirmDialog
           visible={deleteTargetId !== null}
           title="Delete Entry"
-          message="Are you sure you want to permanently delete this voice journal entry? This action cannot be undone."
+          message="Are you sure you want to delete this voice journal entry?"
           confirmLabel="Delete"
           cancelLabel="Cancel"
           isDestructive

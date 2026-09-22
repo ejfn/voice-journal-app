@@ -78,5 +78,30 @@ export const initDatabase = async (
     }
   }
 
+  // Safe migration for existing databases missing deleted_at
+  try {
+    const columns = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(entries);`,
+    );
+    const hasDeletedAtCol = columns.some((col) => col.name === "deleted_at");
+    if (!hasDeletedAtCol) {
+      await db.execAsync(
+        `ALTER TABLE entries ADD COLUMN deleted_at INTEGER DEFAULT NULL;`,
+      );
+    }
+  } catch (migrationError) {
+    try {
+      const columns = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(entries);`,
+      );
+      const hasDeletedAtCol = columns.some((col) => col.name === "deleted_at");
+      if (!hasDeletedAtCol) {
+        throw migrationError;
+      }
+    } catch {
+      throw migrationError;
+    }
+  }
+
   return db;
 };

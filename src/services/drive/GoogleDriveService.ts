@@ -36,6 +36,13 @@ type MonthFolderRequest = {
   request: Promise<string>;
 };
 
+export class AudioNotFoundError extends Error {
+  constructor(message = "Audio file is no longer available in Google Drive.") {
+    super(message);
+    this.name = "AudioNotFoundError";
+  }
+}
+
 class DriveSessionChangedError extends Error {
   constructor() {
     super("Google Drive session changed during operation");
@@ -441,7 +448,7 @@ export class GoogleDriveService {
         );
         reusedAudioFile = Boolean(audioFileId);
       }
-      if (audioFile && localAudioExists) {
+      if (audioFile && localAudioExists && entry.deleted_at == null) {
         if (!audioFileId) {
           // Create audio file placeholder with metadata in Drive
           const createAudioRes = await fetch(
@@ -460,23 +467,35 @@ export class GoogleDriveService {
             },
           );
 
-          if (createAudioRes.ok) {
-            const audioData = await createAudioRes.json();
-            audioFileId = audioData.id;
-
-            // Stream binary audio file directly to Drive via audioFile.upload
-            await audioFile.upload(
-              `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
-              {
-                httpMethod: "PATCH",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "audio/mp4",
-                },
-                uploadType: UploadType.BINARY_CONTENT,
-              },
+          if (!createAudioRes.ok) {
+            throw new Error(
+              `Failed to create Drive audio placeholder for entry ${entry.id}: ${await createAudioRes.text()}`,
             );
           }
+
+          const audioData = await createAudioRes.json();
+          audioFileId = audioData.id;
+
+          // Stream binary audio file directly to Drive via audioFile.upload
+          await audioFile.upload(
+            `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
+            {
+              httpMethod: "PATCH",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "audio/mp4",
+              },
+              uploadType: UploadType.BINARY_CONTENT,
+            },
+          );
+
+          // Persist audioFileId immediately in SQLite so sidecar retry won't re-upload binary
+          await entriesDao.updateSyncStatus(
+            entry.id,
+            entry.drive_sidecar_file_id,
+            audioFileId,
+            entry.drive_synced_at,
+          );
         }
         if (audioFileId && reusedAudioFile) {
           await audioFile.upload(
@@ -705,11 +724,11 @@ export class GoogleDriveService {
     }
 
     for (const fileId of fileIdsToDelete) {
-      await this.deleteFileFromDrive(fileId, token);
+      const deleted = await this.deleteFileFromDrive(fileId, token);
+      if (!deleted) {
+        throw new Error(`Failed to delete file ${fileId} from Drive`);
+      }
     }
-
-    // Clean up tombstone once deleted from Google Drive
-    await deletedEntriesDao.removeDeletion(entry.id);
   }
 
   /**
@@ -873,6 +892,7 @@ export class GoogleDriveService {
             id: sc.entryId,
             drive_sidecar_file_id: sc.id,
           });
+          await deletedEntriesDao.removeDeletion(sc.entryId);
           continue;
         }
 
@@ -937,7 +957,9 @@ export class GoogleDriveService {
     }
 
     if (!entry.drive_audio_file_id) {
-      throw new Error(`Entry ${entryId} has no cloud audio file ID`);
+      throw new AudioNotFoundError(
+        `Entry ${entryId} has no cloud audio file ID`,
+      );
     }
 
     this.notifyTransferListeners({
@@ -956,10 +978,57 @@ export class GoogleDriveService {
         directory.create({ intermediates: true, idempotent: true });
       }
 
-      await File.downloadFileAsync(downloadUrl, localFile, {
-        headers: { Authorization: "Bearer " + token },
-        idempotent: true,
-      });
+      try {
+        await File.downloadFileAsync(downloadUrl, localFile, {
+          headers: { Authorization: "Bearer " + token },
+          idempotent: true,
+        });
+      } catch (dlErr) {
+        // Check if the file is missing from Google Drive (404)
+        let isNotFound =
+          dlErr instanceof Error &&
+          (dlErr.message.includes("404") ||
+            dlErr.message.toLowerCase().includes("not found"));
+
+        if (!isNotFound) {
+          try {
+            const checkRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${entry.drive_audio_file_id}?fields=id`,
+              {
+                headers: { Authorization: `Bearer ${token}` },
+              },
+            );
+            if (checkRes.status === 404) {
+              isNotFound = true;
+            }
+          } catch {
+            // Network failure during check; retain original dlErr
+          }
+        }
+
+        if (isNotFound) {
+          // If an empty or error artifact was created during failed download, clean it up
+          if (localFile.exists) {
+            try {
+              localFile.delete();
+            } catch {
+              // Ignore cleanup error
+            }
+          }
+          // Clear stale cloud reference and local cache flag
+          await entriesDao.updateSyncStatus(
+            entryId,
+            entry.drive_sidecar_file_id,
+            null,
+            entry.drive_synced_at,
+          );
+          await entriesDao.setAudioCached(entryId, false, null);
+          throw new AudioNotFoundError(
+            "Audio file is no longer available in Google Drive.",
+          );
+        }
+        throw dlErr;
+      }
 
       await entriesDao.setAudioCached(entryId, true, localPath);
       await entriesDao.markAudioAccessed(entryId);
