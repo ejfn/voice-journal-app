@@ -3,32 +3,32 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-  <!-- Solid filled bold microphone capsule (100% identical to ic_notification_mic) -->
+  <!-- Solid capsule -->
   <path
       android:fillColor="#FFFFFFFF"
       android:pathData="M12,2c-2.21,0 -4,1.79 -4,4v5c0,2.21 1.79,4 4,4s4,-1.79 4,-4V6c0,-2.21 -1.79,-4 -4,-4z"/>
-  <group>
-    <!-- Negative space circular cutout around the pause badge -->
-    <clip-path
-        android:pathData="M0,0 H24 V24 H0 Z M18,12.2 a5.8,5.8 0 1,0 0,11.6 a5.8,5.8 0 1,0 0,-11.6 Z"/>
-    <!-- Extra bold cradle with rounded caps (100% identical to ic_notification_mic) -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M5.5,10c0,3.59 2.91,6.5 6.5,6.5s6.5,-2.91 6.5,-6.5"/>
-    <!-- Extra bold stem and wide base with rounded caps (100% identical to ic_notification_mic) -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M12,16.5V21 M6.5,21h11"/>
-  </group>
-  <!-- Circular Pause Badge with cutout vertical pause bars -->
+  <!-- Cradle -->
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="2.6"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"
+      android:pathData="M5.5,10c0,3.59 2.91,6.5 6.5,6.5s6.5,-2.91 6.5,-6.5"/>
+  <!-- Stem and base -->
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="2.6"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"
+      android:pathData="M12,16.5V21 M6.5,21h5.5"/>
+  <!-- Pause badge circle (radius increased to 5dp) -->
   <path
       android:fillColor="#FFFFFFFF"
-      android:fillType="evenOdd"
-      android:pathData="M18,13.2 a4.8,4.8 0 1,0 0,9.6 a4.8,4.8 0 1,0 0,-9.6 Z M16.2,15.7 h1.2 v4.6 h-1.2 z M18.6,15.7 h1.2 v4.6 h-1.2 z"/>
+      android:pathData="M18.5,13.5a5,5 0 1,0 0,10a5,5 0 1,0 0,-10z"/>
+  <!-- Pause badge vertical lines -->
+  <path
+      android:strokeColor="#FF000000"
+      android:strokeWidth="1.5"
+      android:strokeLineCap="round"
+      android:pathData="M17.2,16.2v4.6 M19.8,16.2v4.6"/>
 </vector>
