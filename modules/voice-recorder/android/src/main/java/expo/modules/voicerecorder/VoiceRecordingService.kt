@@ -89,7 +89,7 @@ class VoiceRecordingService : Service() {
       val channel = NotificationChannel(
         CHANNEL_ID,
         "Voice Recording",
-        NotificationManager.IMPORTANCE_LOW
+        NotificationManager.IMPORTANCE_DEFAULT
       ).apply {
         description = "Displays recording indicator and background controls"
         setShowBadge(false)
@@ -145,8 +145,9 @@ class VoiceRecordingService : Service() {
       .setOngoing(true)
       .setContentIntent(contentIntent)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
       .setSilent(true)
+      .setOnlyAlertOnce(true)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setShowWhen(true)
 
