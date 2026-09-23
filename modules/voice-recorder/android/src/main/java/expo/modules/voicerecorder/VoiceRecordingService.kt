@@ -140,18 +140,18 @@ class VoiceRecordingService : Service() {
 
     val title = if (paused) "Voice Journal (Paused)" else "Voice Journal"
     val content = if (paused) {
-      "Recording paused at $formattedDuration • Tap Resume to continue"
+      "Recording paused • Tap Resume to continue"
     } else {
       "Recording voice note... • Tap to open"
     }
 
-    val accentColor = if (paused) 0xFFF59E0B.toInt() else 0xFFEA4335.toInt() // Amber when paused, vivid red when recording
+    val iconRes = if (paused) R.drawable.ic_notification_pause else R.drawable.ic_notification_mic
 
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle(title)
       .setContentText(content)
-      .setSmallIcon(R.drawable.ic_notification_mic)
-      .setColor(accentColor)
+      .setSmallIcon(iconRes)
+      .setColor(0xFF4F46E5.toInt()) // Indigo theme accent
       .setOngoing(true)
       .setContentIntent(contentIntent)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)

@@ -5,6 +5,7 @@ This file provides guidance and constraints for coding agents working in this re
 ## Core Agent Rules
 
 - **Do Not Commit Until Asked**: Never commit code changes automatically. Do NOT run `git commit` unless the user explicitly requests you to commit.
+- **Android Only at this stage**: Development, native modules, background recording, and notifications target Android exclusively at this stage. Do not spend effort or adapt workflows for iOS.
 - **Expo HAS CHANGED**: Read the exact versioned documentation at https://docs.expo.dev/versions/v57.0.0/ before writing any code. Never use deprecated APIs (e.g. `expo-av`, `@expo/vector-icons`).
 - **No Monitoring Pull Requests**: Do not watch, wait for, or poll GitHub pull request checks (`gh pr checks`, `gh pr checks --watch`, etc.) after creating a PR or pushing commits. Once created/pushed, provide the PR link and stop immediately without waiting for CI to finish.
 - **Git Safety**: Never commit directly to the `main` branch.
@@ -14,9 +15,9 @@ This file provides guidance and constraints for coding agents working in this re
 
 **Voice Journal** is a zero-subscription mobile voice diary application built with React Native and Expo (SDK 57).
 
-- **Platform**: iOS and Android (via Expo Dev Client)
+- **Platform**: Android only (at this stage)
 - **Tagline**: *Speak your mind. AI captures the rest.*
-- **Core Capabilities**: Native audio recording, offline-first SQLite database with FTS5 search, background transcription with Gemini (`gemini-3.5-flash-lite`, BYOK), on-demand Google Drive synchronization with LRU caching, and Google Photos-style storage status badges.
+- **Core Capabilities**: Custom native Android audio recording service with dynamic background notification controls, offline-first SQLite database with FTS5 search, background transcription with Gemini (`gemini-3.5-flash-lite`, BYOK), on-demand Google Drive synchronization with LRU caching, and Google Photos-style storage status badges.
 
 ## Documentation References
 
@@ -32,7 +33,6 @@ npm install
 npm run start         # Injects dev version and starts Expo
 npm run start:dev     # Starts with --dev-client
 npm run android       # Launch on Android
-npm run ios           # Launch on iOS
 
 # Quality checks
 npm run qualitycheck  # Runs typecheck, lint, and test:silent in sequence

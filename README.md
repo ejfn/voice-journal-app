@@ -2,11 +2,15 @@
 
 > *Speak your mind. AI captures the rest.*
 
-A zero-subscription mobile voice diary application built with React Native and Expo (SDK 57). It features native audio recording, background speech-to-structured metadata powered by Gemini Flash, local full-text search (FTS5 via `expo-sqlite`), Google Photos-style storage indicators, and on-demand Google Drive synchronization.
+A zero-subscription mobile voice diary application built with React Native and Expo (SDK 57) targeting **Android**. It features custom native audio recording with background notification controls, background speech-to-structured metadata powered by Gemini Flash, local full-text search (FTS5 via `expo-sqlite`), Google Photos-style storage indicators, and on-demand Google Drive synchronization.
+
+## Platform Support
+
+Voice Journal targets **Android only** at this stage. It utilizes a custom native module (`voice-recorder`) for background recording, foreground service management, and notification controls. iOS is not supported.
 
 ## Features
 
-- **Audio Capture**: Record, pause, resume, and play voice entries with real-time waveform metering and large touch targets using `expo-audio`.
+- **Native Audio Capture**: Record, pause, resume, and play voice entries with real-time waveform metering and large touch targets using a custom native Android recording service with dynamic background notification controls (Pause, Resume, Stop).
 - **Multimodal AI**: Automatically transcribes audio in the background and extracts entry titles, executive summaries, and lowercase tags via `gemini-3.5-flash-lite`.
 - **Offline-First & Background Queue**: Immediate local saving with queued offline transcription and graduated exponential backoff retries.
 - **Local Full-Text Search**: Instant search across titles, summaries, transcripts, and tags powered by SQLite FTS5.
