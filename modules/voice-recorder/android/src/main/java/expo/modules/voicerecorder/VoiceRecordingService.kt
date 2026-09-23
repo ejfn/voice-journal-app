@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.File
+import java.util.Locale
 
 interface VoiceRecordingServiceListener {
   fun onStatusUpdate(isRecording: Boolean, isPaused: Boolean, durationMillis: Long, amplitude: Int)
@@ -134,14 +135,23 @@ class VoiceRecordingService : Service() {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
+    val durationMillis = getCurrentDurationMillis()
+    val formattedDuration = formatDuration(durationMillis)
+
     val title = if (paused) "Voice Journal (Paused)" else "Voice Journal"
-    val content = if (paused) "Recording paused • Tap Resume to continue" else "Recording voice note... • Tap to open"
+    val content = if (paused) {
+      "Recording paused at $formattedDuration • Tap Resume to continue"
+    } else {
+      "Recording voice note... • Tap to open"
+    }
+
+    val accentColor = if (paused) 0xFFF59E0B.toInt() else 0xFFEA4335.toInt() // Amber when paused, vivid red when recording
 
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle(title)
       .setContentText(content)
       .setSmallIcon(R.drawable.ic_notification_mic)
-      .setColor(0xFF4F46E5.toInt()) // Indigo theme accent
+      .setColor(accentColor)
       .setOngoing(true)
       .setContentIntent(contentIntent)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -149,31 +159,45 @@ class VoiceRecordingService : Service() {
       .setSilent(true)
       .setOnlyAlertOnce(true)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .setShowWhen(true)
 
     if (paused) {
+      builder.setShowWhen(false)
+      builder.setSubText(formattedDuration)
       builder.addAction(
-        R.drawable.ic_notification_resume,
+        0,
         "Resume",
         togglePendingIntent
       )
     } else {
+      builder.setShowWhen(true)
       builder.setUsesChronometer(true)
-      builder.setWhen(System.currentTimeMillis() - getCurrentDurationMillis())
+      builder.setWhen(System.currentTimeMillis() - durationMillis)
       builder.addAction(
-        R.drawable.ic_notification_pause,
+        0,
         "Pause",
         togglePendingIntent
       )
     }
 
     builder.addAction(
-      R.drawable.ic_notification_stop,
+      0,
       "Stop",
       stopPendingIntent
     )
 
     return builder.build()
+  }
+
+  private fun formatDuration(durationMillis: Long): String {
+    val totalSeconds = (durationMillis / 1000).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+      String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+    } else {
+      String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+    }
   }
 
   private fun updateNotification(paused: Boolean) {
