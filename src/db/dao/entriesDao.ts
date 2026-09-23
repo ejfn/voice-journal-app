@@ -522,10 +522,27 @@ export const entriesDao = {
     return rows.map(rowToEntry);
   },
 
-  async getAllTags(): Promise<string[]> {
+  async getAllTags(options?: {
+    recentEntriesLimit?: number;
+    maxTags?: number;
+  }): Promise<string[]> {
     const db = getDatabase();
+    const recentLimit = options?.recentEntriesLimit ?? 100;
+    const maxTags = options?.maxTags ?? 15;
+
     const rows = await db.getAllAsync<{ tag: string }>(
-      `SELECT DISTINCT json_each.value as tag FROM entries, json_each(CASE WHEN json_valid(entries.tags) THEN entries.tags ELSE '[]' END) WHERE entries.deleted_at IS NULL AND json_each.value IS NOT NULL AND json_each.value != '' ORDER BY tag ASC`,
+      `SELECT json_each.value AS tag, COUNT(*) AS hits
+       FROM (
+         SELECT tags FROM entries
+         WHERE deleted_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT ?
+       ), json_each(CASE WHEN json_valid(tags) THEN tags ELSE '[]' END)
+       WHERE json_each.value IS NOT NULL AND json_each.value != ''
+       GROUP BY json_each.value
+       ORDER BY hits DESC, tag ASC
+       LIMIT ?`,
+      [recentLimit, maxTags],
     );
     return rows.map((r) => r.tag);
   },
@@ -533,66 +550,11 @@ export const entriesDao = {
   async getGroupedTimelineEntries(options?: {
     query?: string;
     tag?: string;
+    limit?: number;
+    offset?: number;
   }): Promise<MonthSection[]> {
     const entries = await this.getEntries(options);
-
-    const monthMap = new Map<
-      string,
-      {
-        monthLabel: string;
-        dayMap: Map<string, { dayLabel: string; clips: JournalEntry[] }>;
-      }
-    >();
-
-    for (const entry of entries) {
-      const date = new Date(entry.created_at);
-      const year = date.getFullYear();
-      const monthNum = String(date.getMonth() + 1).padStart(2, "0");
-      const monthKey = `${year}-${monthNum}`;
-      const monthLabel = date.toLocaleDateString("en-US", {
-        month: "long",
-        year: "numeric",
-      });
-
-      const dayKey = `${year}-${monthNum}-${String(date.getDate()).padStart(2, "0")}`; // "YYYY-MM-DD" local
-      const dayLabel = formatDayLabel(date);
-
-      if (!monthMap.has(monthKey)) {
-        monthMap.set(monthKey, {
-          monthLabel,
-          dayMap: new Map(),
-        });
-      }
-
-      const currentMonth = monthMap.get(monthKey)!;
-      if (!currentMonth.dayMap.has(dayKey)) {
-        currentMonth.dayMap.set(dayKey, {
-          dayLabel,
-          clips: [],
-        });
-      }
-
-      currentMonth.dayMap.get(dayKey)!.clips.push(entry);
-    }
-
-    const sections: MonthSection[] = [];
-    for (const [monthKey, monthData] of monthMap.entries()) {
-      const dayGroups: DayGroup[] = [];
-      for (const [dayKey, dayData] of monthData.dayMap.entries()) {
-        dayGroups.push({
-          dayKey,
-          dayLabel: dayData.dayLabel,
-          clips: dayData.clips,
-        });
-      }
-      sections.push({
-        monthKey,
-        monthLabel: monthData.monthLabel,
-        dayGroups,
-      });
-    }
-
-    return sections;
+    return groupEntriesIntoMonthSections(entries);
   },
 
   async updateWaveform(id: string, waveform: number[]): Promise<void> {
@@ -608,3 +570,65 @@ export const entriesDao = {
     ]);
   },
 };
+
+export function groupEntriesIntoMonthSections(
+  entries: JournalEntry[],
+): MonthSection[] {
+  const monthMap = new Map<
+    string,
+    {
+      monthLabel: string;
+      dayMap: Map<string, { dayLabel: string; clips: JournalEntry[] }>;
+    }
+  >();
+
+  for (const entry of entries) {
+    const date = new Date(entry.created_at);
+    const year = date.getFullYear();
+    const monthNum = String(date.getMonth() + 1).padStart(2, "0");
+    const monthKey = `${year}-${monthNum}`;
+    const monthLabel = date.toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+
+    const dayKey = `${year}-${monthNum}-${String(date.getDate()).padStart(2, "0")}`; // "YYYY-MM-DD" local
+    const dayLabel = formatDayLabel(date);
+
+    if (!monthMap.has(monthKey)) {
+      monthMap.set(monthKey, {
+        monthLabel,
+        dayMap: new Map(),
+      });
+    }
+
+    const currentMonth = monthMap.get(monthKey)!;
+    if (!currentMonth.dayMap.has(dayKey)) {
+      currentMonth.dayMap.set(dayKey, {
+        dayLabel,
+        clips: [],
+      });
+    }
+
+    currentMonth.dayMap.get(dayKey)!.clips.push(entry);
+  }
+
+  const sections: MonthSection[] = [];
+  for (const [monthKey, monthData] of monthMap.entries()) {
+    const dayGroups: DayGroup[] = [];
+    for (const [dayKey, dayData] of monthData.dayMap.entries()) {
+      dayGroups.push({
+        dayKey,
+        dayLabel: dayData.dayLabel,
+        clips: dayData.clips,
+      });
+    }
+    sections.push({
+      monthKey,
+      monthLabel: monthData.monthLabel,
+      dayGroups,
+    });
+  }
+
+  return sections;
+}
