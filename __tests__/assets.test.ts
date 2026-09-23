@@ -124,10 +124,15 @@ describe("App Assets & Branding Verification", () => {
     const appJsonRaw = fs.readFileSync(appJsonPath, "utf8");
     const appJson = JSON.parse(appJsonRaw);
 
-    expect(appJson.expo.icon).toBe("./assets/icon.png");
-    expect(appJson.expo.splash).toBeDefined();
-    expect(appJson.expo.splash.image).toBe("./assets/splash-icon.png");
-    expect(appJson.expo.splash.backgroundColor).toBe("#0B0F19");
+    const splashPlugin = (appJson.expo.plugins || []).find(
+      (p: unknown) => Array.isArray(p) && p[0] === "expo-splash-screen",
+    );
+    const splashConfig =
+      appJson.expo.splash || (splashPlugin ? splashPlugin[1] : undefined);
+
+    expect(splashConfig).toBeDefined();
+    expect(splashConfig.image).toBe("./assets/splash-icon.png");
+    expect(splashConfig.backgroundColor).toBe("#0B0F19");
     expect(appJson.expo.android.adaptiveIcon.backgroundColor).toBe("#0B0F19");
     expect(appJson.expo.android.adaptiveIcon.foregroundImage).toBe(
       "./assets/android-icon-foreground.png",
