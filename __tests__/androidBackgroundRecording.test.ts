@@ -5,6 +5,7 @@ import {
 import { setAudioModeAsync, AudioModule } from "expo-audio";
 import { File } from "expo-file-system";
 import { PermissionsAndroid, Platform } from "react-native";
+import { VoiceRecorder } from "voice-recorder";
 
 describe("Android Background Recording & Notification Controls", () => {
   beforeEach(() => {
@@ -210,6 +211,93 @@ describe("Android Background Recording & Notification Controls", () => {
 
       // Clean up
       audioRecordingService.setOnExternalStop(null);
+    });
+  });
+
+  describe("VoiceRecorder Local Module Adapter (Android)", () => {
+    const originalOS = Platform.OS;
+
+    beforeEach(() => {
+      Object.defineProperty(Platform, "OS", {
+        value: "android",
+        configurable: true,
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(Platform, "OS", {
+        value: originalOS,
+        configurable: true,
+      });
+    });
+
+    it("uses VoiceRecorder when available on Android", async () => {
+      const isAvailableSpy = jest
+        .spyOn(VoiceRecorder, "isAvailable")
+        .mockReturnValue(true);
+      const startSpy = jest
+        .spyOn(VoiceRecorder, "startRecording")
+        .mockResolvedValue(true);
+      const pauseSpy = jest
+        .spyOn(VoiceRecorder, "pauseRecording")
+        .mockResolvedValue(true);
+      const resumeSpy = jest
+        .spyOn(VoiceRecorder, "resumeRecording")
+        .mockResolvedValue(true);
+      const stopSpy = jest
+        .spyOn(VoiceRecorder, "stopRecording")
+        .mockResolvedValue({
+          uri: "file:///mock-cache/recording_vr-test-1.m4a",
+          durationMillis: 6000,
+        });
+
+      let listenerCallback: ((status: unknown) => void) | null = null;
+      jest
+        .spyOn(VoiceRecorder, "addListener")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .mockImplementation((cb: any) => {
+          listenerCallback = cb;
+          return { remove: jest.fn() };
+        });
+
+      const statusUpdates: { isPaused: boolean; isRecording: boolean }[] = [];
+      await audioRecordingService.startRecording("vr-test-1", (status) => {
+        statusUpdates.push({
+          isPaused: status.isPaused,
+          isRecording: status.isRecording,
+        });
+      });
+
+      expect(isAvailableSpy).toHaveBeenCalled();
+      expect(startSpy).toHaveBeenCalledWith(
+        expect.stringContaining("recording_vr-test-1.m4a"),
+      );
+
+      // Pause recording
+      await audioRecordingService.pauseRecording();
+      expect(pauseSpy).toHaveBeenCalled();
+
+      // Resume recording
+      await audioRecordingService.resumeRecording();
+      expect(resumeSpy).toHaveBeenCalled();
+
+      // Simulate native notification status update with metering and duration
+      if (listenerCallback) {
+        (listenerCallback as (status: unknown) => void)({
+          isRecording: true,
+          isPaused: true,
+          durationMillis: 4000,
+          meteringLevel: 0.5,
+        });
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 6000;
+
+      const stopResult = await audioRecordingService.stopRecording();
+      expect(stopSpy).toHaveBeenCalled();
+      expect(stopResult.durationSec).toBe(6);
+      expect(stopResult.localUri).toContain("vr-test-1.m4a");
     });
   });
 });

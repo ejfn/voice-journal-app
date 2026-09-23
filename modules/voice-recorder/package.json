@@ -1,0 +1,7 @@
+{
+  "name": "voice-recorder",
+  "version": "0.1.0",
+  "description": "Custom Android recording module with dynamic notification controls for Voice Journal",
+  "main": "index.ts",
+  "types": "index.ts"
+}
