@@ -1512,5 +1512,89 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
         }),
       ).resolves.not.toThrow();
     });
+
+    it("listDriveSidecars requests pageSize=1000, orderBy=modifiedTime desc, and sorts descending by modifiedMs", async () => {
+      let requestedUrl = "";
+      global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+        requestedUrl = url.toString();
+        return new Response(
+          JSON.stringify({
+            files: [
+              {
+                id: "sidecar-older",
+                name: "entry-older.json",
+                modifiedTime: "2026-01-01T10:00:00.000Z",
+              },
+              {
+                id: "sidecar-newer",
+                name: "entry-newer.json",
+                modifiedTime: "2026-09-01T10:00:00.000Z",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      });
+
+      const results = await driveService.listDriveSidecars("mock-token");
+      expect(requestedUrl).toContain("pageSize=1000");
+      expect(requestedUrl).toContain("orderBy=modifiedTime%20desc");
+      expect(results.length).toBe(2);
+      // Newest should be sorted first
+      expect(results[0].entryId).toBe("entry-newer");
+      expect(results[1].entryId).toBe("entry-older");
+      expect(results[0].modifiedMs).toBeGreaterThan(results[1].modifiedMs);
+    });
+
+    it("syncTwoWay invokes onProgress callback when threshold of downloads is reached", async () => {
+      // Mock Drive having 25 remote sidecars missing locally
+      const t0 = 1758290000000;
+      const remoteFiles = Array.from({ length: 25 }, (_, i) => ({
+        id: `sc-progress-${i}`,
+        name: `entry-progress-${i}.json`,
+        modifiedTime: new Date(t0 + i * 1000).toISOString(),
+      }));
+
+      global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+        const urlStr = url.toString();
+        if (urlStr.includes("files?q=")) {
+          return new Response(JSON.stringify({ files: remoteFiles }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("alt=media")) {
+          const match = urlStr.match(/files\/([^?]+)/);
+          const fileId = match ? match[1] : "unknown";
+          const indexStr = fileId.replace("sc-progress-", "");
+          const mockEntry: JournalEntry = {
+            id: `entry-progress-${indexStr}`,
+            title: `Progress Entry ${indexStr}`,
+            summary: "",
+            transcript: "",
+            tags: [],
+            duration_sec: 10,
+            source_type: "recorded",
+            local_audio_path: null,
+            drive_audio_file_id: null,
+            drive_sidecar_file_id: fileId,
+            is_audio_cached: 1,
+            created_at: t0,
+            last_accessed_at: t0,
+          };
+          return new Response(JSON.stringify(mockEntry), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      });
+
+      const progressUpdates: number[] = [];
+      const result = await driveService.syncTwoWay({
+        onProgress: (count) => {
+          progressUpdates.push(count);
+        },
+      });
+
+      expect(result.downloadedCount).toBe(25);
+      expect(progressUpdates).toContain(25);
+    });
   });
 });

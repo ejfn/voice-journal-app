@@ -137,7 +137,15 @@ export class SmartSyncService {
       await entriesDao.purgeExpiredBinnedEntries(thirtyDaysAgo);
 
       // Run two-way sync (deletions, download missing, upload unsynced)
-      const result = await googleDriveService.syncTwoWay();
+      const result = await googleDriveService.syncTwoWay({
+        onProgress: (downloaded) => {
+          this.notifyListeners({
+            status: "syncing",
+            downloadedCount: downloaded,
+            timestamp: Date.now(),
+          });
+        },
+      });
       await googleDriveService.runLruEviction();
 
       // Trigger upload queue to process any items

@@ -754,7 +754,7 @@ export class GoogleDriveService {
       const query = encodeURIComponent(
         "mimeType = 'application/json' and name contains '.json' and trashed = false",
       );
-      let searchUrl = `https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=100&fields=nextPageToken,files(id,name,modifiedTime)`;
+      let searchUrl = `https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=1000&orderBy=${encodeURIComponent("modifiedTime desc")}&fields=nextPageToken,files(id,name,modifiedTime)`;
       if (pageToken) {
         searchUrl += `&pageToken=${encodeURIComponent(pageToken)}`;
       }
@@ -786,15 +786,20 @@ export class GoogleDriveService {
       pageToken = data.nextPageToken || null;
     } while (pageToken);
 
+    // Ensure reverse chronological order (newest first)
+    results.sort((a, b) => b.modifiedMs - a.modifiedMs);
+
     return results;
   }
 
   /**
    * Complete two-way sync:
    * Rule 1: Always upload if local is newer (updated).
-   * Rule 2: Download only when local is missing.
+   * Rule 2: Download only when local is missing (newest first).
    */
-  async syncTwoWay(): Promise<{
+  async syncTwoWay(options?: {
+    onProgress?: (downloadedCount: number) => void;
+  }): Promise<{
     uploadedCount: number;
     downloadedCount: number;
   }> {
@@ -921,6 +926,9 @@ export class GoogleDriveService {
                 drive_synced_at: Date.now(),
               });
               downloadedCount++;
+              if (downloadedCount % 25 === 0) {
+                options?.onProgress?.(downloadedCount);
+              }
             } catch {
               // Ignore malformed JSON sidecars
             }

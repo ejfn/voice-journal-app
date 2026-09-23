@@ -6,6 +6,7 @@ import {
   StyleSheet,
   RefreshControl,
   StatusBar,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { File } from "expo-file-system";
@@ -18,7 +19,12 @@ import { ReviewModal } from "./src/components/ReviewModal";
 import { SettingsModal } from "./src/components/SettingsModal";
 import { TagFilterChips } from "./src/components/TagFilterChips";
 import { TimelineHeader } from "./src/components/TimelineHeader";
-import { DayGroup, entriesDao, MonthSection } from "./src/db/dao/entriesDao";
+import {
+  DayGroup,
+  entriesDao,
+  groupEntriesIntoMonthSections,
+  MonthSection,
+} from "./src/db/dao/entriesDao";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
@@ -50,6 +56,14 @@ const MainScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+
+  // Pagination State
+  const PAGE_SIZE = 50;
+  const loadedEntriesRef = useRef<JournalEntry[]>([]);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const prevQueryRef = useRef<string>(searchQuery);
+  const prevTagRef = useRef<string>(selectedTag);
 
   // Recording Modal State
   const [isRecordingVisible, setIsRecordingVisible] = useState<boolean>(false);
@@ -125,30 +139,81 @@ const MainScreen: React.FC = () => {
     downloadingTransferCountRef.current.set(entryId, nextCount);
   }, []);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(
+    async (options?: { reset?: boolean }) => {
+      try {
+        const isFilterChange =
+          Boolean(options?.reset) ||
+          prevQueryRef.current !== searchQuery ||
+          prevTagRef.current !== selectedTag;
+
+        if (isFilterChange) {
+          prevQueryRef.current = searchQuery;
+          prevTagRef.current = selectedTag;
+        }
+
+        const fetchLimit = isFilterChange
+          ? PAGE_SIZE
+          : Math.max(PAGE_SIZE, loadedEntriesRef.current.length);
+
+        const entries = await entriesDao.getEntries({
+          query: searchQuery,
+          tag: selectedTag === "all" ? undefined : selectedTag,
+          limit: fetchLimit,
+          offset: 0,
+        });
+
+        loadedEntriesRef.current = entries;
+        setHasMore(entries.length === fetchLimit);
+        setSections(groupEntriesIntoMonthSections(entries));
+
+        const currentReviewEntry = reviewEntryRef.current;
+        if (currentReviewEntry) {
+          const refreshedReviewEntry =
+            await getRefreshedReviewEntry(currentReviewEntry);
+          setReviewEntry((current) =>
+            current?.id === currentReviewEntry.id
+              ? refreshedReviewEntry
+              : current,
+          );
+        }
+
+        const allTags = await entriesDao.getAllTags();
+        setTags(allTags);
+      } catch (err) {
+        console.warn("Error loading timeline data:", err);
+      }
+    },
+    [searchQuery, selectedTag],
+  );
+
+  const handleLoadMore = useCallback(async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
     try {
-      const grouped = await entriesDao.getGroupedTimelineEntries({
+      const currentOffset = loadedEntriesRef.current.length;
+      const nextBatch = await entriesDao.getEntries({
         query: searchQuery,
         tag: selectedTag === "all" ? undefined : selectedTag,
+        limit: PAGE_SIZE,
+        offset: currentOffset,
       });
-      setSections(grouped);
-      const currentReviewEntry = reviewEntryRef.current;
-      if (currentReviewEntry) {
-        const refreshedReviewEntry =
-          await getRefreshedReviewEntry(currentReviewEntry);
-        setReviewEntry((current) =>
-          current?.id === currentReviewEntry.id
-            ? refreshedReviewEntry
-            : current,
-        );
+
+      if (nextBatch.length < PAGE_SIZE) {
+        setHasMore(false);
       }
 
-      const allTags = await entriesDao.getAllTags();
-      setTags(allTags);
+      if (nextBatch.length > 0) {
+        const updated = [...loadedEntriesRef.current, ...nextBatch];
+        loadedEntriesRef.current = updated;
+        setSections(groupEntriesIntoMonthSections(updated));
+      }
     } catch (err) {
-      console.warn("Error loading timeline data:", err);
+      console.warn("Error loading more entries:", err);
+    } finally {
+      setIsLoadingMore(false);
     }
-  }, [searchQuery, selectedTag]);
+  }, [hasMore, isLoadingMore, searchQuery, selectedTag]);
 
   useEffect(() => {
     reviewEntryRef.current = reviewEntry;
@@ -205,7 +270,10 @@ const MainScreen: React.FC = () => {
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
     // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
-      if (event.status === "synced") {
+      if (
+        event.status === "synced" ||
+        (event.status === "syncing" && (event.downloadedCount ?? 0) > 0)
+      ) {
         loadData();
       }
     });
@@ -657,6 +725,15 @@ const MainScreen: React.FC = () => {
           }
           contentContainerStyle={styles.listContent}
           stickySectionHeadersEnabled={false}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            isLoadingMore ? (
+              <View style={styles.loadingMoreFooter}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : null
+          }
         />
 
         {/* Centered Microphone FAB with Hold-and-Slide Import Gesture */}
@@ -769,5 +846,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 21,
+  },
+  loadingMoreFooter: {
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

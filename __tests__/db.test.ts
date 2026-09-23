@@ -1,4 +1,7 @@
-import { entriesDao } from "../src/db/dao/entriesDao";
+import {
+  entriesDao,
+  groupEntriesIntoMonthSections,
+} from "../src/db/dao/entriesDao";
 import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { syncQueueDao } from "../src/db/dao/syncQueueDao";
 import {
@@ -954,6 +957,189 @@ describe("Database & FTS5 DAO", () => {
       const unsyncedIds = unsynced.map((e) => e.id);
       expect(unsyncedIds).not.toContain("soft-del-local-only");
       expect(unsyncedIds).toContain("soft-del-in-drive");
+    });
+  });
+
+  describe("getAllTags & Timeline Pagination", () => {
+    it("orders tags by hits descending within recent entries limit and respects maxTags", async () => {
+      const baseTime = 1750000000000;
+      // Entry 1 (most recent): work, ideas
+      await entriesDao.insertEntry({
+        id: "tag-entry-1",
+        title: "E1",
+        summary: "",
+        transcript: "",
+        tags: ["work", "ideas"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: baseTime + 3000,
+        last_accessed_at: baseTime + 3000,
+      });
+      // Entry 2: work, daily
+      await entriesDao.insertEntry({
+        id: "tag-entry-2",
+        title: "E2",
+        summary: "",
+        transcript: "",
+        tags: ["work", "daily"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: baseTime + 2000,
+        last_accessed_at: baseTime + 2000,
+      });
+      // Entry 3: work
+      await entriesDao.insertEntry({
+        id: "tag-entry-3",
+        title: "E3",
+        summary: "",
+        transcript: "",
+        tags: ["work"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: baseTime + 1000,
+        last_accessed_at: baseTime + 1000,
+      });
+      // Entry 4 (oldest): stale-old-tag
+      await entriesDao.insertEntry({
+        id: "tag-entry-4",
+        title: "E4",
+        summary: "",
+        transcript: "",
+        tags: ["stale-old-tag"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: baseTime,
+        last_accessed_at: baseTime,
+      });
+
+      // Window of top 3 recent entries: Entry 1, 2, 3
+      // In this window:
+      // "work" = 3 hits
+      // "daily" = 1 hit
+      // "ideas" = 1 hit
+      // "stale-old-tag" is outside top 3 entries
+      const tags = await entriesDao.getAllTags({
+        recentEntriesLimit: 3,
+        maxTags: 2,
+      });
+      expect(tags).toEqual(["work", "daily"]);
+
+      const allRecent = await entriesDao.getAllTags({
+        recentEntriesLimit: 3,
+        maxTags: 10,
+      });
+      expect(allRecent).toEqual(["work", "daily", "ideas"]);
+      expect(allRecent).not.toContain("stale-old-tag");
+    });
+
+    it("paginates entries using limit and offset", async () => {
+      const baseTime = 1750000000000;
+      for (let i = 1; i <= 5; i++) {
+        await entriesDao.insertEntry({
+          id: `page-entry-${i}`,
+          title: `Entry ${i}`,
+          summary: "",
+          transcript: `Transcript ${i}`,
+          tags: ["test"],
+          duration_sec: 10,
+          source_type: "recorded",
+          local_audio_path: null,
+          drive_audio_file_id: null,
+          drive_sidecar_file_id: null,
+          is_audio_cached: 1,
+          created_at: baseTime + i * 1000,
+          last_accessed_at: baseTime + i * 1000,
+        });
+      }
+
+      // Page 1: limit 2, offset 0 -> entries 5 and 4
+      const page1 = await entriesDao.getEntries({ limit: 2, offset: 0 });
+      expect(page1.map((e) => e.id)).toEqual(["page-entry-5", "page-entry-4"]);
+
+      // Page 2: limit 2, offset 2 -> entries 3 and 2
+      const page2 = await entriesDao.getEntries({ limit: 2, offset: 2 });
+      expect(page2.map((e) => e.id)).toEqual(["page-entry-3", "page-entry-2"]);
+
+      // Page 3: limit 2, offset 4 -> entry 1
+      const page3 = await entriesDao.getEntries({ limit: 2, offset: 4 });
+      expect(page3.map((e) => e.id)).toEqual(["page-entry-1"]);
+    });
+
+    it("groups entries into month and day sections with groupEntriesIntoMonthSections", () => {
+      const d1 = new Date(2026, 8, 20, 10, 0).getTime();
+      const d2 = new Date(2026, 8, 20, 14, 0).getTime();
+      const d3 = new Date(2026, 7, 15, 9, 0).getTime();
+
+      const entries: JournalEntry[] = [
+        {
+          id: "m-1",
+          title: "Clip 1",
+          summary: "",
+          transcript: "",
+          tags: [],
+          duration_sec: 10,
+          source_type: "recorded",
+          local_audio_path: null,
+          drive_audio_file_id: null,
+          drive_sidecar_file_id: null,
+          is_audio_cached: 1,
+          created_at: d1,
+          last_accessed_at: d1,
+        },
+        {
+          id: "m-2",
+          title: "Clip 2",
+          summary: "",
+          transcript: "",
+          tags: [],
+          duration_sec: 10,
+          source_type: "recorded",
+          local_audio_path: null,
+          drive_audio_file_id: null,
+          drive_sidecar_file_id: null,
+          is_audio_cached: 1,
+          created_at: d2,
+          last_accessed_at: d2,
+        },
+        {
+          id: "m-3",
+          title: "Clip 3",
+          summary: "",
+          transcript: "",
+          tags: [],
+          duration_sec: 10,
+          source_type: "recorded",
+          local_audio_path: null,
+          drive_audio_file_id: null,
+          drive_sidecar_file_id: null,
+          is_audio_cached: 1,
+          created_at: d3,
+          last_accessed_at: d3,
+        },
+      ];
+
+      const sections = groupEntriesIntoMonthSections(entries);
+      expect(sections.length).toBe(2);
+      expect(sections[0].dayGroups.length).toBe(1);
+      expect(sections[0].dayGroups[0].clips.length).toBe(2);
+      expect(sections[1].dayGroups.length).toBe(1);
+      expect(sections[1].dayGroups[0].clips.length).toBe(1);
     });
   });
 });
