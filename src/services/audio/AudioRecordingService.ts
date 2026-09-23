@@ -1,5 +1,6 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
-import { Directory, File } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
+import { VoiceRecorder } from "voice-recorder";
 import {
   AppState,
   AppStateStatus,
@@ -135,17 +136,11 @@ class AudioRecordingService {
       allowsBackgroundRecording: true,
     });
 
-    // In modern expo-audio (SDK 57), native AudioRecorder is instantiated from ExpoAudio native module
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { requireNativeModule } = require("expo-modules-core");
-      const AudioModule = requireNativeModule("ExpoAudio");
-      if (AudioModule && AudioModule.AudioRecorder) {
-        const recordingOptions = {
-          ...RecordingPresets.HIGH_QUALITY,
-          isMeteringEnabled: true,
-        };
-        const recorder = new AudioModule.AudioRecorder(recordingOptions);
+    if (Platform.OS === "android" && VoiceRecorder.isAvailable()) {
+      try {
+        const cacheDir = Paths.cache?.uri || "";
+        const tempFilePath = `${cacheDir.endsWith("/") ? cacheDir : cacheDir + "/"}recording_${entryId}.m4a`;
+        const recorder = this.createVoiceRecorderAdapter(tempFilePath);
         this.activeRecorder = recorder;
         if (typeof recorder.addListener === "function") {
           this.statusSubscription = recorder.addListener(
@@ -160,10 +155,50 @@ class AudioRecordingService {
             },
           );
         }
-        await recorder.prepareToRecordAsync(recordingOptions);
-        recorder.record();
-      } else {
-        // Fallback for mock/test environments
+        recorder.record?.();
+      } catch (err) {
+        console.warn("Could not start VoiceRecorder on Android:", err);
+      }
+    } else {
+      // In modern expo-audio (SDK 57), native AudioRecorder is instantiated from ExpoAudio native module
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { requireNativeModule } = require("expo-modules-core");
+        const AudioModule = requireNativeModule("ExpoAudio");
+        if (AudioModule && AudioModule.AudioRecorder) {
+          const recordingOptions = {
+            ...RecordingPresets.HIGH_QUALITY,
+            isMeteringEnabled: true,
+          };
+          const recorder = new AudioModule.AudioRecorder(recordingOptions);
+          this.activeRecorder = recorder;
+          if (typeof recorder.addListener === "function") {
+            this.statusSubscription = recorder.addListener(
+              "recordingStatusUpdate",
+              (status: {
+                isFinished?: boolean;
+                isPaused?: boolean;
+                error?: string | null;
+                url?: string | null;
+              }) => {
+                this.handleRecordingStatusUpdate(status);
+              },
+            );
+          }
+          await recorder.prepareToRecordAsync(recordingOptions);
+          recorder.record();
+        } else {
+          // Fallback for mock/test environments
+          this.activeRecorder = {
+            record: () => {},
+            stop: async () => {},
+            pause: () => {},
+            resume: () => {},
+            uri: null,
+          };
+        }
+      } catch (recorderErr) {
+        console.warn("Could not start native audio recorder:", recorderErr);
         this.activeRecorder = {
           record: () => {},
           stop: async () => {},
@@ -172,15 +207,6 @@ class AudioRecordingService {
           uri: null,
         };
       }
-    } catch (recorderErr) {
-      console.warn("Could not start native audio recorder:", recorderErr);
-      this.activeRecorder = {
-        record: () => {},
-        stop: async () => {},
-        pause: () => {},
-        resume: () => {},
-        uri: null,
-      };
     }
 
     this.startStatusTimer();
@@ -476,10 +502,10 @@ class AudioRecordingService {
         }
       }
       if (!isAlreadyRecording) {
-        if (this.activeRecorder.record) {
-          await this.activeRecorder.record();
-        } else if (this.activeRecorder.resume) {
+        if (this.activeRecorder.resume) {
           await this.activeRecorder.resume();
+        } else if (this.activeRecorder.record) {
+          await this.activeRecorder.record();
         }
       }
     } catch (err) {
@@ -632,6 +658,80 @@ class AudioRecordingService {
     } catch {
       // Ignore audio mode reset error
     }
+  }
+
+  private createVoiceRecorderAdapter(
+    initialFilePath: string,
+  ): AudioRecorderInstance {
+    let latestDuration = 0;
+    let latestMeteringDb: number | null = null;
+    let isCurrentlyPaused = false;
+    let isCurrentlyRecording = false;
+    let currentUri = initialFilePath;
+
+    return {
+      uri: currentUri,
+      getURI: () => currentUri,
+      prepareToRecordAsync: async () => {},
+      record: () => {
+        isCurrentlyRecording = true;
+        isCurrentlyPaused = false;
+        VoiceRecorder.startRecording(initialFilePath).catch((err) => {
+          console.warn("Failed to start VoiceRecorder:", err);
+        });
+      },
+      pause: async () => {
+        isCurrentlyPaused = true;
+        await VoiceRecorder.pauseRecording();
+      },
+      resume: async () => {
+        isCurrentlyPaused = false;
+        await VoiceRecorder.resumeRecording();
+      },
+      stop: async () => {
+        isCurrentlyRecording = false;
+        const res = await VoiceRecorder.stopRecording();
+        if (res.uri) {
+          currentUri = res.uri;
+        }
+      },
+      getStatus: () => ({
+        isRecording: isCurrentlyRecording && !isCurrentlyPaused,
+        isPaused: isCurrentlyPaused,
+        durationMillis: latestDuration,
+        metering: latestMeteringDb !== null ? latestMeteringDb : undefined,
+      }),
+      addListener: (_eventName, listener) => {
+        const sub = VoiceRecorder.addListener((update) => {
+          if (typeof update.durationMillis === "number") {
+            latestDuration = update.durationMillis;
+          }
+          if (typeof update.meteringLevel === "number") {
+            latestMeteringDb =
+              update.meteringLevel > 0
+                ? Math.max(
+                    -60,
+                    Math.min(0, 20 * Math.log10(update.meteringLevel)),
+                  )
+                : -60;
+          }
+          if (update.isPaused !== undefined) {
+            isCurrentlyPaused = update.isPaused;
+          }
+          if (update.isRecording !== undefined) {
+            isCurrentlyRecording = update.isRecording;
+          }
+
+          listener({
+            isFinished: update.isFinished,
+            isPaused: update.isPaused,
+            url: update.uri || currentUri,
+            error: update.error,
+          });
+        });
+        return sub;
+      },
+    };
   }
 }
 
