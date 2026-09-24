@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  ActivityIndicator,
   StyleSheet,
 } from "react-native";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
@@ -13,12 +14,14 @@ interface TimelineHeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onSettingsPress?: () => void;
+  isSyncing?: boolean;
 }
 
 export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   searchQuery,
   onSearchChange,
   onSettingsPress,
+  isSyncing = false,
 }) => {
   const { colors } = useTheme();
 
@@ -36,23 +39,35 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           </Text>
         </View>
 
-        {onSettingsPress && (
-          <TouchableOpacity
-            style={[
-              styles.settingsButton,
-              {
-                backgroundColor: colors.surfaceAlt,
-                borderColor: colors.border,
-              },
-            ]}
-            onPress={onSettingsPress}
-            activeOpacity={0.7}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Settings"
-          >
-            <MaterialIcons name="settings" size={20} color={colors.text} />
-          </TouchableOpacity>
-        )}
+        <View style={styles.headerRight}>
+          {isSyncing && (
+            <View style={styles.syncIndicator}>
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+                accessibilityLabel="Syncing with Google Drive"
+              />
+            </View>
+          )}
+
+          {onSettingsPress && (
+            <TouchableOpacity
+              style={[
+                styles.settingsButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              onPress={onSettingsPress}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Settings"
+            >
+              <MaterialIcons name="settings" size={20} color={colors.text} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <View
@@ -115,6 +130,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     marginTop: 2,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  syncIndicator: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
   settingsButton: {
     width: 40,

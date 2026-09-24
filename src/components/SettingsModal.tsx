@@ -92,10 +92,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, []);
 
   useEffect(() => {
-    if (visible) {
-      refreshStatus();
-    }
-  }, [visible, refreshStatus]);
+    if (!visible) return;
+
+    refreshStatus();
+    setIsSyncing(smartSyncService.getIsSyncing());
+
+    const unsubscribe = smartSyncService.addListener((event) => {
+      setIsSyncing(event.status === "syncing");
+      if (event.status === "synced" || event.status === "error") {
+        void refreshStatus();
+        if (onSyncCompleted) {
+          onSyncCompleted();
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [visible, refreshStatus, onSyncCompleted]);
 
   const handleOpenAIStudio = async () => {
     const url = "https://aistudio.google.com/apikey";
@@ -214,9 +227,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         type: "success",
       });
       // Automatically trigger smart sync upon connecting Google Drive
-      smartSyncService.sync({ force: true, reason: "sign_in" }).catch((err) => {
-        console.warn("Smart sync error after sign in:", err);
-      });
+      setIsSyncing(true);
+      smartSyncService
+        .sync({ force: true, reason: "sign_in" })
+        .then(async (result) => {
+          await refreshStatus();
+          if (onSyncCompleted) {
+            onSyncCompleted();
+          }
+          if (
+            (result.downloadedCount ?? 0) > 0 ||
+            (result.uploadedCount ?? 0) > 0
+          ) {
+            showToast({
+              message: `Sync complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
+              icon: "cloud-done",
+              type: "success",
+            });
+          }
+        })
+        .catch((err) => {
+          console.warn("Smart sync error after sign in:", err);
+        })
+        .finally(() => {
+          setIsSyncing(smartSyncService.getIsSyncing());
+        });
     } catch (err) {
       showToast({
         message: (err as Error).message || "Google Sign-In failed",
@@ -270,7 +305,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         type: "error",
       });
     } finally {
-      setIsSyncing(false);
+      setIsSyncing(smartSyncService.getIsSyncing());
     }
   };
 
@@ -503,7 +538,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     disabled={isSyncing}
                   >
                     {isSyncing ? (
-                      <ActivityIndicator size="small" color="#FFF" />
+                      <View style={styles.buttonContent}>
+                        <ActivityIndicator
+                          size="small"
+                          color="#FFF"
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text
+                          style={[
+                            styles.secondaryButtonText,
+                            { color: "#FFF" },
+                          ]}
+                        >
+                          Syncing...
+                        </Text>
+                      </View>
                     ) : (
                       <View style={styles.buttonContent}>
                         <MaterialIcons

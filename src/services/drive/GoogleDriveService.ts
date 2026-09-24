@@ -62,6 +62,7 @@ export class GoogleDriveService {
     }>
   > = new Map();
   private isConfigured: boolean = false;
+  private cachedUser: { email: string; name: string | null } | null = null;
   private transferListeners: Set<DriveTransferListener> = new Set();
 
   addTransferListener(listener: DriveTransferListener): () => void {
@@ -103,13 +104,17 @@ export class GoogleDriveService {
   }
 
   getCurrentUser(): { email: string; name: string | null } | null {
+    if (this.cachedUser) {
+      return this.cachedUser;
+    }
     try {
       const user = GoogleSignin.getCurrentUser();
       if (user?.user) {
-        return {
+        this.cachedUser = {
           email: user.user.email,
           name: user.user.name,
         };
+        return this.cachedUser;
       }
     } catch {
       // Ignore
@@ -127,6 +132,7 @@ export class GoogleDriveService {
     try {
       const tokens = await GoogleSignin.getTokens();
       if (tokens.accessToken && signedInUser) {
+        this.cachedUser = signedInUser;
         return signedInUser;
       }
     } catch {
@@ -138,10 +144,12 @@ export class GoogleDriveService {
     if (result.type !== "success") {
       throw new Error("Google Sign-In was cancelled");
     }
-    return {
+    const user = {
       email: result.data.user.email ?? "",
       name: result.data.user.name ?? null,
     };
+    this.cachedUser = user;
+    return user;
   }
 
   async getAccessToken(): Promise<string> {
@@ -162,6 +170,7 @@ export class GoogleDriveService {
   }
 
   async signOut(): Promise<void> {
+    this.cachedUser = null;
     this.driveCacheSessionVersion += 1;
     this.uploadRequests.clear();
     this.folderIdCache.clear();
@@ -888,29 +897,44 @@ export class GoogleDriveService {
       console.warn("Failed to check unsynced entries:", err);
     }
 
-    // 2. DOWNLOAD PHASE: "download only when local is missing"
+    // 2. DOWNLOAD PHASE: "download only when local is missing (newest first)"
+    const existingEntryIds = await entriesDao.getAllEntryIds();
+    const pendingDeletions = await deletedEntriesDao.getPendingDeletions();
+    const deletedIds = new Set(pendingDeletions.map((d) => d.id));
+
+    // Handle any Drive sidecars whose entries were deleted locally
     for (const sc of driveSidecars) {
-      try {
-        // If entry was marked as deleted locally, do NOT download it! Ensure deleted from Drive.
-        if (await deletedEntriesDao.isDeleted(sc.entryId)) {
+      if (deletedIds.has(sc.entryId)) {
+        try {
           await this.deleteEntryFromDrive({
             id: sc.entryId,
             drive_sidecar_file_id: sc.id,
           });
           await deletedEntriesDao.removeDeletion(sc.entryId);
-          continue;
+        } catch (delErr) {
+          console.warn(`Drive deletion failed for ${sc.entryId}:`, delErr);
         }
+      }
+    }
 
-        const existing = await entriesDao.getEntryById(sc.entryId);
-        // Strict adherence to Rule 2: ONLY download if missing locally
-        if (!existing) {
-          const fileContentUrl = `https://www.googleapis.com/drive/v3/files/${sc.id}?alt=media`;
-          const contentRes = await fetch(fileContentUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+    // Filter to only missing entries (driveSidecars is already sorted newest first)
+    const missingSidecars = driveSidecars.filter(
+      (sc) => !existingEntryIds.has(sc.entryId) && !deletedIds.has(sc.entryId),
+    );
 
-          if (contentRes.ok) {
-            try {
+    // Download missing entries concurrently in batches of 5 to populate the timeline dynamically
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < missingSidecars.length; i += BATCH_SIZE) {
+      const batch = missingSidecars.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (sc) => {
+          try {
+            const fileContentUrl = `https://www.googleapis.com/drive/v3/files/${sc.id}?alt=media`;
+            const contentRes = await fetch(fileContentUrl, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+
+            if (contentRes.ok) {
               const entryJson: JournalEntry = await contentRes.json();
               const localAudioPath = getEntryAudioPath(
                 entryJson.id,
@@ -925,17 +949,19 @@ export class GoogleDriveService {
                 drive_sidecar_file_id: sc.id,
                 drive_synced_at: Date.now(),
               });
-              downloadedCount++;
-              if (downloadedCount % 25 === 0) {
-                options?.onProgress?.(downloadedCount);
-              }
-            } catch {
-              // Ignore malformed JSON sidecars
+              return true;
             }
+          } catch (err) {
+            console.warn(`Download check failed for ${sc.entryId}:`, err);
           }
-        }
-      } catch (err) {
-        console.warn(`Download check failed for ${sc.entryId}:`, err);
+          return false;
+        }),
+      );
+
+      const batchDownloaded = results.filter(Boolean).length;
+      downloadedCount += batchDownloaded;
+      if (batchDownloaded > 0) {
+        options?.onProgress?.(downloadedCount);
       }
     }
 

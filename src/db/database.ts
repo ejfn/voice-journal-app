@@ -12,9 +12,11 @@ export interface DatabaseConnection {
 }
 
 let activeDb: DatabaseConnection | null = null;
+let initPromise: Promise<DatabaseConnection> | null = null;
 
 export const setDatabaseConnection = (db: DatabaseConnection | null): void => {
   activeDb = db;
+  initPromise = null;
 };
 
 export const getDatabase = (): DatabaseConnection => {
@@ -48,60 +50,74 @@ export const initDatabase = async (
 ): Promise<DatabaseConnection> => {
   if (customDb) {
     activeDb = customDb;
+    initPromise = null;
   }
-  const db = getDatabase();
-  await db.execAsync(SCHEMA_SQL);
+  if (!initPromise) {
+    initPromise = (async () => {
+      const db = getDatabase();
+      await db.execAsync(SCHEMA_SQL);
 
-  // Safe migration for existing databases missing waveform_data
-  try {
-    const columns = await db.getAllAsync<{ name: string }>(
-      `PRAGMA table_info(entries);`,
-    );
-    const hasWaveformCol = columns.some((col) => col.name === "waveform_data");
-    if (!hasWaveformCol) {
-      await db.execAsync(`ALTER TABLE entries ADD COLUMN waveform_data TEXT;`);
-    }
-  } catch (migrationError) {
-    // Only tolerate if column is present (e.g. concurrent migration race); otherwise rethrow
-    try {
-      const columns = await db.getAllAsync<{ name: string }>(
-        `PRAGMA table_info(entries);`,
-      );
-      const hasWaveformCol = columns.some(
-        (col) => col.name === "waveform_data",
-      );
-      if (!hasWaveformCol) {
-        throw migrationError;
+      // Safe migration for existing databases missing waveform_data
+      try {
+        const columns = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(entries);`,
+        );
+        const hasWaveformCol = columns.some(
+          (col) => col.name === "waveform_data",
+        );
+        if (!hasWaveformCol) {
+          await db.execAsync(
+            `ALTER TABLE entries ADD COLUMN waveform_data TEXT;`,
+          );
+        }
+      } catch (migrationError) {
+        // Only tolerate if column is present (e.g. concurrent migration race); otherwise rethrow
+        try {
+          const columns = await db.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(entries);`,
+          );
+          const hasWaveformCol = columns.some(
+            (col) => col.name === "waveform_data",
+          );
+          if (!hasWaveformCol) {
+            throw migrationError;
+          }
+        } catch {
+          throw migrationError;
+        }
       }
-    } catch {
-      throw migrationError;
-    }
-  }
 
-  // Safe migration for existing databases missing deleted_at
-  try {
-    const columns = await db.getAllAsync<{ name: string }>(
-      `PRAGMA table_info(entries);`,
-    );
-    const hasDeletedAtCol = columns.some((col) => col.name === "deleted_at");
-    if (!hasDeletedAtCol) {
-      await db.execAsync(
-        `ALTER TABLE entries ADD COLUMN deleted_at INTEGER DEFAULT NULL;`,
-      );
-    }
-  } catch (migrationError) {
-    try {
-      const columns = await db.getAllAsync<{ name: string }>(
-        `PRAGMA table_info(entries);`,
-      );
-      const hasDeletedAtCol = columns.some((col) => col.name === "deleted_at");
-      if (!hasDeletedAtCol) {
-        throw migrationError;
+      // Safe migration for existing databases missing deleted_at
+      try {
+        const columns = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(entries);`,
+        );
+        const hasDeletedAtCol = columns.some(
+          (col) => col.name === "deleted_at",
+        );
+        if (!hasDeletedAtCol) {
+          await db.execAsync(
+            `ALTER TABLE entries ADD COLUMN deleted_at INTEGER DEFAULT NULL;`,
+          );
+        }
+      } catch (migrationError) {
+        try {
+          const columns = await db.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(entries);`,
+          );
+          const hasDeletedAtCol = columns.some(
+            (col) => col.name === "deleted_at",
+          );
+          if (!hasDeletedAtCol) {
+            throw migrationError;
+          }
+        } catch {
+          throw migrationError;
+        }
       }
-    } catch {
-      throw migrationError;
-    }
-  }
 
-  return db;
+      return db;
+    })();
+  }
+  return initPromise;
 };
