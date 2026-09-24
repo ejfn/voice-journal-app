@@ -2,7 +2,7 @@ name: Pull Request Checks
 
 on:
   pull_request:
-    branches: [main, "release/**"]
+    branches: [main, "release/**", "hotfix/**"]
     types: [opened, synchronize, reopened]
 
 # Allow only one concurrent PR workflow per PR

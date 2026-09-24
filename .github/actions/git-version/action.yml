@@ -72,10 +72,10 @@ runs:
             EAS_BRANCH="preview"
           fi
 
-        elif [[ ${{ github.ref }} =~ ^refs/heads/release/v?([0-9]+)\.([0-9]+) ]]; then
-          # Release maintenance branch (e.g., release/v0.9) - isolate with beta runtime version
-          REL_MAJOR="${BASH_REMATCH[1]}"
-          REL_MINOR="${BASH_REMATCH[2]}"
+        elif [[ ${{ github.ref }} =~ ^refs/heads/(release|hotfix)/v?([0-9]+)\.([0-9]+) ]]; then
+          # Release or hotfix maintenance branch (e.g., release/v0.9, hotfix/v0.9) - isolate with beta runtime version
+          REL_MAJOR="${BASH_REMATCH[2]}"
+          REL_MINOR="${BASH_REMATCH[3]}"
 
           # Find highest existing patch tag on this release line
           REL_LAST_TAG=$(git tag -l "v${REL_MAJOR}.${REL_MINOR}.[0-9]*" --sort=-version:refname | head -n1 || echo "")

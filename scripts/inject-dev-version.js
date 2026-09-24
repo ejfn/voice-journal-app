@@ -10,49 +10,18 @@ try {
   // Get git commit hash
   const gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
 
-  // Get latest version tag and calculate next minor version (or next patch on release branches)
+  // Get latest version tag and calculate next minor version
   let baseVersion = '0.1.0';
   try {
-    let isReleaseBranch = false;
-    try {
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-        encoding: 'utf8',
-      }).trim();
-      const match = currentBranch.match(/^release\/v?(\d+)\.(\d+)/);
-      if (match) {
-        const [, relMajor, relMinor] = match;
-        const lastPatchTag = execSync(
-          `git tag -l "v${relMajor}.${relMinor}.[0-9]*" --sort=-version:refname`,
-          { encoding: 'utf8' },
-        )
-          .trim()
-          .split('\n')[0];
-        let nextPatch = 0;
-        if (lastPatchTag) {
-          const patchNum = parseInt(
-            lastPatchTag.replace(/^v/, '').split('.')[2],
-            10,
-          );
-          if (!isNaN(patchNum)) nextPatch = patchNum + 1;
-        }
-        baseVersion = `${relMajor}.${relMinor}.${nextPatch}`;
-        isReleaseBranch = true;
-      }
-    } catch {
-      // Ignore git branch parse errors and fallback
-    }
-
-    if (!isReleaseBranch) {
-      const lastTag = execSync('git tag -l "v*.*.0" --sort=-version:refname', {
-        encoding: 'utf8',
-      })
-        .trim()
-        .split('\n')[0];
-      if (lastTag) {
-        const lastVersion = lastTag.replace('v', '');
-        const [major, minor] = lastVersion.split('.').map(Number);
-        baseVersion = `${major}.${minor + 1}.0`;
-      }
+    const lastTag = execSync('git tag -l "v*.*.0" --sort=-version:refname', {
+      encoding: 'utf8',
+    })
+      .trim()
+      .split('\n')[0];
+    if (lastTag) {
+      const lastVersion = lastTag.replace('v', '');
+      const [major, minor, patch] = lastVersion.split('.').map(Number);
+      baseVersion = `${major}.${minor + 1}.0`;
     }
   } catch {
     // No tags found, use default version
