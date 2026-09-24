@@ -66,8 +66,10 @@ const MainScreen: React.FC = () => {
   // Pagination State
   const PAGE_SIZE = 50;
   const loadedEntriesRef = useRef<JournalEntry[]>([]);
-  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [hasMore, setHasMore] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const isDbReadyRef = useRef<boolean>(false);
+  const loadDataSequenceRef = useRef<number>(0);
   const prevQueryRef = useRef<string>(searchQuery);
   const prevTagRef = useRef<string>(selectedTag);
 
@@ -90,6 +92,9 @@ const MainScreen: React.FC = () => {
 
   // Settings Modal State
   const [isSettingsVisible, setIsSettingsVisible] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(() =>
+    smartSyncService.getIsSyncing(),
+  );
 
   // Update Popout Modal State
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -152,6 +157,8 @@ const MainScreen: React.FC = () => {
 
   const loadData = useCallback(
     async (options?: { reset?: boolean }) => {
+      if (!isDbReadyRef.current) return;
+      const currentSeq = ++loadDataSequenceRef.current;
       try {
         const isFilterChange =
           Boolean(options?.reset) ||
@@ -173,6 +180,8 @@ const MainScreen: React.FC = () => {
           limit: fetchLimit,
           offset: 0,
         });
+
+        if (currentSeq !== loadDataSequenceRef.current) return;
 
         loadedEntriesRef.current = entries;
         setHasMore(entries.length === fetchLimit);
@@ -199,7 +208,7 @@ const MainScreen: React.FC = () => {
   );
 
   const handleLoadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMore) return;
+    if (!isDbReadyRef.current || isLoadingMore || !hasMore) return;
     setIsLoadingMore(true);
     try {
       const currentOffset = loadedEntriesRef.current.length;
@@ -230,9 +239,11 @@ const MainScreen: React.FC = () => {
     reviewEntryRef.current = reviewEntry;
   }, [reviewEntry]);
 
+  // Startup lifecycle: run strictly once on app mount
   useEffect(() => {
     initDatabase()
       .then(() => {
+        isDbReadyRef.current = true;
         loadData();
         transcriptionQueueService.processQueue().catch((err) => {
           console.warn("Transcription queue startup error:", err);
@@ -256,6 +267,14 @@ const MainScreen: React.FC = () => {
     return () => {
       smartSyncService.stopAutoSync();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Filter & search changes: reload entries when query or tag changes after database is ready
+  useEffect(() => {
+    if (isDbReadyRef.current) {
+      void loadData({ reset: true });
+    }
   }, [loadData]);
 
   useEffect(() => {
@@ -299,6 +318,7 @@ const MainScreen: React.FC = () => {
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
     // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
+      setIsSyncing(event.status === "syncing");
       if (
         event.status === "synced" ||
         (event.status === "syncing" && (event.downloadedCount ?? 0) > 0)
@@ -692,6 +712,7 @@ const MainScreen: React.FC = () => {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onSettingsPress={() => setIsSettingsVisible(true)}
+          isSyncing={isSyncing}
         />
 
         <TagFilterChips
@@ -816,7 +837,10 @@ const MainScreen: React.FC = () => {
         {/* Settings & Sync Modal */}
         <SettingsModal
           visible={isSettingsVisible}
-          onClose={() => setIsSettingsVisible(false)}
+          onClose={async () => {
+            setIsSettingsVisible(false);
+            await loadData();
+          }}
           onSyncCompleted={loadData}
         />
 

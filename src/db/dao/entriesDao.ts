@@ -569,6 +569,14 @@ export const entriesDao = {
       id,
     ]);
   },
+
+  async getAllEntryIds(): Promise<Set<string>> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM entries;`,
+    );
+    return new Set(rows.map((r) => r.id));
+  },
 };
 
 export function groupEntriesIntoMonthSections(

@@ -1594,7 +1594,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       });
 
       expect(result.downloadedCount).toBe(25);
-      expect(progressUpdates).toContain(25);
+      expect(progressUpdates).toEqual([5, 10, 15, 20, 25]);
     });
   });
 });
