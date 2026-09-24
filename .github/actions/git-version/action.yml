@@ -72,6 +72,32 @@ runs:
             EAS_BRANCH="preview"
           fi
 
+        elif [[ ${{ github.ref }} =~ ^refs/heads/release/v?([0-9]+)\.([0-9]+) ]]; then
+          # Release maintenance branch (e.g., release/v0.9) - isolate with beta runtime version
+          REL_MAJOR="${BASH_REMATCH[1]}"
+          REL_MINOR="${BASH_REMATCH[2]}"
+
+          # Find highest existing patch tag on this release line
+          REL_LAST_TAG=$(git tag -l "v${REL_MAJOR}.${REL_MINOR}.[0-9]*" --sort=-version:refname | head -n1 || echo "")
+          if [[ -n "$REL_LAST_TAG" ]]; then
+            REL_PATCH=$(echo "${REL_LAST_TAG#v}" | cut -d. -f3 | grep -oE "^[0-9]+")
+            if [[ -n "$REL_PATCH" ]]; then
+              NEXT_PATCH=$((REL_PATCH + 1))
+            else
+              NEXT_PATCH="0"
+            fi
+            REL_COMMIT_COUNT=$(git rev-list --count ${REL_LAST_TAG}..HEAD)
+          else
+            NEXT_PATCH="0"
+            REL_COMMIT_COUNT=$(git rev-list --count HEAD)
+          fi
+
+          BASE_VERSION="${REL_MAJOR}.${REL_MINOR}.${NEXT_PATCH}"
+          VERSION="${BASE_VERSION}-beta.${REL_COMMIT_COUNT}"
+          FULL_VERSION="v${VERSION}+${GIT_HASH_SHORT}"
+          RUNTIME_VERSION="v${REL_MAJOR}.${REL_MINOR}.0-beta"
+          EAS_BRANCH="preview"
+
         elif [[ ${{ github.ref }} == refs/heads/main ]]; then
           # Main branch push - isolate with stable beta runtime version
           # Increment minor version by 1 and reset patch to 0
