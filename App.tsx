@@ -239,6 +239,7 @@ const MainScreen: React.FC = () => {
     reviewEntryRef.current = reviewEntry;
   }, [reviewEntry]);
 
+  // Startup lifecycle: run strictly once on app mount
   useEffect(() => {
     initDatabase()
       .then(() => {
@@ -266,6 +267,14 @@ const MainScreen: React.FC = () => {
     return () => {
       smartSyncService.stopAutoSync();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Filter & search changes: reload entries when query or tag changes after database is ready
+  useEffect(() => {
+    if (isDbReadyRef.current) {
+      void loadData({ reset: true });
+    }
   }, [loadData]);
 
   useEffect(() => {

@@ -230,11 +230,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsSyncing(true);
       smartSyncService
         .sync({ force: true, reason: "sign_in" })
-        .then(async (result) => {
-          await refreshStatus();
-          if (onSyncCompleted) {
-            onSyncCompleted();
-          }
+        .then((result) => {
           if (
             (result.downloadedCount ?? 0) > 0 ||
             (result.uploadedCount ?? 0) > 0

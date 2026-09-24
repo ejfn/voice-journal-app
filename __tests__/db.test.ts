@@ -507,6 +507,50 @@ describe("Database & FTS5 DAO", () => {
     expect(prunableIds).toContain("entry-fully-backed-up");
   });
 
+  it("retrieves all entry IDs as a Set with getAllEntryIds", async () => {
+    const initialIds = await entriesDao.getAllEntryIds();
+    expect(initialIds).toBeInstanceOf(Set);
+    const initialCount = initialIds.size;
+
+    await entriesDao.insertEntry({
+      id: "bulk-id-1",
+      title: "Bulk Test 1",
+      summary: "",
+      transcript: "",
+      tags: [],
+      duration_sec: 5,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1000,
+      last_accessed_at: 1000,
+    });
+
+    await entriesDao.insertEntry({
+      id: "bulk-id-2",
+      title: "Bulk Test 2",
+      summary: "",
+      transcript: "",
+      tags: [],
+      duration_sec: 8,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 2000,
+      last_accessed_at: 2000,
+    });
+
+    const updatedIds = await entriesDao.getAllEntryIds();
+    expect(updatedIds.size).toBe(initialCount + 2);
+    expect(updatedIds.has("bulk-id-1")).toBe(true);
+    expect(updatedIds.has("bulk-id-2")).toBe(true);
+    expect(updatedIds.has("non-existent-id")).toBe(false);
+  });
+
   it("handles transcription queue status transitions", async () => {
     const entryId = "entry-queued-test";
     await entriesDao.insertEntry({
@@ -1140,6 +1184,26 @@ describe("Database & FTS5 DAO", () => {
       expect(sections[0].dayGroups[0].clips.length).toBe(2);
       expect(sections[1].dayGroups.length).toBe(1);
       expect(sections[1].dayGroups[0].clips.length).toBe(1);
+    });
+  });
+
+  describe("database initialization recovery", () => {
+    it("resets initPromise on failure so subsequent attempts can succeed", async () => {
+      const failingDb: DatabaseConnection = {
+        execAsync: jest.fn().mockRejectedValue(new Error("Disk I/O error")),
+        getAllAsync: jest.fn(),
+        getFirstAsync: jest.fn(),
+        runAsync: jest.fn(),
+      };
+
+      setDatabaseConnection(failingDb);
+      await expect(initDatabase()).rejects.toThrow("Disk I/O error");
+
+      // Verify that after failure, a subsequent attempt with valid db succeeds
+      const recoveryDb = createTestDb();
+      setDatabaseConnection(recoveryDb);
+      const initialized = await initDatabase();
+      expect(initialized).toBe(recoveryDb);
     });
   });
 });

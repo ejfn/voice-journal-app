@@ -117,7 +117,10 @@ export const initDatabase = async (
       }
 
       return db;
-    })();
+    })().catch((err) => {
+      initPromise = null;
+      throw err;
+    });
   }
   return initPromise;
 };
