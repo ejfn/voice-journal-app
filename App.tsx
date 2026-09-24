@@ -92,9 +92,6 @@ const MainScreen: React.FC = () => {
 
   // Settings Modal State
   const [isSettingsVisible, setIsSettingsVisible] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(() =>
-    smartSyncService.getIsSyncing(),
-  );
 
   // Update Popout Modal State
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -318,7 +315,6 @@ const MainScreen: React.FC = () => {
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
     // NOT drive per-entry storage badges. Only refresh data when sync finishes.
     const unsubscribeSmartSync = smartSyncService.addListener((event) => {
-      setIsSyncing(event.status === "syncing");
       if (
         event.status === "synced" ||
         (event.status === "syncing" && (event.downloadedCount ?? 0) > 0)
@@ -342,17 +338,23 @@ const MainScreen: React.FC = () => {
   ]);
 
   const handleRefresh = async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
-    await loadData();
-    transcriptionQueueService.processQueue().catch((err) => {
-      console.warn("Queue refresh error:", err);
-    });
-    smartSyncService
-      .sync({ force: true, reason: "pull_refresh" })
-      .catch((err) => {
-        console.warn("Smart sync error on pull refresh:", err);
+    try {
+      transcriptionQueueService.processQueue().catch((err) => {
+        console.warn("Queue refresh error:", err);
       });
-    setIsRefreshing(false);
+      try {
+        await smartSyncService.sync({ force: true, reason: "pull_refresh" });
+      } catch (syncErr) {
+        console.warn("Pull refresh sync error:", syncErr);
+      }
+      await loadData();
+    } catch (err) {
+      console.warn("Pull refresh error:", err);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Start Voice Recording
@@ -712,7 +714,6 @@ const MainScreen: React.FC = () => {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onSettingsPress={() => setIsSettingsVisible(true)}
-          isSyncing={isSyncing}
         />
 
         <TagFilterChips
@@ -729,6 +730,7 @@ const MainScreen: React.FC = () => {
               refreshing={isRefreshing}
               onRefresh={handleRefresh}
               tintColor={colors.primary}
+              colors={[colors.primary]}
             />
           }
           renderSectionHeader={({ section: { monthLabel } }) => (
