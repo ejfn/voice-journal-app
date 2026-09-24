@@ -1,7 +1,6 @@
 import { entriesDao } from "../../db/dao/entriesDao";
 import { TranscriptionStatus } from "../../db/schema";
 import { geminiService } from "./GeminiService";
-import { uploadQueueService } from "../drive/UploadQueueService";
 import { File } from "expo-file-system";
 
 export type TranscriptionEvent = {
@@ -153,9 +152,6 @@ export class TranscriptionQueueService {
           });
 
           this.notifyListeners({ entryId: entry.id, status: "completed" });
-
-          // Enqueue for background Google Drive upload with updated title/summary/tags
-          uploadQueueService.enqueueUpload(entry.id, "METADATA_ONLY");
         } catch (error) {
           const errMessage = (error as Error).message || "";
           const isInvalidKey =

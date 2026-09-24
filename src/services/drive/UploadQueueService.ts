@@ -1,6 +1,10 @@
 import { entriesDao } from "../../db/dao/entriesDao";
 import { syncQueueDao } from "../../db/dao/syncQueueDao";
 import { googleDriveService } from "./GoogleDriveService";
+import {
+  TranscriptionQueueService,
+  transcriptionQueueService,
+} from "../ai/TranscriptionQueueService";
 import { SyncQueueItem } from "../../db/schema";
 
 export type UploadEvent = {
@@ -271,6 +275,22 @@ export class UploadQueueService {
       this.isProcessing = false;
     }
   }
+
+  /**
+   * Listens to transcription completions and automatically enqueues METADATA_ONLY upload.
+   */
+  attachTranscriptionListener(
+    transcriptionService: TranscriptionQueueService = transcriptionQueueService,
+  ): () => void {
+    return transcriptionService.addListener((event) => {
+      if (event.status === "completed") {
+        this.enqueueUpload(event.entryId, "METADATA_ONLY").catch((err) => {
+          console.warn("Upload queue error on transcription completion:", err);
+        });
+      }
+    });
+  }
 }
 
 export const uploadQueueService = new UploadQueueService();
+uploadQueueService.attachTranscriptionListener();

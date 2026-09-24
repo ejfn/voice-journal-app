@@ -277,4 +277,35 @@ describe("UploadQueueService", () => {
     expect(getUploadBackoffDelayMs(4)).toBe(300000);
     expect(getUploadBackoffDelayMs(10)).toBe(300000);
   });
+
+  it("enqueues METADATA_ONLY upload when transcription completes", () => {
+    let capturedListener:
+      ((event: { entryId: string; status: string }) => void) | null = null;
+    const mockTranscriptionService = {
+      addListener: jest.fn((cb) => {
+        capturedListener = cb;
+        return () => {};
+      }),
+    };
+
+    const enqueueSpy = jest.spyOn(service, "enqueueUpload").mockResolvedValue();
+    service.attachTranscriptionListener(
+      mockTranscriptionService as unknown as Parameters<
+        typeof service.attachTranscriptionListener
+      >[0],
+    );
+
+    expect(mockTranscriptionService.addListener).toHaveBeenCalled();
+    if (capturedListener) {
+      (
+        capturedListener as (event: { entryId: string; status: string }) => void
+      )({
+        entryId: "entry-u1",
+        status: "completed",
+      });
+    }
+
+    expect(enqueueSpy).toHaveBeenCalledWith("entry-u1", "METADATA_ONLY");
+    enqueueSpy.mockRestore();
+  });
 });

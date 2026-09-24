@@ -10,6 +10,7 @@ This file provides guidance and constraints for coding agents working in this re
 - **No Monitoring Pull Requests**: Do not watch, wait for, or poll GitHub pull request checks (`gh pr checks`, `gh pr checks --watch`, etc.) after creating a PR or pushing commits. Once created/pushed, provide the PR link and stop immediately without waiting for CI to finish.
 - **Git Safety**: Never commit directly to the `main` branch.
 - **Quality Checks**: Verify changes with `npm run qualitycheck` (or `npm run typecheck`, `npm run lint`, and `npm test`) before concluding tasks.
+- **No Shallow UI Component Tests**: Do NOT add shallow UI component unit tests that merely test mocks over mocks (e.g. `react-test-renderer` asserting props or mock buttons on mocked components). Tests must focus on real business logic, state machines, DAOs, services, and algorithms.
 
 ## Project Overview
 
