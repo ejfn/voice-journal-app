@@ -49,4 +49,20 @@ export const settingsDao = {
   async setGeminiApiKey(key: string): Promise<void> {
     await this.setSetting("gemini_api_key", key.trim());
   },
+
+  async getUpdateSnooze(): Promise<{ version: string; until: number }> {
+    const version = await this.getSetting("update_snooze_version", "");
+    const until = await this.getNumberSetting("update_snooze_until", 0);
+    return { version, until };
+  },
+
+  async setUpdateSnooze(version: string, until: number): Promise<void> {
+    await this.setSetting("update_snooze_version", version);
+    await this.setSetting("update_snooze_until", String(until));
+  },
+
+  async clearUpdateSnooze(): Promise<void> {
+    await this.setSetting("update_snooze_version", "");
+    await this.setSetting("update_snooze_until", "0");
+  },
 };

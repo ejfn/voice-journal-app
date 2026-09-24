@@ -20,6 +20,7 @@ import { TagFilterChips } from "./src/components/TagFilterChips";
 import { TimelineHeader } from "./src/components/TimelineHeader";
 import { DayGroup, entriesDao, MonthSection } from "./src/db/dao/entriesDao";
 import { deletedEntriesDao } from "./src/db/dao/deletedEntriesDao";
+import { UpdateModal } from "./src/components/UpdateModal";
 import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
@@ -30,10 +31,15 @@ import { audioRecordingService } from "./src/services/audio/AudioRecordingServic
 import { googleDriveService } from "./src/services/drive/GoogleDriveService";
 import { uploadQueueService } from "./src/services/drive/UploadQueueService";
 import { smartSyncService } from "./src/services/drive/SmartSyncService";
+import {
+  AppUpdateInfo,
+  updateService,
+} from "./src/services/updates/updateService";
 import { ThemeProvider, useTheme } from "./src/theme/ThemeContext";
 import { generateUUID } from "./src/utils/uuid";
 import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import { getRefreshedReviewEntry } from "./src/utils/reviewEntryRefresh";
+import { getAppVersion } from "./src/utils/versioning";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -68,6 +74,11 @@ const MainScreen: React.FC = () => {
 
   // Settings Modal State
   const [isSettingsVisible, setIsSettingsVisible] = useState<boolean>(false);
+
+  // Update Popout Modal State
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [isUpdateModalVisible, setIsUpdateModalVisible] =
+    useState<boolean>(false);
 
   // Playback State
   const [playingEntryId, setPlayingEntryId] = useState<string | null>(null);
@@ -160,6 +171,18 @@ const MainScreen: React.FC = () => {
           console.warn("Transcription queue startup error:", err);
         });
         smartSyncService.startAutoSync();
+        // Check for APK updates strictly on app start
+        updateService
+          .checkForAvailableUpdate(getAppVersion())
+          .then((update) => {
+            if (update) {
+              setUpdateInfo(update);
+              setIsUpdateModalVisible(true);
+            }
+          })
+          .catch(() => {
+            // Eat all errors silently
+          });
       })
       .catch((err) => console.warn("Database init error:", err));
 
@@ -195,6 +218,12 @@ const MainScreen: React.FC = () => {
           decrementUploadingEntry(event.entryId);
         } else {
           decrementDownloadingEntry(event.entryId);
+          transcriptionQueueService.processQueue().catch((err) => {
+            console.warn(
+              "Queue processing error after on-demand download:",
+              err,
+            );
+          });
         }
 
         loadData();
@@ -547,6 +576,18 @@ const MainScreen: React.FC = () => {
     }
   };
 
+  const handleDismissUpdate = async (hideFor7Days: boolean) => {
+    if (hideFor7Days && updateInfo) {
+      await updateService.snoozeUpdate(updateInfo.tagName, 7);
+    }
+    setIsUpdateModalVisible(false);
+  };
+
+  const handleOpenUpdate = async () => {
+    await updateService.openLatestReleasePage();
+    setIsUpdateModalVisible(false);
+  };
+
   // Transform MonthSection into SectionList data structure
   // Each section in SectionList corresponds to a Month
   // Inside each month section, we render DayGroups with their respective clips
@@ -709,6 +750,14 @@ const MainScreen: React.FC = () => {
           isDestructive
           onConfirm={handleConfirmDelete}
           onCancel={() => setDeleteTargetId(null)}
+        />
+
+        {/* Update Popout Modal */}
+        <UpdateModal
+          visible={isUpdateModalVisible}
+          updateInfo={updateInfo}
+          onDismiss={handleDismissUpdate}
+          onUpdate={handleOpenUpdate}
         />
       </View>
     </SafeAreaView>
