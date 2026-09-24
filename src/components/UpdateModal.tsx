@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Modal,
   View,
@@ -25,7 +25,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   onUpdate,
 }) => {
   const { colors, isDark } = useTheme();
-  const [dontRemind, setDontRemind] = useState<boolean>(true);
+  const [dontRemind, setDontRemind] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (visible) {
+      setDontRemind(false);
+    }
+  }, [visible]);
 
   if (!visible || !updateInfo) {
     return null;
