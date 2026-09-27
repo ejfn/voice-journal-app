@@ -39,6 +39,9 @@ describe("updateService", () => {
       expect(isVersionNewer("v0.9.2", "v0.9.2")).toBe(false);
       expect(isVersionNewer("v0.9.1", "v0.9.2")).toBe(false);
       expect(isVersionNewer("v0.9.2", "v0.1.0-dev+abc1234")).toBe(true);
+      expect(isVersionNewer("v0.9.0", "v0.9.0-beta.1")).toBe(true);
+      expect(isVersionNewer("v0.9.0-beta.1", "v0.9.0")).toBe(false);
+      expect(isVersionNewer("v0.9.0-beta.2", "v0.9.0-beta.1")).toBe(false);
     });
   });
 
@@ -86,7 +89,10 @@ describe("updateService", () => {
       expect(fetch).toHaveBeenCalledWith(
         LATEST_RELEASE_API,
         expect.objectContaining({
-          headers: { Accept: "application/vnd.github.v3+json" },
+          headers: {
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "voice-journal-app",
+          },
         }),
       );
       expect(update).toEqual({

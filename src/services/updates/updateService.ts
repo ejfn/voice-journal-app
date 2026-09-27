@@ -41,7 +41,17 @@ export const isVersionNewer = (
 
   if (rMajor !== cMajor) return rMajor > cMajor;
   if (rMinor !== cMinor) return rMinor > cMinor;
-  return rPatch > cPatch;
+  if (rPatch !== cPatch) return rPatch > cPatch;
+
+  // When base [major, minor, patch] numbers match, treat an official release without a hyphen
+  // as newer than a pre-release containing a hyphen (e.g. v0.9.0 is newer than v0.9.0-beta.1)
+  const remoteHasPrerelease = remoteTag.includes("-");
+  const currentHasPrerelease = currentVersion.includes("-");
+  if (!remoteHasPrerelease && currentHasPrerelease) {
+    return true;
+  }
+
+  return false;
 };
 
 export const updateService = {
@@ -58,6 +68,7 @@ export const updateService = {
       const response = await fetch(LATEST_RELEASE_API, {
         headers: {
           Accept: "application/vnd.github.v3+json",
+          "User-Agent": "voice-journal-app",
         },
       });
 
