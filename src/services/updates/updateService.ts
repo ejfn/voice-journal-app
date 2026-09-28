@@ -64,13 +64,14 @@ export const updateService = {
     currentVersion: string,
   ): Promise<AppUpdateInfo | null> {
     try {
+      // Early exit on Google Play Store installs to save network & battery
       try {
         const installer = await DeviceInfo.getInstallerPackageName();
         if (installer === "com.android.vending") {
           return null;
         }
       } catch {
-        // If retrieving installer package fails, continue update check
+        // Gracefully proceed if check fails (e.g., unsupported platform)
       }
 
       const snooze = await settingsDao.getUpdateSnooze();
