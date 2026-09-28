@@ -1,4 +1,5 @@
 import { Linking } from "react-native";
+import DeviceInfo from "react-native-device-info";
 import { settingsDao } from "../../db/dao/settingsDao";
 
 export interface AppUpdateInfo {
@@ -63,6 +64,15 @@ export const updateService = {
     currentVersion: string,
   ): Promise<AppUpdateInfo | null> {
     try {
+      try {
+        const installer = await DeviceInfo.getInstallerPackageName();
+        if (installer === "com.android.vending") {
+          return null;
+        }
+      } catch {
+        // If retrieving installer package fails, continue update check
+      }
+
       const snooze = await settingsDao.getUpdateSnooze();
 
       const response = await fetch(LATEST_RELEASE_API, {

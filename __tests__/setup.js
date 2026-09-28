@@ -161,3 +161,7 @@ jest.mock("@react-native-vector-icons/material-icons", () => {
     MaterialIcons: MockIcon,
   };
 });
+
+jest.mock("react-native-device-info", () =>
+  require("react-native-device-info/jest/react-native-device-info-mock.js"),
+);

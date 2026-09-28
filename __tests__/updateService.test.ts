@@ -1,4 +1,5 @@
 import { Linking } from "react-native";
+import DeviceInfo from "react-native-device-info";
 import {
   updateService,
   parseCleanVersion,
@@ -171,6 +172,50 @@ describe("updateService", () => {
 
       const update = await updateService.checkForAvailableUpdate("v0.9.2");
       expect(update).toBeNull();
+    });
+
+    it("returns null and suppresses update check when installed from Google Play Store", async () => {
+      jest
+        .spyOn(DeviceInfo, "getInstallerPackageName")
+        .mockResolvedValue("com.android.vending");
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockApkRelease,
+      } as unknown as Response);
+
+      const update = await updateService.checkForAvailableUpdate("v0.9.2");
+      expect(update).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("proceeds with update check when installed via bare APK or package installer", async () => {
+      jest
+        .spyOn(DeviceInfo, "getInstallerPackageName")
+        .mockResolvedValue("com.google.android.packageinstaller");
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockApkRelease,
+      } as unknown as Response);
+
+      const update = await updateService.checkForAvailableUpdate("v0.9.2");
+      expect(update).not.toBeNull();
+      expect(update?.tagName).toBe("v0.9.3");
+      expect(fetch).toHaveBeenCalled();
+    });
+
+    it("proceeds with update check when getInstallerPackageName throws or fails", async () => {
+      jest
+        .spyOn(DeviceInfo, "getInstallerPackageName")
+        .mockRejectedValue(new Error("Installer query failed"));
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockApkRelease,
+      } as unknown as Response);
+
+      const update = await updateService.checkForAvailableUpdate("v0.9.2");
+      expect(update).not.toBeNull();
+      expect(update?.tagName).toBe("v0.9.3");
+      expect(fetch).toHaveBeenCalled();
     });
   });
 
