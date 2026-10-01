@@ -162,6 +162,8 @@ jest.mock("@react-native-vector-icons/material-icons", () => {
   };
 });
 
-jest.mock("react-native-device-info", () =>
-  require("react-native-device-info/jest/react-native-device-info-mock.js"),
-);
+const mockDeviceInfo = require("react-native-device-info/jest/react-native-device-info-mock.js");
+const { NativeModules } = require("react-native");
+NativeModules.RNDeviceInfo = mockDeviceInfo;
+
+jest.mock("react-native-device-info", () => mockDeviceInfo);
