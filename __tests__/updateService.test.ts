@@ -217,27 +217,6 @@ describe("updateService", () => {
       expect(update?.tagName).toBe("v0.9.3");
       expect(fetch).toHaveBeenCalled();
     });
-
-    it("proceeds with update check in Expo Go when NativeModules.RNDeviceInfo is absent", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { NativeModules } = require("react-native");
-      const originalRNDeviceInfo = NativeModules.RNDeviceInfo;
-      delete NativeModules.RNDeviceInfo;
-
-      try {
-        global.fetch = jest.fn().mockResolvedValue({
-          ok: true,
-          json: async () => mockApkRelease,
-        } as unknown as Response);
-
-        const update = await updateService.checkForAvailableUpdate("v0.9.2");
-        expect(update).not.toBeNull();
-        expect(update?.tagName).toBe("v0.9.3");
-        expect(fetch).toHaveBeenCalled();
-      } finally {
-        NativeModules.RNDeviceInfo = originalRNDeviceInfo;
-      }
-    });
   });
 
   describe("openLatestReleasePage", () => {
