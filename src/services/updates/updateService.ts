@@ -1,4 +1,5 @@
 import { Linking } from "react-native";
+import DeviceInfo from "react-native-device-info";
 import { settingsDao } from "../../db/dao/settingsDao";
 
 export interface AppUpdateInfo {
@@ -41,7 +42,17 @@ export const isVersionNewer = (
 
   if (rMajor !== cMajor) return rMajor > cMajor;
   if (rMinor !== cMinor) return rMinor > cMinor;
-  return rPatch > cPatch;
+  if (rPatch !== cPatch) return rPatch > cPatch;
+
+  // When base [major, minor, patch] numbers match, treat an official release without a hyphen
+  // as newer than a pre-release containing a hyphen (e.g. v0.9.0 is newer than v0.9.0-beta.1)
+  const remoteHasPrerelease = remoteTag.includes("-");
+  const currentHasPrerelease = currentVersion.includes("-");
+  if (!remoteHasPrerelease && currentHasPrerelease) {
+    return true;
+  }
+
+  return false;
 };
 
 export const updateService = {
@@ -53,11 +64,22 @@ export const updateService = {
     currentVersion: string,
   ): Promise<AppUpdateInfo | null> {
     try {
+      // Early exit on Google Play Store installs to save network & battery
+      try {
+        const installer = await DeviceInfo.getInstallerPackageName();
+        if (installer === "com.android.vending") {
+          return null;
+        }
+      } catch {
+        // Gracefully proceed if check fails (e.g., unsupported platform)
+      }
+
       const snooze = await settingsDao.getUpdateSnooze();
 
       const response = await fetch(LATEST_RELEASE_API, {
         headers: {
           Accept: "application/vnd.github.v3+json",
+          "User-Agent": "voice-journal-app",
         },
       });
 

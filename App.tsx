@@ -7,6 +7,7 @@ import {
   RefreshControl,
   StatusBar,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { File } from "expo-file-system";
@@ -246,18 +247,20 @@ const MainScreen: React.FC = () => {
           console.warn("Transcription queue startup error:", err);
         });
         smartSyncService.startAutoSync();
-        // Check for APK updates strictly on app start
-        updateService
-          .checkForAvailableUpdate(getAppVersion())
-          .then((update) => {
-            if (update) {
-              setUpdateInfo(update);
-              setIsUpdateModalVisible(true);
-            }
-          })
-          .catch(() => {
-            // Eat all errors silently
-          });
+        // Check for APK updates strictly on app start (Android only)
+        if (Platform.OS === "android") {
+          updateService
+            .checkForAvailableUpdate(getAppVersion())
+            .then((update) => {
+              if (update) {
+                setUpdateInfo(update);
+                setIsUpdateModalVisible(true);
+              }
+            })
+            .catch(() => {
+              // Eat all errors silently
+            });
+        }
       })
       .catch((err) => console.warn("Database init error:", err));
 
