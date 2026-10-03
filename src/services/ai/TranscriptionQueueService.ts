@@ -1,7 +1,12 @@
 import { entriesDao } from "../../db/dao/entriesDao";
-import { TranscriptionStatus } from "../../db/schema";
-import { geminiService } from "./GeminiService";
-import { File } from "expo-file-system";
+import {
+  JournalEntry,
+  TranscriptionCheckpoint,
+  TranscriptionStatus,
+} from "../../db/schema";
+import { GeminiAnalysisResult, geminiService } from "./GeminiService";
+import { File, Paths } from "expo-file-system";
+import { VoiceRecorder } from "voice-recorder";
 
 export type TranscriptionEvent = {
   entryId: string;
@@ -9,6 +14,22 @@ export type TranscriptionEvent = {
 };
 
 export type TranscriptionListener = (event: TranscriptionEvent) => void;
+
+export const LONG_AUDIO_THRESHOLD_SEC = 600; // 10 minutes
+export const CHUNK_DURATION_MS = 300_000; // 5 minutes
+
+export function buildContextTail(text: string, maxChars = 350): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  const slice = trimmed.slice(-maxChars);
+  const firstSpace = slice.indexOf(" ");
+  if (firstSpace > 0 && firstSpace < 60) {
+    return slice.slice(firstSpace + 1).trim();
+  }
+  return slice.trim();
+}
 
 /**
  * Graduated backoff intervals for failed transcriptions:
@@ -72,6 +93,111 @@ export class TranscriptionQueueService {
       clearTimeout(this.retryTimeout);
       this.retryTimeout = null;
     }
+  }
+
+  async transcribeLongAudio(
+    entry: JournalEntry,
+  ): Promise<GeminiAnalysisResult> {
+    if (!entry.local_audio_path) {
+      throw new Error("No local audio path for entry");
+    }
+
+    let checkpoint: TranscriptionCheckpoint | null =
+      entry.transcription_checkpoint || null;
+
+    let needsSplit = false;
+    if (
+      !checkpoint ||
+      !checkpoint.chunkPaths ||
+      checkpoint.chunkPaths.length === 0
+    ) {
+      needsSplit = true;
+    } else {
+      const nextChunkIdx = checkpoint.completedChunks;
+      if (nextChunkIdx < checkpoint.chunkPaths.length) {
+        try {
+          const nextChunkFile = new File(checkpoint.chunkPaths[nextChunkIdx]);
+          if (!nextChunkFile.exists) {
+            needsSplit = true;
+          }
+        } catch {
+          needsSplit = true;
+        }
+      }
+    }
+
+    if (needsSplit) {
+      const cacheDir = Paths.cache?.uri || "";
+      const chunksDir = `${cacheDir.replace(/\/+$/, "")}/chunks_${entry.id}`;
+      const splitResult = await VoiceRecorder.splitAudio(
+        entry.local_audio_path,
+        CHUNK_DURATION_MS,
+        chunksDir,
+      );
+
+      // If splitAudio could not split the file (e.g. single file returned), fall back to analyzeAudio
+      if (!splitResult || splitResult.length <= 1) {
+        return geminiService.analyzeAudio(entry.local_audio_path);
+      }
+
+      checkpoint = {
+        totalChunks: splitResult.length,
+        completedChunks: 0,
+        chunkPaths: splitResult,
+        partialTranscript: "",
+        lastContextTail: "",
+      };
+      await entriesDao.updateTranscriptionCheckpoint(entry.id, checkpoint);
+    }
+
+    if (!checkpoint) {
+      return geminiService.analyzeAudio(entry.local_audio_path);
+    }
+
+    // Process chunks sequentially from last completed chunk
+    for (let i = checkpoint.completedChunks; i < checkpoint.totalChunks; i++) {
+      const chunkUri = checkpoint.chunkPaths[i];
+      const chunkText = await geminiService.transcribeChunk(
+        chunkUri,
+        checkpoint.lastContextTail,
+      );
+
+      // Immediately delete the processed chunk file to save mobile disk space
+      try {
+        const chunkFile = new File(chunkUri);
+        if (chunkFile.exists) {
+          chunkFile.delete();
+        }
+      } catch {
+        // Non-fatal
+      }
+
+      const stitched: string = checkpoint.partialTranscript
+        ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
+        : chunkText.trim();
+
+      const lastContextTail = buildContextTail(stitched, 350);
+
+      checkpoint = {
+        ...checkpoint,
+        completedChunks: i + 1,
+        partialTranscript: stitched,
+        lastContextTail,
+      };
+
+      await entriesDao.updateTranscriptionCheckpoint(entry.id, checkpoint);
+    }
+
+    const finalTranscript =
+      checkpoint.partialTranscript.trim() || "No speech detected in recording.";
+    const analysis = await geminiService.analyzeTranscript(finalTranscript);
+
+    return {
+      title: analysis.title,
+      summary: analysis.summary,
+      tags: analysis.tags,
+      transcript: finalTranscript,
+    };
   }
 
   async processQueue(): Promise<void> {
@@ -139,9 +265,14 @@ export class TranscriptionQueueService {
         this.notifyListeners({ entryId: entry.id, status: "processing" });
 
         try {
-          const aiResult = await geminiService.analyzeAudio(
-            entry.local_audio_path,
-          );
+          const isLongAudio =
+            (entry.duration_sec &&
+              entry.duration_sec > LONG_AUDIO_THRESHOLD_SEC) ||
+            Boolean(entry.transcription_checkpoint);
+
+          const aiResult = isLongAudio
+            ? await this.transcribeLongAudio(entry)
+            : await geminiService.analyzeAudio(entry.local_audio_path);
 
           await entriesDao.updateTranscription(entry.id, {
             title: aiResult.title,

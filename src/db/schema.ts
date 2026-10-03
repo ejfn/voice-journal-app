@@ -1,6 +1,14 @@
 export type TranscriptionStatus =
   "queued" | "processing" | "completed" | "failed";
 
+export interface TranscriptionCheckpoint {
+  totalChunks: number;
+  completedChunks: number;
+  chunkPaths: string[];
+  partialTranscript: string;
+  lastContextTail: string;
+}
+
 export interface JournalEntry {
   id: string;
   title: string;
@@ -22,6 +30,7 @@ export interface JournalEntry {
   transcription_next_retry_at?: number | null;
   waveform_data?: number[]; // Normalized amplitude sequence (0.0 to 1.0)
   deleted_at?: number | null; // Epoch timestamp ms if soft-deleted
+  transcription_checkpoint?: TranscriptionCheckpoint | null;
 }
 
 export interface JournalEntryRow {
@@ -45,6 +54,7 @@ export interface JournalEntryRow {
   transcription_next_retry_at?: number | null;
   waveform_data?: string | null; // JSON string of number[]
   deleted_at?: number | null;
+  transcription_checkpoint?: string | null;
 }
 
 export interface SyncQueueItem {
@@ -77,7 +87,8 @@ CREATE TABLE IF NOT EXISTS entries (
   transcription_retry_count INTEGER DEFAULT 0,
   transcription_next_retry_at INTEGER,
   waveform_data TEXT,
-  deleted_at INTEGER DEFAULT NULL
+  deleted_at INTEGER DEFAULT NULL,
+  transcription_checkpoint TEXT DEFAULT NULL
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(

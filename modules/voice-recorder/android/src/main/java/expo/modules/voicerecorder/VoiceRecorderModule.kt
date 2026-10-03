@@ -102,6 +102,10 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
         "durationMillis" to durationMillis
       )
     }
+
+    AsyncFunction("splitAudio") { inputUri: String, chunkDurationMs: Long, outputDir: String ->
+      AudioSplitter.splitAudio(context, inputUri, chunkDurationMs, outputDir)
+    }
   }
 
   private fun bindToService() {

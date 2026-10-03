@@ -36,6 +36,11 @@ declare class VoiceRecorderNativeModule extends NativeModule<VoiceRecorderEvents
   resumeRecording(): Promise<boolean>;
   stopRecording(): Promise<VoiceRecorderResult>;
   getStatus(): VoiceRecorderStatus;
+  splitAudio(
+    inputUri: string,
+    chunkDurationMs: number,
+    outputDir: string,
+  ): Promise<string[]>;
 }
 
 let nativeModule: VoiceRecorderNativeModule | null = null;
@@ -80,6 +85,17 @@ export const VoiceRecorder = {
       return { isRecording: false, isPaused: false, durationMillis: 0 };
     }
     return nativeModule.getStatus();
+  },
+
+  async splitAudio(
+    inputUri: string,
+    chunkDurationMs: number,
+    outputDir?: string,
+  ): Promise<string[]> {
+    if (!nativeModule || typeof nativeModule.splitAudio !== "function") {
+      return [inputUri];
+    }
+    return nativeModule.splitAudio(inputUri, chunkDurationMs, outputDir || "");
   },
 
   addListener(
