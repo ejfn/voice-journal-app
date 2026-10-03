@@ -1,5 +1,4 @@
-import { Linking } from "react-native";
-import DeviceInfo from "react-native-device-info";
+import { Linking, NativeModules } from "react-native";
 import { settingsDao } from "../../db/dao/settingsDao";
 
 export interface AppUpdateInfo {
@@ -55,6 +54,33 @@ export const isVersionNewer = (
   return false;
 };
 
+/**
+ * Safely queries the installer package name on Android.
+ * In Expo Go or environments where NativeModules.RNDeviceInfo is absent,
+ * react-native-device-info throws during module initialization.
+ * We guard against absent NativeModules.RNDeviceInfo and lazy-load the module
+ * inside a try/catch so the app can start and run cleanly in Expo Go.
+ */
+const getInstallerPackageName = async (): Promise<string | null> => {
+  try {
+    if (!NativeModules || !NativeModules.RNDeviceInfo) {
+      return null;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const DeviceInfo = require("react-native-device-info");
+    const getter =
+      DeviceInfo.getInstallerPackageName ??
+      DeviceInfo.default?.getInstallerPackageName;
+    if (typeof getter === "function") {
+      return await getter();
+    }
+    return null;
+  } catch {
+    // Gracefully proceed if check fails (e.g. unsupported platform or module error)
+    return null;
+  }
+};
+
 export const updateService = {
   /**
    * Checks GitHub for a new APK release newer than currentVersion.
@@ -65,13 +91,9 @@ export const updateService = {
   ): Promise<AppUpdateInfo | null> {
     try {
       // Early exit on Google Play Store installs to save network & battery
-      try {
-        const installer = await DeviceInfo.getInstallerPackageName();
-        if (installer === "com.android.vending") {
-          return null;
-        }
-      } catch {
-        // Gracefully proceed if check fails (e.g., unsupported platform)
+      const installer = await getInstallerPackageName();
+      if (installer === "com.android.vending") {
+        return null;
       }
 
       const snooze = await settingsDao.getUpdateSnooze();
