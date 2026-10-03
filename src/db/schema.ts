@@ -4,7 +4,7 @@ export type TranscriptionStatus =
 export interface TranscriptionCheckpoint {
   totalChunks: number;
   completedChunks: number;
-  chunkPaths: string[];
+  chunkPaths?: string[];
   partialTranscript: string;
   lastContextTail: string;
 }

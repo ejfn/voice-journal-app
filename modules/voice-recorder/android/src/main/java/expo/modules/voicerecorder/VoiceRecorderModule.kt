@@ -103,6 +103,14 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
       )
     }
 
+    AsyncFunction("extractAudioChunk") { inputUri: String, startTimeMs: Long, durationMs: Long, outputDir: String ->
+      AudioSplitter.extractAudioChunk(context, inputUri, startTimeMs, durationMs, outputDir)
+    }
+
+    AsyncFunction("getAudioDuration") { inputUri: String ->
+      AudioSplitter.getAudioDuration(inputUri)
+    }
+
     AsyncFunction("splitAudio") { inputUri: String, chunkDurationMs: Long, outputDir: String ->
       AudioSplitter.splitAudio(context, inputUri, chunkDurationMs, outputDir)
     }

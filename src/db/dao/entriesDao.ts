@@ -271,6 +271,14 @@ export const entriesDao = {
     );
   },
 
+  async updateDuration(id: string, durationSec: number): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(`UPDATE entries SET duration_sec = ? WHERE id = ?`, [
+      durationSec,
+      id,
+    ]);
+  },
+
   async getQueuedEntries(now: number = Date.now()): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(

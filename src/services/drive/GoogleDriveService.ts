@@ -534,6 +534,7 @@ export class GoogleDriveService {
         ...freshEntry,
         drive_audio_file_id: audioFileId,
         local_audio_path: null, // Device-specific absolute sandbox paths should NOT be stored in cloud sidecars
+        transcription_checkpoint: null, // Device-specific temporary chunk paths should NOT be stored in cloud sidecars
       };
       const sidecarPayload = JSON.stringify(entryToUpload, null, 2);
 
@@ -948,6 +949,7 @@ export class GoogleDriveService {
                 local_audio_path: audioExists ? localAudioPath : null,
                 drive_sidecar_file_id: sc.id,
                 drive_synced_at: Date.now(),
+                transcription_checkpoint: null,
               });
               return true;
             }
