@@ -26,6 +26,13 @@ export interface VoiceRecorderResult {
   durationMillis: number;
 }
 
+export interface AudioChunkResult {
+  chunkUri: string;
+  durationMs: number;
+  isLastChunk: boolean;
+  totalDurationMs: number;
+}
+
 type VoiceRecorderEvents = {
   onStatusUpdate: (status: VoiceRecorderStatusUpdate) => void;
 };
@@ -36,6 +43,18 @@ declare class VoiceRecorderNativeModule extends NativeModule<VoiceRecorderEvents
   resumeRecording(): Promise<boolean>;
   stopRecording(): Promise<VoiceRecorderResult>;
   getStatus(): VoiceRecorderStatus;
+  getAudioDuration(inputUri: string): Promise<number>;
+  extractAudioChunk(
+    inputUri: string,
+    startTimeMs: number,
+    durationMs: number,
+    outputDir: string,
+  ): Promise<AudioChunkResult | null>;
+  splitAudio(
+    inputUri: string,
+    chunkDurationMs: number,
+    outputDir: string,
+  ): Promise<string[]>;
 }
 
 let nativeModule: VoiceRecorderNativeModule | null = null;
@@ -80,6 +99,44 @@ export const VoiceRecorder = {
       return { isRecording: false, isPaused: false, durationMillis: 0 };
     }
     return nativeModule.getStatus();
+  },
+
+  async getAudioDuration(inputUri: string): Promise<number> {
+    if (!nativeModule || typeof nativeModule.getAudioDuration !== "function") {
+      return 0;
+    }
+    return nativeModule.getAudioDuration(inputUri);
+  },
+
+  async extractAudioChunk(
+    inputUri: string,
+    startTimeMs: number,
+    durationMs: number,
+    outputDir?: string,
+  ): Promise<AudioChunkResult | null> {
+    if (
+      !nativeModule ||
+      typeof nativeModule.extractAudioChunk !== "function"
+    ) {
+      return null;
+    }
+    return nativeModule.extractAudioChunk(
+      inputUri,
+      startTimeMs,
+      durationMs,
+      outputDir || "",
+    );
+  },
+
+  async splitAudio(
+    inputUri: string,
+    chunkDurationMs: number,
+    outputDir?: string,
+  ): Promise<string[]> {
+    if (!nativeModule || typeof nativeModule.splitAudio !== "function") {
+      return [inputUri];
+    }
+    return nativeModule.splitAudio(inputUri, chunkDurationMs, outputDir || "");
   },
 
   addListener(

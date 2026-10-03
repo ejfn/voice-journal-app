@@ -1,0 +1,517 @@
+package expo.modules.voicerecorder
+
+import android.content.Context
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.util.Log
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import kotlin.math.max
+
+object AudioSplitter {
+  private const val TAG = "AudioSplitter"
+  private const val DEFAULT_BUFFER_SIZE = 64 * 1024
+  private const val TIMEOUT_US = 10_000L
+
+  private fun cleanPath(uri: String): String {
+    return if (uri.startsWith("file://")) {
+      uri.removePrefix("file://")
+    } else {
+      uri
+    }
+  }
+
+  fun getAudioDuration(inputUri: String): Long {
+    val cleanPath = cleanPath(inputUri)
+    val file = File(cleanPath)
+    if (!file.exists() || file.length() == 0L) {
+      return 0L
+    }
+
+    val extractor = MediaExtractor()
+    return try {
+      extractor.setDataSource(file.absolutePath)
+      for (i in 0 until extractor.trackCount) {
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+        if (mime.startsWith("audio/")) {
+          if (format.containsKey(MediaFormat.KEY_DURATION)) {
+            return format.getLong(MediaFormat.KEY_DURATION) / 1000L // microseconds to milliseconds
+          }
+        }
+      }
+      0L
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to get audio duration for $cleanPath", e)
+      0L
+    } finally {
+      try {
+        extractor.release()
+      } catch (_: Exception) {}
+    }
+  }
+
+  fun extractAudioChunk(
+    context: Context,
+    inputUri: String,
+    startTimeMs: Long,
+    durationMs: Long,
+    outputDir: String
+  ): Map<String, Any>? {
+    val cleanInputPath = cleanPath(inputUri)
+    val inputFile = File(cleanInputPath)
+    if (!inputFile.exists() || inputFile.length() == 0L) {
+      Log.w(TAG, "Input file does not exist or is empty: $cleanInputPath")
+      return null
+    }
+
+    val cleanOutputDir = cleanPath(outputDir)
+    val targetDirectory = if (cleanOutputDir.isNotEmpty()) {
+      File(cleanOutputDir)
+    } else {
+      File(context.cacheDir, "audio_chunks")
+    }
+    targetDirectory.mkdirs()
+
+    val extractor = MediaExtractor()
+    try {
+      extractor.setDataSource(inputFile.absolutePath)
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to set data source for MediaExtractor: $cleanInputPath", e)
+      return null
+    }
+
+    try {
+      var audioTrackIndex = -1
+      var audioFormat: MediaFormat? = null
+
+      for (i in 0 until extractor.trackCount) {
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+        if (mime.startsWith("audio/")) {
+          audioTrackIndex = i
+          audioFormat = format
+          break
+        }
+      }
+
+      if (audioTrackIndex < 0 || audioFormat == null) {
+        Log.w(TAG, "No audio track found in $cleanInputPath")
+        extractor.release()
+        return null
+      }
+
+      val mime = audioFormat.getString(MediaFormat.KEY_MIME) ?: ""
+      val totalDurationUs = if (audioFormat.containsKey(MediaFormat.KEY_DURATION)) {
+        audioFormat.getLong(MediaFormat.KEY_DURATION)
+      } else {
+        0L
+      }
+
+      val startUs = startTimeMs * 1000L
+      val targetChunkDurationUs = durationMs * 1000L
+      val endUs = startUs + targetChunkDurationUs
+
+      // If the audio track is AAC (audio/mp4a-latm), attempt fast remuxing with MediaMuxer
+      if (mime == "audio/mp4a-latm") {
+        try {
+          val result = extractAacChunk(
+            extractor,
+            audioTrackIndex,
+            audioFormat,
+            targetDirectory,
+            startUs,
+            endUs,
+            totalDurationUs
+          )
+          if (result != null) {
+            extractor.release()
+            return result
+          }
+        } catch (e: Exception) {
+          Log.w(TAG, "Fast AAC remuxing failed; falling back to PCM WAV decoding: $cleanInputPath", e)
+          extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+        }
+      }
+
+      // Universal fallback or non-AAC decoding (MP3, WAV, FLAC, OGG, etc.) via MediaCodec to WAV
+      val result = extractPcmWavChunk(
+        extractor,
+        audioTrackIndex,
+        audioFormat,
+        mime,
+        targetDirectory,
+        startUs,
+        endUs,
+        totalDurationUs
+      )
+      extractor.release()
+      return result
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to extract audio chunk from $cleanInputPath", e)
+      try {
+        extractor.release()
+      } catch (_: Exception) {}
+      return null
+    }
+  }
+
+  private fun extractAacChunk(
+    extractor: MediaExtractor,
+    audioTrackIndex: Int,
+    audioFormat: MediaFormat,
+    targetDirectory: File,
+    startUs: Long,
+    endUs: Long,
+    totalDurationUs: Long
+  ): Map<String, Any>? {
+    extractor.selectTrack(audioTrackIndex)
+    if (startUs > 0) {
+      extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+    } else {
+      extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+    }
+
+    val chunkFile = File(targetDirectory, "chunk_${startUs / 1000L}_${System.currentTimeMillis()}.m4a")
+    val muxer = MediaMuxer(chunkFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    val track = muxer.addTrack(audioFormat)
+    muxer.start()
+
+    val maxInputSize = if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+      try {
+        audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+      } catch (_: Exception) {
+        DEFAULT_BUFFER_SIZE
+      }
+    } else {
+      DEFAULT_BUFFER_SIZE
+    }
+    val buffer = ByteBuffer.allocate(max(maxInputSize, DEFAULT_BUFFER_SIZE))
+    val bufferInfo = MediaCodec.BufferInfo()
+
+    var samplesWritten = 0
+    var isLastChunk = false
+    var firstSampleTimeUs = -1L
+    var lastSampleTimeUs = -1L
+
+    try {
+      while (true) {
+        buffer.clear()
+        val sampleSize = extractor.readSampleData(buffer, 0)
+        if (sampleSize < 0) {
+          isLastChunk = true
+          break
+        }
+
+        val sampleTimeUs = extractor.sampleTime
+        val flags = extractor.sampleFlags
+
+        // Skip samples before startUs if seek landed early
+        if (sampleTimeUs < startUs && startUs > 0) {
+          extractor.advance()
+          continue
+        }
+
+        // If we crossed endUs and have already written samples, stop chunk
+        if (sampleTimeUs >= endUs && samplesWritten > 0) {
+          break
+        }
+
+        if (firstSampleTimeUs < 0) {
+          firstSampleTimeUs = sampleTimeUs
+        }
+        lastSampleTimeUs = sampleTimeUs
+
+        bufferInfo.offset = 0
+        bufferInfo.size = sampleSize
+        bufferInfo.presentationTimeUs = (sampleTimeUs - firstSampleTimeUs).coerceAtLeast(0L)
+        bufferInfo.flags = flags
+
+        muxer.writeSampleData(track, buffer, bufferInfo)
+        samplesWritten++
+
+        extractor.advance()
+      }
+    } finally {
+      try {
+        if (samplesWritten > 0) {
+          muxer.stop()
+        }
+      } catch (e: Exception) {
+        Log.w(TAG, "Error stopping muxer", e)
+      }
+      try {
+        muxer.release()
+      } catch (_: Exception) {}
+    }
+
+    if (samplesWritten == 0) {
+      chunkFile.delete()
+      return null
+    }
+
+    if (totalDurationUs > 0 && endUs >= totalDurationUs) {
+      isLastChunk = true
+    }
+
+    val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
+      (lastSampleTimeUs - firstSampleTimeUs) / 1000L
+    } else {
+      (endUs - startUs) / 1000L
+    }
+
+    return mapOf(
+      "chunkUri" to "file://${chunkFile.absolutePath}",
+      "durationMs" to chunkDurationMs,
+      "isLastChunk" to isLastChunk,
+      "totalDurationMs" to (totalDurationUs / 1000L)
+    )
+  }
+
+  private fun extractPcmWavChunk(
+    extractor: MediaExtractor,
+    audioTrackIndex: Int,
+    audioFormat: MediaFormat,
+    mime: String,
+    targetDirectory: File,
+    startUs: Long,
+    endUs: Long,
+    totalDurationUs: Long
+  ): Map<String, Any>? {
+    extractor.selectTrack(audioTrackIndex)
+    if (startUs > 0) {
+      extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+    } else {
+      extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+    }
+
+    val decoder = MediaCodec.createDecoderByType(mime)
+    decoder.configure(audioFormat, null, null, 0)
+    decoder.start()
+
+    val chunkFile = File(targetDirectory, "chunk_${startUs / 1000L}_${System.currentTimeMillis()}.wav")
+    val raf = RandomAccessFile(chunkFile, "rw")
+    raf.setLength(44L) // Reserve 44 bytes for RIFF/WAVE header
+    raf.seek(44L)
+
+    var totalPcmBytesWritten = 0L
+    var isLastChunk = false
+    var sawInputEOS = false
+    var sawOutputEOS = false
+    var firstSampleTimeUs = -1L
+    var lastSampleTimeUs = -1L
+    var actualSampleRate = if (audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+      try { audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) } catch (_: Exception) { 44100 }
+    } else {
+      44100
+    }
+    var actualChannels = if (audioFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+      try { audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) } catch (_: Exception) { 1 }
+    } else {
+      1
+    }
+
+    val bufferInfo = MediaCodec.BufferInfo()
+
+    try {
+      while (!sawOutputEOS) {
+        if (!sawInputEOS) {
+          val inputIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
+          if (inputIndex >= 0) {
+            val inputBuffer = decoder.getInputBuffer(inputIndex)
+            if (inputBuffer != null) {
+              inputBuffer.clear()
+              val sampleSize = extractor.readSampleData(inputBuffer, 0)
+              if (sampleSize < 0) {
+                sawInputEOS = true
+                decoder.queueInputBuffer(inputIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+              } else {
+                val sampleTimeUs = extractor.sampleTime
+                decoder.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
+                extractor.advance()
+              }
+            }
+          }
+        }
+
+        val outputIndex = decoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+        if (outputIndex >= 0) {
+          if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+            sawOutputEOS = true
+            isLastChunk = true
+          }
+
+          val outputBuffer = decoder.getOutputBuffer(outputIndex)
+          if (outputBuffer != null && bufferInfo.size > 0) {
+            val sampleTimeUs = bufferInfo.presentationTimeUs
+
+            if (sampleTimeUs >= startUs || startUs == 0L) {
+              if (sampleTimeUs >= endUs && totalPcmBytesWritten > 0L) {
+                sawOutputEOS = true
+              } else {
+                if (firstSampleTimeUs < 0) {
+                  firstSampleTimeUs = sampleTimeUs
+                }
+                lastSampleTimeUs = sampleTimeUs
+
+                val pcmData = ByteArray(bufferInfo.size)
+                outputBuffer.position(bufferInfo.offset)
+                outputBuffer.get(pcmData, 0, bufferInfo.size)
+                raf.write(pcmData)
+                totalPcmBytesWritten += bufferInfo.size
+              }
+            }
+          }
+          decoder.releaseOutputBuffer(outputIndex, false)
+        } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+          val newFormat = decoder.outputFormat
+          if (newFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+            try { actualSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) } catch (_: Exception) {}
+          }
+          if (newFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+            try { actualChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) } catch (_: Exception) {}
+          }
+        }
+      }
+    } finally {
+      try {
+        decoder.stop()
+      } catch (_: Exception) {}
+      try {
+        decoder.release()
+      } catch (_: Exception) {}
+    }
+
+    if (totalPcmBytesWritten == 0L) {
+      raf.close()
+      chunkFile.delete()
+      return null
+    }
+
+    // Write canonical RIFF/WAVE 16-bit PCM header at beginning of file
+    writeWavHeader(raf, totalPcmBytesWritten, actualSampleRate, actualChannels, 16)
+    raf.close()
+
+    if (totalDurationUs > 0 && endUs >= totalDurationUs) {
+      isLastChunk = true
+    }
+
+    val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
+      (lastSampleTimeUs - firstSampleTimeUs) / 1000L
+    } else {
+      (endUs - startUs) / 1000L
+    }
+
+    return mapOf(
+      "chunkUri" to "file://${chunkFile.absolutePath}",
+      "durationMs" to chunkDurationMs,
+      "isLastChunk" to isLastChunk,
+      "totalDurationMs" to (totalDurationUs / 1000L)
+    )
+  }
+
+  private fun writeWavHeader(
+    raf: RandomAccessFile,
+    pcmDataLength: Long,
+    sampleRate: Int,
+    channels: Int,
+    bitsPerSample: Int
+  ) {
+    raf.seek(0)
+    val totalDataLen = pcmDataLength + 36
+    val byteRate = (sampleRate * channels * bitsPerSample / 8).toLong()
+    val blockAlign = (channels * bitsPerSample / 8).toShort()
+
+    val header = ByteArray(44)
+    header[0] = 'R'.code.toByte()
+    header[1] = 'I'.code.toByte()
+    header[2] = 'F'.code.toByte()
+    header[3] = 'F'.code.toByte()
+    header[4] = (totalDataLen and 0xffL).toByte()
+    header[5] = ((totalDataLen shr 8) and 0xffL).toByte()
+    header[6] = ((totalDataLen shr 16) and 0xffL).toByte()
+    header[7] = ((totalDataLen shr 24) and 0xffL).toByte()
+    header[8] = 'W'.code.toByte()
+    header[9] = 'A'.code.toByte()
+    header[10] = 'V'.code.toByte()
+    header[11] = 'E'.code.toByte()
+    header[12] = 'f'.code.toByte() // 'fmt ' chunk
+    header[13] = 'm'.code.toByte()
+    header[14] = 't'.code.toByte()
+    header[15] = ' '.code.toByte()
+    header[16] = 16 // Subchunk1Size (16 for PCM)
+    header[17] = 0
+    header[18] = 0
+    header[19] = 0
+    header[20] = 1 // AudioFormat 1 = PCM
+    header[21] = 0
+    header[22] = (channels and 0xff).toByte()
+    header[23] = ((channels shr 8) and 0xff).toByte()
+    header[24] = (sampleRate and 0xff).toByte()
+    header[25] = ((sampleRate shr 8) and 0xff).toByte()
+    header[26] = ((sampleRate shr 16) and 0xff).toByte()
+    header[27] = ((sampleRate shr 24) and 0xff).toByte()
+    header[28] = (byteRate and 0xffL).toByte()
+    header[29] = ((byteRate shr 8) and 0xffL).toByte()
+    header[30] = ((byteRate shr 16) and 0xffL).toByte()
+    header[31] = ((byteRate shr 24) and 0xffL).toByte()
+    header[32] = (blockAlign.toInt() and 0xff).toByte()
+    header[33] = ((blockAlign.toInt() shr 8) and 0xff).toByte()
+    header[34] = (bitsPerSample and 0xff).toByte()
+    header[35] = ((bitsPerSample shr 8) and 0xff).toByte()
+    header[36] = 'd'.code.toByte() // 'data' chunk
+    header[37] = 'a'.code.toByte()
+    header[38] = 't'.code.toByte()
+    header[39] = 'a'.code.toByte()
+    header[40] = (pcmDataLength and 0xffL).toByte()
+    header[41] = ((pcmDataLength shr 8) and 0xffL).toByte()
+    header[42] = ((pcmDataLength shr 16) and 0xffL).toByte()
+    header[43] = ((pcmDataLength shr 24) and 0xffL).toByte()
+
+    raf.write(header, 0, 44)
+  }
+
+  fun splitAudio(
+    context: Context,
+    inputUri: String,
+    chunkDurationMs: Long,
+    outputDir: String
+  ): List<String> {
+    val totalDurationMs = getAudioDuration(inputUri)
+    if (totalDurationMs <= chunkDurationMs && totalDurationMs > 0) {
+      return listOf(inputUri)
+    }
+
+    val chunkPaths = mutableListOf<String>()
+    var startTimeMs = 0L
+
+    while (true) {
+      val chunkResult = extractAudioChunk(context, inputUri, startTimeMs, chunkDurationMs, outputDir)
+      if (chunkResult == null) {
+        break
+      }
+
+      val chunkUri = chunkResult["chunkUri"] as? String
+      val isLastChunk = chunkResult["isLastChunk"] as? Boolean ?: true
+
+      if (!chunkUri.isNullOrEmpty()) {
+        chunkPaths.add(chunkUri)
+      }
+
+      if (isLastChunk) {
+        break
+      }
+
+      startTimeMs += chunkDurationMs
+    }
+
+    return if (chunkPaths.isNotEmpty()) {
+      chunkPaths
+    } else {
+      listOf(inputUri)
+    }
+  }
+}

@@ -106,4 +106,84 @@ describe("Gemini AI Service", () => {
     delete process.env.EXPO_PUBLIC_GEMINI_API_KEY;
     expect(await withoutKey.hasKeyConfigured()).toBe(false);
   });
+
+  it("transcribes audio chunk with preceding context tail", async () => {
+    const mockApiResponse = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  transcript: "continued discussing the project timeline.",
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockApiResponse,
+    });
+
+    const transcript = await service.transcribeChunk(
+      "file:///test/chunk.m4a",
+      "We started the meeting and",
+    );
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.objectContaining({
+        body: expect.stringContaining(
+          "Preceding speech context from prior segment",
+        ),
+      }),
+    );
+    expect(transcript).toBe("continued discussing the project timeline.");
+  });
+
+  it("analyzes completed transcript text to generate title, summary and tags", async () => {
+    const mockApiResponse = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  title: "Team Project Timeline Review",
+                  summary:
+                    "Discussed project milestones and set deadlines for Q4.",
+                  tags: ["#Work", "#Timeline", "#Project"],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockApiResponse,
+    });
+
+    const result = await service.analyzeTranscript(
+      "We started the meeting and continued discussing the project timeline. We agreed on Q4 deadlines.",
+    );
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.objectContaining({
+        body: expect.stringContaining("We started the meeting"),
+      }),
+    );
+    expect(result.title).toBe("Team Project Timeline Review");
+    expect(result.summary).toBe(
+      "Discussed project milestones and set deadlines for Q4.",
+    );
+    expect(result.tags).toEqual(["work", "timeline", "project"]);
+  });
 });

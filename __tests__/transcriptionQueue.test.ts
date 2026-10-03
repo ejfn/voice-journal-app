@@ -2,12 +2,14 @@ import {
   TranscriptionQueueService,
   TranscriptionEvent,
   getBackoffDelayMs,
+  buildContextTail,
 } from "../src/services/ai/TranscriptionQueueService";
 import { entriesDao } from "../src/db/dao/entriesDao";
 import { geminiService } from "../src/services/ai/GeminiService";
 import { googleDriveService } from "../src/services/drive/GoogleDriveService";
-import { JournalEntry } from "../src/db/schema";
+import { JournalEntry, TranscriptionCheckpoint } from "../src/db/schema";
 import { File } from "expo-file-system";
+import { VoiceRecorder } from "voice-recorder";
 
 jest.mock("../src/db/dao/entriesDao");
 jest.mock("../src/db/dao/syncQueueDao");
@@ -267,5 +269,309 @@ describe("TranscriptionQueueService", () => {
       false,
       null,
     );
+  });
+
+  describe("buildContextTail", () => {
+    it("returns the full text when shorter than maxChars", () => {
+      const text = "A short sentence.";
+      expect(buildContextTail(text, 50)).toBe("A short sentence.");
+    });
+
+    it("slices text cleanly on word boundaries when exceeding maxChars", () => {
+      const text =
+        "The quick brown fox jumps over the lazy dog and then takes a very long afternoon nap in the warm autumn sun.";
+      const tail = buildContextTail(text, 40);
+      expect(tail.length).toBeLessThanOrEqual(40);
+      // Ensures it doesn't start with a broken partial word
+      expect(text).toContain(tail);
+      expect(tail.startsWith(" ")).toBe(false);
+    });
+  });
+
+  describe("Long Audio Segmented Transcription", () => {
+    const mockLongEntry: JournalEntry = {
+      ...mockEntry,
+      id: "entry-long-1",
+      duration_sec: 1200, // 20 minutes (> 10m threshold)
+      local_audio_path: "file:///mock/long_recording.m4a",
+    };
+
+    it("extracts long audio chunk-by-chunk on demand and transcribes sequentially with context tail", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      const extractSpy = jest
+        .spyOn(VoiceRecorder, "extractAudioChunk")
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_0.m4a",
+          durationMs: 300_000,
+          isLastChunk: false,
+          totalDurationMs: 600_000,
+        })
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_1.m4a",
+          durationMs: 300_000,
+          isLastChunk: true,
+          totalDurationMs: 600_000,
+        });
+
+      (geminiService.transcribeChunk as jest.Mock)
+        .mockResolvedValueOnce("First part of our extensive lecture.")
+        .mockResolvedValueOnce("Second part detailing the final conclusion.");
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Extensive Lecture",
+        summary: "Lecture on project conclusions.",
+        tags: ["lecture", "conclusion"],
+      });
+
+      await service.processQueue();
+
+      expect(extractSpy).toHaveBeenCalledTimes(2);
+      expect(extractSpy).toHaveBeenNthCalledWith(
+        1,
+        "file:///mock/long_recording.m4a",
+        0,
+        300_000,
+        expect.stringContaining("chunks_entry-long-1"),
+      );
+      expect(extractSpy).toHaveBeenNthCalledWith(
+        2,
+        "file:///mock/long_recording.m4a",
+        300_000,
+        300_000,
+        expect.stringContaining("chunks_entry-long-1"),
+      );
+
+      expect(geminiService.transcribeChunk).toHaveBeenCalledTimes(2);
+      expect(geminiService.transcribeChunk).toHaveBeenNthCalledWith(
+        1,
+        "file:///cache/chunk_0.m4a",
+        "",
+      );
+      expect(geminiService.transcribeChunk).toHaveBeenNthCalledWith(
+        2,
+        "file:///cache/chunk_1.m4a",
+        "First part of our extensive lecture.",
+      );
+
+      expect(entriesDao.updateTranscriptionCheckpoint).toHaveBeenCalledTimes(2);
+      expect(entriesDao.updateTranscriptionCheckpoint).toHaveBeenNthCalledWith(
+        1,
+        "entry-long-1",
+        expect.objectContaining({
+          completedChunks: 1,
+          partialTranscript: "First part of our extensive lecture.",
+        }),
+      );
+      expect(entriesDao.updateTranscriptionCheckpoint).toHaveBeenNthCalledWith(
+        2,
+        "entry-long-1",
+        expect.objectContaining({
+          completedChunks: 2,
+          partialTranscript:
+            "First part of our extensive lecture. Second part detailing the final conclusion.",
+        }),
+      );
+
+      expect(geminiService.analyzeTranscript).toHaveBeenCalledWith(
+        "First part of our extensive lecture. Second part detailing the final conclusion.",
+      );
+
+      expect(entriesDao.updateTranscription).toHaveBeenCalledWith(
+        "entry-long-1",
+        {
+          title: "Extensive Lecture",
+          summary: "Lecture on project conclusions.",
+          transcript:
+            "First part of our extensive lecture. Second part detailing the final conclusion.",
+          tags: ["lecture", "conclusion"],
+          transcription_status: "completed",
+        },
+      );
+    });
+
+    it("resumes from existing checkpoint and extracts starting from completedChunks", async () => {
+      const existingCheckpoint: TranscriptionCheckpoint = {
+        totalChunks: 2,
+        completedChunks: 1,
+        partialTranscript: "First part already done.",
+        lastContextTail: "First part already done.",
+      };
+
+      const entryWithCheckpoint: JournalEntry = {
+        ...mockLongEntry,
+        id: "entry-long-resume",
+        transcription_checkpoint: existingCheckpoint,
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        entryWithCheckpoint,
+      ]);
+
+      const extractSpy = jest
+        .spyOn(VoiceRecorder, "extractAudioChunk")
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_1.m4a",
+          durationMs: 300_000,
+          isLastChunk: true,
+          totalDurationMs: 600_000,
+        });
+
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce(
+        "Second part resumed successfully.",
+      );
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Resumed Session",
+        summary: "Summary of resumed audio.",
+        tags: ["resumed"],
+      });
+
+      await service.processQueue();
+
+      // Should extract starting from chunk 1 (startTimeMs: 300_000), skipping chunk 0
+      expect(extractSpy).toHaveBeenCalledTimes(1);
+      expect(extractSpy).toHaveBeenCalledWith(
+        "file:///mock/long_recording.m4a",
+        300_000,
+        300_000,
+        expect.stringContaining("chunks_entry-long-resume"),
+      );
+
+      // Only chunk 1 should be transcribed
+      expect(geminiService.transcribeChunk).toHaveBeenCalledTimes(1);
+      expect(geminiService.transcribeChunk).toHaveBeenCalledWith(
+        "file:///cache/chunk_1.m4a",
+        "First part already done.",
+      );
+
+      expect(entriesDao.updateTranscription).toHaveBeenCalledWith(
+        "entry-long-resume",
+        expect.objectContaining({
+          transcript:
+            "First part already done. Second part resumed successfully.",
+          transcription_status: "completed",
+        }),
+      );
+    });
+
+    it("does NOT fall back to analyzeAudio on whole file if chunk extraction fails for long audio (throws retryable error)", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      jest.spyOn(VoiceRecorder, "extractAudioChunk").mockResolvedValue(null);
+
+      await service.processQueue();
+
+      // Review Comment 3: analyzeAudio must NEVER be called with long audio on chunk failure
+      expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+
+      // Instead, it records retry backoff failure
+      expect(entriesDao.recordTranscriptionFailure).toHaveBeenCalledWith(
+        "entry-long-1",
+        1,
+        expect.any(Number),
+        "queued",
+      );
+    });
+
+    it("detects long audio when duration_sec <= 0 by probing native duration via VoiceRecorder.getAudioDuration", async () => {
+      const entryZeroDuration: JournalEntry = {
+        ...mockEntry,
+        id: "entry-imported-zero-dur",
+        duration_sec: 0,
+        source_type: "imported",
+        local_audio_path: "file:///mock/imported_audio.mp3",
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        entryZeroDuration,
+      ]);
+
+      // Native probe reports 15 minutes (900,000 ms)
+      jest.spyOn(VoiceRecorder, "getAudioDuration").mockResolvedValue(900_000);
+
+      const extractSpy = jest
+        .spyOn(VoiceRecorder, "extractAudioChunk")
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_0.wav",
+          durationMs: 300_000,
+          isLastChunk: true,
+          totalDurationMs: 900_000,
+        });
+
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce(
+        "Imported audio transcript.",
+      );
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Imported MP3",
+        summary: "Probed imported audio.",
+        tags: ["imported"],
+      });
+
+      await service.processQueue();
+
+      // Probed duration backfilled to 900s in entriesDao
+      expect(entriesDao.updateDuration).toHaveBeenCalledWith(
+        "entry-imported-zero-dur",
+        900,
+      );
+
+      // Segmented extraction was used because probed duration > 600s
+      expect(extractSpy).toHaveBeenCalled();
+      expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+    });
+
+    it("detects long audio when duration_sec <= 0 by checking large file size (> 15MB)", async () => {
+      const entryLargeFile: JournalEntry = {
+        ...mockEntry,
+        id: "entry-imported-large",
+        duration_sec: 0,
+        source_type: "imported",
+        local_audio_path: "file:///mock/imported_large.wav",
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        entryLargeFile,
+      ]);
+
+      // Native probe returns 0 (e.g. unsupported container header)
+      jest.spyOn(VoiceRecorder, "getAudioDuration").mockResolvedValue(0);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultSize = 25 * 1024 * 1024; // 25 MB
+
+      const extractSpy = jest
+        .spyOn(VoiceRecorder, "extractAudioChunk")
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_0.wav",
+          durationMs: 300_000,
+          isLastChunk: true,
+          totalDurationMs: 0,
+        });
+
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce(
+        "Large file transcript.",
+      );
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Large File",
+        summary: "Summary of large file.",
+        tags: ["large"],
+      });
+
+      await service.processQueue();
+
+      // Segmented extraction was used due to file size > 15MB
+      expect(extractSpy).toHaveBeenCalled();
+      expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultSize = 1000;
+    });
   });
 });
