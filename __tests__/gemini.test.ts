@@ -145,6 +145,38 @@ describe("Gemini AI Service", () => {
     expect(transcript).toBe("continued discussing the project timeline.");
   });
 
+  it("sets correct inline MIME type for .wav chunks (audio/wav) vs .m4a chunks (audio/mp4)", async () => {
+    const mockApiResponse = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  transcript: "wav chunk transcript.",
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockApiResponse,
+    });
+
+    await service.transcribeChunk("file:///test/chunk.wav");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        body: expect.stringContaining('"mimeType":"audio/wav"'),
+      }),
+    );
+  });
+
   it("analyzes completed transcript text to generate title, summary and tags", async () => {
     const mockApiResponse = {
       candidates: [

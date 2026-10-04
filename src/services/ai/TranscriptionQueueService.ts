@@ -158,81 +158,100 @@ export class TranscriptionQueueService {
     const cacheDir = Paths.cache?.uri || "";
     const chunksDir = `${cacheDir.replace(/\/+$/, "")}/chunks_${entry.id}`;
 
-    let isFinished = false;
-    try {
-      while (!isFinished) {
-        const chunkIndex = checkpoint.completedChunks;
-        const startTimeMs = chunkIndex * CHUNK_DURATION_MS;
+    // If checkpoint was already fully transcribed (all chunks completed), proceed directly to synthesis
+    const isAlreadyFullyTranscribed = Boolean(
+      checkpoint.isComplete ||
+      (checkpoint.completedChunks > 0 &&
+        checkpoint.completedChunks >= checkpoint.totalChunks),
+    );
 
-        const chunkResult = await VoiceRecorder.extractAudioChunk(
-          entry.local_audio_path,
-          startTimeMs,
-          CHUNK_DURATION_MS,
-          chunksDir,
-        );
+    if (!isAlreadyFullyTranscribed) {
+      let isFinished = false;
+      try {
+        while (!isFinished) {
+          const chunkIndex = checkpoint.completedChunks;
+          const startTimeMs = chunkIndex * CHUNK_DURATION_MS;
 
-        // If chunk extraction failed on long audio, do NOT fall back to analyzeAudio!
-        // Throw retryable error so it remains in queue with exponential backoff.
-        if (!chunkResult || !chunkResult.chunkUri) {
-          throw new Error(
-            `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
-          );
-        }
-
-        const chunkUri = chunkResult.chunkUri;
-        try {
-          const chunkText = await geminiService.transcribeChunk(
-            chunkUri,
-            checkpoint.lastContextTail,
+          const chunkResult = await VoiceRecorder.extractAudioChunk(
+            entry.local_audio_path,
+            startTimeMs,
+            CHUNK_DURATION_MS,
+            chunksDir,
           );
 
-          const stitched: string = checkpoint.partialTranscript
-            ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
-            : chunkText.trim();
+          // If chunk extraction failed on long audio, do NOT fall back to analyzeAudio!
+          // Throw retryable error so it remains in queue with exponential backoff.
+          if (!chunkResult || !chunkResult.chunkUri) {
+            throw new Error(
+              `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+            );
+          }
 
-          const lastContextTail = buildContextTail(stitched, 350);
-
-          const estimatedTotal =
-            chunkResult.totalDurationMs > 0
-              ? Math.max(
-                  Math.ceil(chunkResult.totalDurationMs / CHUNK_DURATION_MS),
-                  chunkIndex + 1,
-                )
-              : chunkIndex + (chunkResult.isLastChunk ? 1 : 2);
-
-          checkpoint = {
-            totalChunks: estimatedTotal,
-            completedChunks: chunkIndex + 1,
-            partialTranscript: stitched,
-            lastContextTail,
-          };
-
-          // Save checkpoint to DB FIRST
-          await entriesDao.updateTranscriptionCheckpoint(entry.id, checkpoint);
-        } finally {
-          // Always delete the processed chunk from disk so failed retries do not leak cache files
+          const chunkUri = chunkResult.chunkUri;
           try {
-            const chunkFile = new File(chunkUri);
-            if (chunkFile.exists) {
-              chunkFile.delete();
+            const chunkText = await geminiService.transcribeChunk(
+              chunkUri,
+              checkpoint.lastContextTail,
+            );
+
+            const stitched: string = checkpoint.partialTranscript
+              ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
+              : chunkText.trim();
+
+            const lastContextTail = buildContextTail(stitched, 350);
+
+            const isFinalChunk =
+              chunkResult.isLastChunk ||
+              (chunkResult.totalDurationMs > 0 &&
+                startTimeMs + CHUNK_DURATION_MS >= chunkResult.totalDurationMs);
+
+            const estimatedTotal =
+              chunkResult.totalDurationMs > 0
+                ? Math.max(
+                    Math.ceil(chunkResult.totalDurationMs / CHUNK_DURATION_MS),
+                    chunkIndex + 1,
+                  )
+                : chunkIndex + (isFinalChunk ? 1 : 2);
+
+            checkpoint = {
+              totalChunks: isFinalChunk ? chunkIndex + 1 : estimatedTotal,
+              completedChunks: chunkIndex + 1,
+              partialTranscript: stitched,
+              lastContextTail,
+              isComplete: isFinalChunk,
+            };
+
+            // Save checkpoint to DB FIRST (also atomically resets retry count in DB)
+            await entriesDao.updateTranscriptionCheckpoint(
+              entry.id,
+              checkpoint,
+            );
+            entry.transcription_retry_count = 0; // Reset in-memory retry count on progress
+          } finally {
+            // Always delete the processed chunk from disk so failed retries do not leak cache files
+            try {
+              const chunkFile = new File(chunkUri);
+              if (chunkFile.exists) {
+                chunkFile.delete();
+              }
+            } catch {
+              // Non-fatal
             }
-          } catch {
-            // Non-fatal
+          }
+
+          if (checkpoint.isComplete) {
+            isFinished = true;
           }
         }
-
-        if (chunkResult.isLastChunk) {
-          isFinished = true;
+      } finally {
+        try {
+          const dir = new Directory(chunksDir);
+          if (dir.exists) {
+            dir.delete();
+          }
+        } catch {
+          // Non-fatal
         }
-      }
-    } finally {
-      try {
-        const dir = new Directory(chunksDir);
-        if (dir.exists) {
-          dir.delete();
-        }
-      } catch {
-        // Non-fatal
       }
     }
 
@@ -315,6 +334,16 @@ export class TranscriptionQueueService {
 
         try {
           const isLongAudio = await isLongAudioEntry(entry);
+          if (isLongAudio && !VoiceRecorder.hasChunkExtraction()) {
+            // Segmented transcription requires native module support from a dev client / native build.
+            // Defer processing so it doesn't exhaust retries and fail permanently on older binaries.
+            console.warn(
+              `Entry ${entry.id} requires segmented transcription, but native chunk extraction is unavailable in this app build. Deferring until next app update.`,
+            );
+            await entriesDao.updateTranscriptionStatus(entry.id, "queued");
+            this.notifyListeners({ entryId: entry.id, status: "queued" });
+            continue;
+          }
 
           const aiResult = isLongAudio
             ? await this.transcribeLongAudio(entry)

@@ -215,10 +215,16 @@ export class GeminiService {
     const audioFile = new File(audioUri);
     const base64Audio = await audioFile.base64();
 
+    const mimeType = audioUri.toLowerCase().endsWith(".wav")
+      ? "audio/wav"
+      : audioUri.toLowerCase().endsWith(".mp3")
+        ? "audio/mp3"
+        : "audio/mp4";
+
     const parts = [
       {
         inlineData: {
-          mimeType: "audio/mp4",
+          mimeType,
           data: base64Audio,
         },
       },
@@ -282,10 +288,14 @@ export class GeminiService {
     const audioFile = new File(audioUri);
     const base64Audio = await audioFile.base64();
 
+    const mimeType = audioUri.toLowerCase().endsWith(".wav")
+      ? "audio/wav"
+      : "audio/mp4";
+
     const parts: unknown[] = [
       {
         inlineData: {
-          mimeType: "audio/mp4",
+          mimeType,
           data: base64Audio,
         },
       },

@@ -74,6 +74,13 @@ export const VoiceRecorder = {
     return nativeModule !== null;
   },
 
+  hasChunkExtraction(): boolean {
+    return (
+      nativeModule !== null &&
+      typeof nativeModule.extractAudioChunk === "function"
+    );
+  },
+
   async startRecording(filePath: string): Promise<boolean> {
     if (!nativeModule) return false;
     return nativeModule.startRecording(filePath);

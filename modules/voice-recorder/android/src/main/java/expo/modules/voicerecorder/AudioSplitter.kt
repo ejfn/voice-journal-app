@@ -15,6 +15,74 @@ object AudioSplitter {
   private const val TAG = "AudioSplitter"
   private const val DEFAULT_BUFFER_SIZE = 64 * 1024
   private const val TIMEOUT_US = 10_000L
+  private const val TARGET_SAMPLE_RATE = 16000
+  private const val TARGET_CHANNELS = 1
+
+  private class PcmMonoResampler(
+    private val sourceSampleRate: Int,
+    private val sourceChannels: Int,
+    private val targetSampleRate: Int
+  ) {
+    private val phaseStep = sourceSampleRate.toDouble() / targetSampleRate.toDouble()
+    private var phase = 0.0
+    private var lastSample: Short = 0
+
+    fun process(pcmData: ByteArray, offset: Int, size: Int, raf: RandomAccessFile): Long {
+      val bytesPerFrame = sourceChannels * 2
+      if (bytesPerFrame <= 0) return 0L
+      val frameCount = size / bytesPerFrame
+      if (frameCount == 0) return 0L
+
+      val monoSamples = ShortArray(frameCount)
+      for (i in 0 until frameCount) {
+        var sum = 0
+        for (c in 0 until sourceChannels) {
+          val byteIdx = offset + i * bytesPerFrame + c * 2
+          val low = pcmData[byteIdx].toInt() and 0xFF
+          val high = pcmData[byteIdx + 1].toInt()
+          val sample = (high shl 8) or low
+          sum += sample
+        }
+        monoSamples[i] = (sum / sourceChannels).toShort()
+      }
+
+      if (sourceSampleRate == targetSampleRate) {
+        val outBytes = ByteArray(frameCount * 2)
+        for (i in 0 until frameCount) {
+          val s = monoSamples[i].toInt()
+          outBytes[i * 2] = (s and 0xFF).toByte()
+          outBytes[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+        }
+        raf.write(outBytes)
+        return outBytes.size.toLong()
+      }
+
+      var bytesWritten = 0L
+      val outByteList = ArrayList<Byte>(frameCount * 2)
+      while (phase < frameCount) {
+        val idx = phase.toInt()
+        val frac = (phase - idx).toFloat()
+        val s0 = if (idx > 0) monoSamples[idx - 1] else lastSample
+        val s1 = monoSamples[idx]
+        val interp = (s0 + frac * (s1 - s0)).toInt().coerceIn(-32768, 32767)
+        outByteList.add((interp and 0xFF).toByte())
+        outByteList.add(((interp shr 8) and 0xFF).toByte())
+        phase += phaseStep
+      }
+      phase -= frameCount
+      lastSample = monoSamples[frameCount - 1]
+
+      val outBytes = ByteArray(outByteList.size)
+      for (b in outByteList.indices) {
+        outBytes[b] = outByteList[b]
+      }
+      if (outBytes.isNotEmpty()) {
+        raf.write(outBytes)
+        bytesWritten += outBytes.size
+      }
+      return bytesWritten
+    }
+  }
 
   private fun cleanPath(uri: String): String {
     return if (uri.startsWith("file://")) {
@@ -314,6 +382,8 @@ object AudioSplitter {
       1
     }
 
+    var resampler = PcmMonoResampler(actualSampleRate, actualChannels, TARGET_SAMPLE_RATE)
+
     val bufferInfo = MediaCodec.BufferInfo()
 
     try {
@@ -360,8 +430,9 @@ object AudioSplitter {
                 val pcmData = ByteArray(bufferInfo.size)
                 outputBuffer.position(bufferInfo.offset)
                 outputBuffer.get(pcmData, 0, bufferInfo.size)
-                raf.write(pcmData)
-                totalPcmBytesWritten += bufferInfo.size
+
+                val bytesWritten = resampler.process(pcmData, 0, bufferInfo.size, raf)
+                totalPcmBytesWritten += bytesWritten
               }
             }
           }
@@ -374,6 +445,7 @@ object AudioSplitter {
           if (newFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
             try { actualChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) } catch (_: Exception) {}
           }
+          resampler = PcmMonoResampler(actualSampleRate, actualChannels, TARGET_SAMPLE_RATE)
         }
       }
     } finally {
@@ -391,8 +463,8 @@ object AudioSplitter {
       return null
     }
 
-    // Write canonical RIFF/WAVE 16-bit PCM header at beginning of file
-    writeWavHeader(raf, totalPcmBytesWritten, actualSampleRate, actualChannels, 16)
+    // Write canonical RIFF/WAVE 16-bit PCM header at beginning of file (16 kHz mono)
+    writeWavHeader(raf, totalPcmBytesWritten, TARGET_SAMPLE_RATE, TARGET_CHANNELS, 16)
     raf.close()
 
     if (totalDurationUs > 0 && endUs >= totalDurationUs) {

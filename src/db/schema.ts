@@ -7,6 +7,7 @@ export interface TranscriptionCheckpoint {
   chunkPaths?: string[];
   partialTranscript: string;
   lastContextTail: string;
+  isComplete?: boolean;
 }
 
 export interface JournalEntry {

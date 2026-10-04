@@ -266,7 +266,7 @@ export const entriesDao = {
   ): Promise<void> {
     const db = getDatabase();
     await db.runAsync(
-      `UPDATE entries SET transcription_checkpoint = ? WHERE id = ?`,
+      `UPDATE entries SET transcription_checkpoint = ?, transcription_retry_count = 0, transcription_next_retry_at = NULL WHERE id = ?`,
       [checkpoint ? JSON.stringify(checkpoint) : null, id],
     );
   },

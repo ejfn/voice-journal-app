@@ -42,6 +42,7 @@ describe("TranscriptionQueueService", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (File as any).defaultExists = true;
     (geminiService.hasKeyConfigured as jest.Mock).mockResolvedValue(true);
+    jest.spyOn(VoiceRecorder, "hasChunkExtraction").mockReturnValue(true);
   });
 
   it("processes queued entries successfully and notifies listeners", async () => {
@@ -648,6 +649,114 @@ describe("TranscriptionQueueService", () => {
           tags: ["silent"],
           transcription_status: "completed",
         }),
+      );
+    });
+
+    it("resumes directly at synthesis when checkpoint has all chunks complete without extracting at EOF", async () => {
+      const completedCheckpoint: TranscriptionCheckpoint = {
+        totalChunks: 2,
+        completedChunks: 2,
+        partialTranscript: "Both chunks already transcribed fully.",
+        lastContextTail: "transcribed fully.",
+        isComplete: true,
+      };
+
+      const entryCompleteCheckpoint: JournalEntry = {
+        ...mockLongEntry,
+        id: "entry-long-already-finished",
+        transcription_checkpoint: completedCheckpoint,
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        entryCompleteCheckpoint,
+      ]);
+
+      const extractSpy = jest.spyOn(VoiceRecorder, "extractAudioChunk");
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Fully Assembled",
+        summary: "Summary of complete text.",
+        tags: ["assembled"],
+      });
+
+      await service.processQueue();
+
+      // Should NEVER extract at EOF
+      expect(extractSpy).not.toHaveBeenCalled();
+
+      // Proceeded directly to synthesis
+      expect(geminiService.analyzeTranscript).toHaveBeenCalledWith(
+        "Both chunks already transcribed fully.",
+      );
+      expect(entriesDao.updateTranscription).toHaveBeenCalledWith(
+        "entry-long-already-finished",
+        expect.objectContaining({
+          title: "Fully Assembled",
+          transcription_status: "completed",
+        }),
+      );
+    });
+
+    it("resets retry count when chunk progress is saved", async () => {
+      const entryWithRetries: JournalEntry = {
+        ...mockLongEntry,
+        id: "entry-long-retrying",
+        transcription_retry_count: 3,
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        entryWithRetries,
+      ]);
+
+      jest.spyOn(VoiceRecorder, "extractAudioChunk").mockResolvedValueOnce({
+        chunkUri: "file:///cache/chunk_0.m4a",
+        durationMs: 300_000,
+        isLastChunk: true,
+        totalDurationMs: 300_000,
+      });
+
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce(
+        "Chunk progress made.",
+      );
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Progress Title",
+        summary: "Summary.",
+        tags: ["progress"],
+      });
+
+      await service.processQueue();
+
+      expect(entriesDao.updateTranscriptionCheckpoint).toHaveBeenCalledWith(
+        "entry-long-retrying",
+        expect.objectContaining({
+          completedChunks: 1,
+        }),
+      );
+
+      expect(entryWithRetries.transcription_retry_count).toBe(0);
+    });
+
+    it("defers long audio without consuming retries when native chunk extraction is not available in the binary", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      jest.spyOn(VoiceRecorder, "hasChunkExtraction").mockReturnValue(false);
+      const extractSpy = jest.spyOn(VoiceRecorder, "extractAudioChunk");
+
+      await service.processQueue();
+
+      // Native chunk extraction was not called
+      expect(extractSpy).not.toHaveBeenCalled();
+
+      // Did not increment retry failure count
+      expect(entriesDao.recordTranscriptionFailure).not.toHaveBeenCalled();
+
+      // Reset to queued so it waits for an updated app binary
+      expect(entriesDao.updateTranscriptionStatus).toHaveBeenCalledWith(
+        "entry-long-1",
+        "queued",
       );
     });
   });
