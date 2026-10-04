@@ -45,17 +45,7 @@ export async function isLongAudioEntry(entry: JournalEntry): Promise<boolean> {
       return false;
     }
 
-    // Large files (> 15 MB) are definitely long audio (or high-bitrate long recordings)
-    try {
-      const file = new File(entry.local_audio_path);
-      if (file.exists && file.size && file.size > 15 * 1024 * 1024) {
-        return true;
-      }
-    } catch {
-      // Non-fatal
-    }
-
-    // Probe native duration via MediaExtractor
+    // 1. Probe native container duration via MediaExtractor first
     try {
       const durationMs = await VoiceRecorder.getAudioDuration(
         entry.local_audio_path,
@@ -64,12 +54,25 @@ export async function isLongAudioEntry(entry: JournalEntry): Promise<boolean> {
       if (durationSec > 0) {
         entry.duration_sec = durationSec;
         await entriesDao.updateDuration(entry.id, durationSec);
-        if (durationSec > LONG_AUDIO_THRESHOLD_SEC) {
-          return true;
-        }
+        return durationSec > LONG_AUDIO_THRESHOLD_SEC;
       }
     } catch {
       // Non-fatal
+    }
+
+    // 2. If duration probing was unable to determine length, use file size as a fallback heuristic
+    // Only classify as long if the binary actually supports chunk extraction AND file size exceeds
+    // safe inline payload limits (> 20 MB). On older binaries without chunk extraction, allow it to attempt
+    // single-pass rather than deferring indefinitely.
+    if (VoiceRecorder.hasChunkExtraction()) {
+      try {
+        const file = new File(entry.local_audio_path);
+        if (file.exists && file.size && file.size > 20 * 1024 * 1024) {
+          return true;
+        }
+      } catch {
+        // Non-fatal
+      }
     }
   }
 
@@ -179,9 +182,28 @@ export class TranscriptionQueueService {
             chunksDir,
           );
 
-          // If chunk extraction failed on long audio, do NOT fall back to analyzeAudio!
-          // Throw retryable error so it remains in queue with exponential backoff.
-          if (!chunkResult || !chunkResult.chunkUri) {
+          if (!chunkResult) {
+            throw new Error(
+              `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+            );
+          }
+
+          // If the source audio reached EOF exactly at a chunk boundary (0 duration / no chunkUri returned),
+          // all chunks are complete. Finish chunk processing cleanly without invoking Gemini on an empty URI.
+          if (
+            chunkResult.isLastChunk &&
+            (!chunkResult.chunkUri || chunkResult.durationMs === 0)
+          ) {
+            isFinished = true;
+            checkpoint.isComplete = true;
+            await entriesDao.updateTranscriptionCheckpoint(
+              entry.id,
+              checkpoint,
+            );
+            break;
+          }
+
+          if (!chunkResult.chunkUri) {
             throw new Error(
               `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
             );

@@ -1,4 +1,7 @@
-import { GeminiService } from "../src/services/ai/GeminiService";
+import {
+  GeminiService,
+  detectAudioMimeType,
+} from "../src/services/ai/GeminiService";
 
 describe("Gemini AI Service", () => {
   let service: GeminiService;
@@ -217,5 +220,63 @@ describe("Gemini AI Service", () => {
       "Discussed project milestones and set deadlines for Q4.",
     );
     expect(result.tags).toEqual(["work", "timeline", "project"]);
+  });
+
+  describe("detectAudioMimeType", () => {
+    it("detects WAV from RIFF magic bytes regardless of file extension", () => {
+      // "UklGR..." is base64 for "RIFF..."
+      const base64Wav =
+        "UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+      expect(detectAudioMimeType("file:///sandbox/audio.m4a", base64Wav)).toBe(
+        "audio/wav",
+      );
+    });
+
+    it("detects MP3 from ID3 or MPEG sync bytes regardless of file extension", () => {
+      // "SUQz..." is base64 for "ID3..."
+      const base64Id3 =
+        "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA";
+      expect(detectAudioMimeType("file:///sandbox/audio.m4a", base64Id3)).toBe(
+        "audio/mp3",
+      );
+
+      // "/+M..." is base64 for MPEG sync 0xFF 0xFB
+      const base64MpegSync =
+        "/+MYxAAAAANIAAAAAExBTUUzLjEwMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+      expect(
+        detectAudioMimeType("file:///sandbox/audio.m4a", base64MpegSync),
+      ).toBe("audio/mp3");
+    });
+
+    it("detects OGG and FLAC from container magic bytes", () => {
+      // "T2dnUw..." is "OggS..."
+      expect(
+        detectAudioMimeType(
+          "file:///sandbox/audio.m4a",
+          "T2dnUwACAAAAAAAAAAAAAAA=",
+        ),
+      ).toBe("audio/ogg");
+
+      // "ZkxhQw..." is "fLaC..."
+      expect(
+        detectAudioMimeType(
+          "file:///sandbox/audio.m4a",
+          "ZkxhQwAAACIQABAAAAAA==",
+        ),
+      ).toBe("audio/flac");
+    });
+
+    it("falls back to file extension when base64 is unavailable or unrecognized", () => {
+      expect(detectAudioMimeType("file:///cache/chunk.wav")).toBe("audio/wav");
+      expect(detectAudioMimeType("file:///cache/chunk.mp3")).toBe("audio/mp3");
+      expect(detectAudioMimeType("file:///cache/chunk.ogg")).toBe("audio/ogg");
+      expect(detectAudioMimeType("file:///cache/chunk.flac")).toBe(
+        "audio/flac",
+      );
+      expect(detectAudioMimeType("file:///cache/chunk.m4a")).toBe("audio/mp4");
+      expect(detectAudioMimeType("file:///cache/chunk.unknown")).toBe(
+        "audio/mp4",
+      );
+    });
   });
 });

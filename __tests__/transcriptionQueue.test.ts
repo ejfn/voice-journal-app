@@ -41,6 +41,8 @@ describe("TranscriptionQueueService", () => {
     service = new TranscriptionQueueService();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (File as any).defaultExists = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultSize = 1000;
     (geminiService.hasKeyConfigured as jest.Mock).mockResolvedValue(true);
     jest.spyOn(VoiceRecorder, "hasChunkExtraction").mockReturnValue(true);
   });
@@ -567,9 +569,43 @@ describe("TranscriptionQueueService", () => {
 
       await service.processQueue();
 
-      // Segmented extraction was used due to file size > 15MB
+      // Segmented extraction was used due to file size > 20MB after probe returned 0
       expect(extractSpy).toHaveBeenCalled();
       expect(geminiService.analyzeAudio).not.toHaveBeenCalled();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultSize = 1000;
+    });
+
+    it("uses single-pass analyzeAudio for short audio (<= 10 min) even if file size is large", async () => {
+      const shortLargeWav: JournalEntry = {
+        ...mockEntry,
+        id: "entry-short-large-wav",
+        duration_sec: 0,
+        source_type: "imported",
+        local_audio_path: "file:///mock/short_large.wav",
+      };
+
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        shortLargeWav,
+      ]);
+
+      // Native probe reports 5 minutes (300 seconds <= 10 min)
+      jest.spyOn(VoiceRecorder, "getAudioDuration").mockResolvedValue(300_000);
+
+      // Large file (25 MB) due to uncompressed WAV
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultSize = 25 * 1024 * 1024;
+
+      const extractSpy = jest.spyOn(VoiceRecorder, "extractAudioChunk");
+
+      await service.processQueue();
+
+      // Probed duration (300s) took precedence over file size: single-pass analyzeAudio was used!
+      expect(geminiService.analyzeAudio).toHaveBeenCalledWith(
+        "file:///mock/short_large.wav",
+      );
+      expect(extractSpy).not.toHaveBeenCalled();
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (File as any).defaultSize = 1000;
@@ -742,7 +778,9 @@ describe("TranscriptionQueueService", () => {
         mockLongEntry,
       ]);
 
-      jest.spyOn(VoiceRecorder, "hasChunkExtraction").mockReturnValue(false);
+      jest
+        .spyOn(VoiceRecorder, "hasChunkExtraction")
+        .mockReturnValueOnce(false);
       const extractSpy = jest.spyOn(VoiceRecorder, "extractAudioChunk");
 
       await service.processQueue();
@@ -757,6 +795,58 @@ describe("TranscriptionQueueService", () => {
       expect(entriesDao.updateTranscriptionStatus).toHaveBeenCalledWith(
         "entry-long-1",
         "queued",
+      );
+    });
+
+    it("completes chunk loop cleanly when source audio reaches EOF at boundary with 0-duration last chunk", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      // Chunk 0 returns audio, but isLastChunk is false (e.g. unknown duration or boundary hit)
+      jest
+        .spyOn(VoiceRecorder, "extractAudioChunk")
+        .mockResolvedValueOnce({
+          chunkUri: "file:///cache/chunk_0.m4a",
+          durationMs: 300_000,
+          isLastChunk: false,
+          totalDurationMs: 0,
+        })
+        // Chunk 1 extraction finds no samples because file ended exactly at 300_000ms
+        .mockResolvedValueOnce({
+          chunkUri: "",
+          durationMs: 0,
+          isLastChunk: true,
+          totalDurationMs: 0,
+        });
+
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce(
+        "Single chunk text before boundary.",
+      );
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Boundary Title",
+        summary: "Boundary Summary.",
+        tags: ["boundary"],
+      });
+
+      await service.processQueue();
+
+      // Only transcribed the valid chunk
+      expect(geminiService.transcribeChunk).toHaveBeenCalledTimes(1);
+
+      // Synthesis succeeded with the transcript
+      expect(geminiService.analyzeTranscript).toHaveBeenCalledWith(
+        "Single chunk text before boundary.",
+      );
+
+      // Successfully saved entry
+      expect(entriesDao.updateTranscription).toHaveBeenCalledWith(
+        "entry-long-1",
+        expect.objectContaining({
+          transcript: "Single chunk text before boundary.",
+          transcription_status: "completed",
+        }),
       );
     });
   });

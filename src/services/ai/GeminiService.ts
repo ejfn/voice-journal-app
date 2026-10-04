@@ -79,6 +79,38 @@ Instructions:
 Return pure JSON conforming to the schema.
 `.trim();
 
+export function detectAudioMimeType(
+  audioUri: string,
+  base64Audio?: string,
+): string {
+  if (base64Audio) {
+    if (base64Audio.startsWith("UklGR")) {
+      return "audio/wav"; // ASCII "RIFF"
+    }
+    if (
+      base64Audio.startsWith("SUQz") || // ASCII "ID3"
+      base64Audio.startsWith("/+M") || // MPEG frame sync
+      base64Audio.startsWith("/+X")
+    ) {
+      return "audio/mp3";
+    }
+    if (base64Audio.startsWith("T2dnUw")) {
+      return "audio/ogg"; // ASCII "OggS"
+    }
+    if (base64Audio.startsWith("ZkxhQw")) {
+      return "audio/flac"; // ASCII "fLaC"
+    }
+  }
+
+  const clean = audioUri.toLowerCase();
+  if (clean.endsWith(".wav")) return "audio/wav";
+  if (clean.endsWith(".mp3")) return "audio/mp3";
+  if (clean.endsWith(".ogg")) return "audio/ogg";
+  if (clean.endsWith(".flac")) return "audio/flac";
+  if (clean.endsWith(".aac")) return "audio/aac";
+  return "audio/mp4";
+}
+
 export class GeminiService {
   private apiKey: string;
 
@@ -215,11 +247,7 @@ export class GeminiService {
     const audioFile = new File(audioUri);
     const base64Audio = await audioFile.base64();
 
-    const mimeType = audioUri.toLowerCase().endsWith(".wav")
-      ? "audio/wav"
-      : audioUri.toLowerCase().endsWith(".mp3")
-        ? "audio/mp3"
-        : "audio/mp4";
+    const mimeType = detectAudioMimeType(audioUri, base64Audio);
 
     const parts = [
       {
@@ -288,9 +316,7 @@ export class GeminiService {
     const audioFile = new File(audioUri);
     const base64Audio = await audioFile.base64();
 
-    const mimeType = audioUri.toLowerCase().endsWith(".wav")
-      ? "audio/wav"
-      : "audio/mp4";
+    const mimeType = detectAudioMimeType(audioUri, base64Audio);
 
     const parts: unknown[] = [
       {

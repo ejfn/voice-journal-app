@@ -244,28 +244,32 @@ object AudioSplitter {
     }
 
     val chunkFile = File(targetDirectory, "chunk_${startUs / 1000L}_${System.currentTimeMillis()}.m4a")
-    val muxer = MediaMuxer(chunkFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-    val track = muxer.addTrack(audioFormat)
-    muxer.start()
-
-    val maxInputSize = if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-      try {
-        audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
-      } catch (_: Exception) {
-        DEFAULT_BUFFER_SIZE
-      }
-    } else {
-      DEFAULT_BUFFER_SIZE
-    }
-    val buffer = ByteBuffer.allocate(max(maxInputSize, DEFAULT_BUFFER_SIZE))
-    val bufferInfo = MediaCodec.BufferInfo()
-
+    var muxer: MediaMuxer? = null
+    var success = false
     var samplesWritten = 0
-    var isLastChunk = false
-    var firstSampleTimeUs = -1L
-    var lastSampleTimeUs = -1L
 
     try {
+      val m = MediaMuxer(chunkFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      muxer = m
+      val track = m.addTrack(audioFormat)
+      m.start()
+
+      val maxInputSize = if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+        try {
+          audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+        } catch (_: Exception) {
+          DEFAULT_BUFFER_SIZE
+        }
+      } else {
+        DEFAULT_BUFFER_SIZE
+      }
+      val buffer = ByteBuffer.allocate(max(maxInputSize, DEFAULT_BUFFER_SIZE))
+      val bufferInfo = MediaCodec.BufferInfo()
+
+      var isLastChunk = false
+      var firstSampleTimeUs = -1L
+      var lastSampleTimeUs = -1L
+
       while (true) {
         buffer.clear()
         val sampleSize = extractor.readSampleData(buffer, 0)
@@ -298,45 +302,60 @@ object AudioSplitter {
         bufferInfo.presentationTimeUs = (sampleTimeUs - firstSampleTimeUs).coerceAtLeast(0L)
         bufferInfo.flags = flags
 
-        muxer.writeSampleData(track, buffer, bufferInfo)
+        m.writeSampleData(track, buffer, bufferInfo)
         samplesWritten++
 
         extractor.advance()
       }
+
+      if (samplesWritten == 0) {
+        if (startUs > 0) {
+          success = true
+          return mapOf(
+            "chunkUri" to "",
+            "durationMs" to 0L,
+            "isLastChunk" to true,
+            "totalDurationMs" to (totalDurationUs / 1000L)
+          )
+        }
+        return null
+      }
+
+      success = true
+
+      if (totalDurationUs > 0 && endUs >= totalDurationUs) {
+        isLastChunk = true
+      }
+
+      val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
+        (lastSampleTimeUs - firstSampleTimeUs) / 1000L
+      } else {
+        (endUs - startUs) / 1000L
+      }
+
+      return mapOf(
+        "chunkUri" to "file://${chunkFile.absolutePath}",
+        "durationMs" to chunkDurationMs,
+        "isLastChunk" to isLastChunk,
+        "totalDurationMs" to (totalDurationUs / 1000L)
+      )
     } finally {
       try {
         if (samplesWritten > 0) {
-          muxer.stop()
+          muxer?.stop()
         }
       } catch (e: Exception) {
         Log.w(TAG, "Error stopping muxer", e)
       }
       try {
-        muxer.release()
+        muxer?.release()
       } catch (_: Exception) {}
+      if (!success && chunkFile.exists()) {
+        try {
+          chunkFile.delete()
+        } catch (_: Exception) {}
+      }
     }
-
-    if (samplesWritten == 0) {
-      chunkFile.delete()
-      return null
-    }
-
-    if (totalDurationUs > 0 && endUs >= totalDurationUs) {
-      isLastChunk = true
-    }
-
-    val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
-      (lastSampleTimeUs - firstSampleTimeUs) / 1000L
-    } else {
-      (endUs - startUs) / 1000L
-    }
-
-    return mapOf(
-      "chunkUri" to "file://${chunkFile.absolutePath}",
-      "durationMs" to chunkDurationMs,
-      "isLastChunk" to isLastChunk,
-      "totalDurationMs" to (totalDurationUs / 1000L)
-    )
   }
 
   private fun extractPcmWavChunk(
@@ -356,71 +375,83 @@ object AudioSplitter {
       extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
     }
 
-    val decoder = MediaCodec.createDecoderByType(mime)
-    decoder.configure(audioFormat, null, null, 0)
-    decoder.start()
-
-    val chunkFile = File(targetDirectory, "chunk_${startUs / 1000L}_${System.currentTimeMillis()}.wav")
-    val raf = RandomAccessFile(chunkFile, "rw")
-    raf.setLength(44L) // Reserve 44 bytes for RIFF/WAVE header
-    raf.seek(44L)
-
-    var totalPcmBytesWritten = 0L
-    var isLastChunk = false
-    var sawInputEOS = false
-    var sawOutputEOS = false
-    var firstSampleTimeUs = -1L
-    var lastSampleTimeUs = -1L
-    var actualSampleRate = if (audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-      try { audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) } catch (_: Exception) { 44100 }
-    } else {
-      44100
-    }
-    var actualChannels = if (audioFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-      try { audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) } catch (_: Exception) { 1 }
-    } else {
-      1
-    }
-
-    var resampler = PcmMonoResampler(actualSampleRate, actualChannels, TARGET_SAMPLE_RATE)
-
-    val bufferInfo = MediaCodec.BufferInfo()
+    var decoder: MediaCodec? = null
+    var raf: RandomAccessFile? = null
+    var chunkFile: File? = null
+    var success = false
 
     try {
+      val d = MediaCodec.createDecoderByType(mime)
+      decoder = d
+      d.configure(audioFormat, null, null, 0)
+      d.start()
+
+      val cf = File(targetDirectory, "chunk_${startUs / 1000L}_${System.currentTimeMillis()}.wav")
+      chunkFile = cf
+      val r = RandomAccessFile(cf, "rw")
+      raf = r
+      r.setLength(44L) // Reserve 44 bytes for RIFF/WAVE header
+      r.seek(44L)
+
+      var totalPcmBytesWritten = 0L
+      var isLastChunk = false
+      var sawInputEOS = false
+      var sawOutputEOS = false
+      var firstSampleTimeUs = -1L
+      var lastSampleTimeUs = -1L
+      var actualSampleRate = if (audioFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+        try { audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) } catch (_: Exception) { 44100 }
+      } else {
+        44100
+      }
+      var actualChannels = if (audioFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+        try { audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) } catch (_: Exception) { 1 }
+      } else {
+        1
+      }
+
+      var resampler = PcmMonoResampler(actualSampleRate, actualChannels, TARGET_SAMPLE_RATE)
+
+      val bufferInfo = MediaCodec.BufferInfo()
+
       while (!sawOutputEOS) {
         if (!sawInputEOS) {
-          val inputIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
+          val inputIndex = d.dequeueInputBuffer(TIMEOUT_US)
           if (inputIndex >= 0) {
-            val inputBuffer = decoder.getInputBuffer(inputIndex)
+            val inputBuffer = d.getInputBuffer(inputIndex)
             if (inputBuffer != null) {
               inputBuffer.clear()
               val sampleSize = extractor.readSampleData(inputBuffer, 0)
               if (sampleSize < 0) {
                 sawInputEOS = true
-                decoder.queueInputBuffer(inputIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                d.queueInputBuffer(inputIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
               } else {
                 val sampleTimeUs = extractor.sampleTime
-                decoder.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
+                d.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
                 extractor.advance()
               }
             }
           }
         }
 
-        val outputIndex = decoder.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
+        val outputIndex = d.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)
         if (outputIndex >= 0) {
           if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
             sawOutputEOS = true
             isLastChunk = true
           }
 
-          val outputBuffer = decoder.getOutputBuffer(outputIndex)
+          val outputBuffer = d.getOutputBuffer(outputIndex)
           if (outputBuffer != null && bufferInfo.size > 0) {
             val sampleTimeUs = bufferInfo.presentationTimeUs
 
             if (sampleTimeUs >= startUs || startUs == 0L) {
               if (sampleTimeUs >= endUs && totalPcmBytesWritten > 0L) {
-                sawOutputEOS = true
+                if (sawInputEOS) {
+                  // Extractor already reached source EOF. Continue draining decoder to observe EOS flag.
+                } else {
+                  sawOutputEOS = true
+                }
               } else {
                 if (firstSampleTimeUs < 0) {
                   firstSampleTimeUs = sampleTimeUs
@@ -431,14 +462,14 @@ object AudioSplitter {
                 outputBuffer.position(bufferInfo.offset)
                 outputBuffer.get(pcmData, 0, bufferInfo.size)
 
-                val bytesWritten = resampler.process(pcmData, 0, bufferInfo.size, raf)
+                val bytesWritten = resampler.process(pcmData, 0, bufferInfo.size, r)
                 totalPcmBytesWritten += bytesWritten
               }
             }
           }
-          decoder.releaseOutputBuffer(outputIndex, false)
+          d.releaseOutputBuffer(outputIndex, false)
         } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-          val newFormat = decoder.outputFormat
+          val newFormat = d.outputFormat
           if (newFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
             try { actualSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) } catch (_: Exception) {}
           }
@@ -448,41 +479,56 @@ object AudioSplitter {
           resampler = PcmMonoResampler(actualSampleRate, actualChannels, TARGET_SAMPLE_RATE)
         }
       }
+
+      if (totalPcmBytesWritten == 0L) {
+        if (startUs > 0) {
+          success = true
+          return mapOf(
+            "chunkUri" to "",
+            "durationMs" to 0L,
+            "isLastChunk" to true,
+            "totalDurationMs" to (totalDurationUs / 1000L)
+          )
+        }
+        return null
+      }
+
+      // Write canonical RIFF/WAVE 16-bit PCM header at beginning of file (16 kHz mono)
+      writeWavHeader(r, totalPcmBytesWritten, TARGET_SAMPLE_RATE, TARGET_CHANNELS, 16)
+      success = true
+
+      if (totalDurationUs > 0 && endUs >= totalDurationUs) {
+        isLastChunk = true
+      }
+
+      val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
+        (lastSampleTimeUs - firstSampleTimeUs) / 1000L
+      } else {
+        (endUs - startUs) / 1000L
+      }
+
+      return mapOf(
+        "chunkUri" to "file://${cf.absolutePath}",
+        "durationMs" to chunkDurationMs,
+        "isLastChunk" to isLastChunk,
+        "totalDurationMs" to (totalDurationUs / 1000L)
+      )
     } finally {
       try {
-        decoder.stop()
+        raf?.close()
+      } catch (_: Exception) {}
+      if (!success && chunkFile != null && chunkFile.exists()) {
+        try {
+          chunkFile.delete()
+        } catch (_: Exception) {}
+      }
+      try {
+        decoder?.stop()
       } catch (_: Exception) {}
       try {
-        decoder.release()
+        decoder?.release()
       } catch (_: Exception) {}
     }
-
-    if (totalPcmBytesWritten == 0L) {
-      raf.close()
-      chunkFile.delete()
-      return null
-    }
-
-    // Write canonical RIFF/WAVE 16-bit PCM header at beginning of file (16 kHz mono)
-    writeWavHeader(raf, totalPcmBytesWritten, TARGET_SAMPLE_RATE, TARGET_CHANNELS, 16)
-    raf.close()
-
-    if (totalDurationUs > 0 && endUs >= totalDurationUs) {
-      isLastChunk = true
-    }
-
-    val chunkDurationMs = if (firstSampleTimeUs >= 0 && lastSampleTimeUs >= firstSampleTimeUs) {
-      (lastSampleTimeUs - firstSampleTimeUs) / 1000L
-    } else {
-      (endUs - startUs) / 1000L
-    }
-
-    return mapOf(
-      "chunkUri" to "file://${chunkFile.absolutePath}",
-      "durationMs" to chunkDurationMs,
-      "isLastChunk" to isLastChunk,
-      "totalDurationMs" to (totalDurationUs / 1000L)
-    )
   }
 
   private fun writeWavHeader(
