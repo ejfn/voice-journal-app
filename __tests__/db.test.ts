@@ -1206,4 +1206,54 @@ describe("Database & FTS5 DAO", () => {
       expect(initialized).toBe(recoveryDb);
     });
   });
+
+  describe("transcription checkpoint persistence", () => {
+    it("updates, retrieves, and clears transcription checkpoint on completion", async () => {
+      const entry: JournalEntry = {
+        id: "entry-cp-1",
+        title: "Long Audio Entry",
+        summary: "Processing...",
+        transcript: "",
+        tags: ["work"],
+        duration_sec: 1800,
+        source_type: "recorded",
+        local_audio_path: "file:///audio/long.m4a",
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: Date.now(),
+        last_accessed_at: Date.now(),
+      };
+
+      await entriesDao.insertEntry(entry);
+
+      const checkpoint = {
+        totalChunks: 6,
+        completedChunks: 2,
+        chunkPaths: ["file:///c0.m4a", "file:///c1.m4a", "file:///c2.m4a"],
+        partialTranscript: "Chunk 1 transcript. Chunk 2 transcript.",
+        lastContextTail: "Chunk 2 transcript.",
+      };
+
+      await entriesDao.updateTranscriptionCheckpoint("entry-cp-1", checkpoint);
+
+      const retrievedWithCp = await entriesDao.getEntryById("entry-cp-1");
+      expect(retrievedWithCp?.transcription_checkpoint).toEqual(checkpoint);
+
+      // When updateTranscription is called, checkpoint is cleared to null
+      await entriesDao.updateTranscription("entry-cp-1", {
+        title: "Completed Long Audio",
+        summary: "Full summary.",
+        transcript: "All chunks transcript.",
+        tags: ["work", "completed"],
+        transcription_status: "completed",
+      });
+
+      const retrievedAfterComplete =
+        await entriesDao.getEntryById("entry-cp-1");
+      expect(retrievedAfterComplete?.transcription_checkpoint).toBeNull();
+      expect(retrievedAfterComplete?.title).toBe("Completed Long Audio");
+      expect(retrievedAfterComplete?.transcription_status).toBe("completed");
+    });
+  });
 });

@@ -1,7 +1,12 @@
 import { entriesDao } from "../../db/dao/entriesDao";
-import { TranscriptionStatus } from "../../db/schema";
-import { geminiService } from "./GeminiService";
-import { File } from "expo-file-system";
+import {
+  JournalEntry,
+  TranscriptionCheckpoint,
+  TranscriptionStatus,
+} from "../../db/schema";
+import { GeminiAnalysisResult, geminiService } from "./GeminiService";
+import { Directory, File, Paths } from "expo-file-system";
+import { VoiceRecorder } from "voice-recorder";
 
 export type TranscriptionEvent = {
   entryId: string;
@@ -9,6 +14,70 @@ export type TranscriptionEvent = {
 };
 
 export type TranscriptionListener = (event: TranscriptionEvent) => void;
+
+export const LONG_AUDIO_THRESHOLD_SEC = 600; // 10 minutes
+export const CHUNK_DURATION_MS = 300_000; // 5 minutes
+
+export function buildContextTail(text: string, maxChars = 350): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  const slice = trimmed.slice(-maxChars);
+  const firstSpace = slice.indexOf(" ");
+  if (firstSpace > 0 && firstSpace < 60) {
+    return slice.slice(firstSpace + 1).trim();
+  }
+  return slice.trim();
+}
+
+export async function isLongAudioEntry(entry: JournalEntry): Promise<boolean> {
+  if (entry.transcription_checkpoint) {
+    return true;
+  }
+
+  if (entry.duration_sec && entry.duration_sec > LONG_AUDIO_THRESHOLD_SEC) {
+    return true;
+  }
+
+  if (!entry.duration_sec || entry.duration_sec <= 0) {
+    if (!entry.local_audio_path) {
+      return false;
+    }
+
+    // 1. Probe native container duration via MediaExtractor first
+    try {
+      const durationMs = await VoiceRecorder.getAudioDuration(
+        entry.local_audio_path,
+      );
+      const durationSec = Math.round(durationMs / 1000);
+      if (durationSec > 0) {
+        entry.duration_sec = durationSec;
+        await entriesDao.updateDuration(entry.id, durationSec);
+        return durationSec > LONG_AUDIO_THRESHOLD_SEC;
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    // 2. If duration probing was unable to determine length, use file size as a fallback heuristic
+    // Only classify as long if the binary actually supports chunk extraction AND file size exceeds
+    // safe inline payload limits (> 20 MB). On older binaries without chunk extraction, allow it to attempt
+    // single-pass rather than deferring indefinitely.
+    if (VoiceRecorder.hasChunkExtraction()) {
+      try {
+        const file = new File(entry.local_audio_path);
+        if (file.exists && file.size && file.size > 20 * 1024 * 1024) {
+          return true;
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
+  return false;
+}
 
 /**
  * Graduated backoff intervals for failed transcriptions:
@@ -72,6 +141,153 @@ export class TranscriptionQueueService {
       clearTimeout(this.retryTimeout);
       this.retryTimeout = null;
     }
+  }
+
+  async transcribeLongAudio(
+    entry: JournalEntry,
+  ): Promise<GeminiAnalysisResult> {
+    if (!entry.local_audio_path) {
+      throw new Error(`No local audio path for entry ${entry.id}`);
+    }
+
+    let checkpoint: TranscriptionCheckpoint =
+      entry.transcription_checkpoint || {
+        totalChunks: 1,
+        completedChunks: 0,
+        partialTranscript: "",
+        lastContextTail: "",
+      };
+
+    const cacheDir = Paths.cache?.uri || "";
+    const chunksDir = `${cacheDir.replace(/\/+$/, "")}/chunks_${entry.id}`;
+
+    // If checkpoint was already fully transcribed (all chunks completed), proceed directly to synthesis
+    const isAlreadyFullyTranscribed = Boolean(
+      checkpoint.isComplete ||
+      (checkpoint.completedChunks > 0 &&
+        checkpoint.completedChunks >= checkpoint.totalChunks),
+    );
+
+    if (!isAlreadyFullyTranscribed) {
+      let isFinished = false;
+      try {
+        while (!isFinished) {
+          const chunkIndex = checkpoint.completedChunks;
+          const startTimeMs = chunkIndex * CHUNK_DURATION_MS;
+
+          const chunkResult = await VoiceRecorder.extractAudioChunk(
+            entry.local_audio_path,
+            startTimeMs,
+            CHUNK_DURATION_MS,
+            chunksDir,
+          );
+
+          if (!chunkResult) {
+            throw new Error(
+              `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+            );
+          }
+
+          // If the source audio reached EOF exactly at a chunk boundary (0 duration / no chunkUri returned),
+          // all chunks are complete. Finish chunk processing cleanly without invoking Gemini on an empty URI.
+          if (
+            chunkResult.isLastChunk &&
+            (!chunkResult.chunkUri || chunkResult.durationMs === 0)
+          ) {
+            isFinished = true;
+            checkpoint.isComplete = true;
+            await entriesDao.updateTranscriptionCheckpoint(
+              entry.id,
+              checkpoint,
+            );
+            break;
+          }
+
+          if (!chunkResult.chunkUri) {
+            throw new Error(
+              `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+            );
+          }
+
+          const chunkUri = chunkResult.chunkUri;
+          try {
+            const chunkText = await geminiService.transcribeChunk(
+              chunkUri,
+              checkpoint.lastContextTail,
+            );
+
+            const stitched: string = checkpoint.partialTranscript
+              ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
+              : chunkText.trim();
+
+            const lastContextTail = buildContextTail(stitched, 350);
+
+            const isFinalChunk =
+              chunkResult.isLastChunk ||
+              (chunkResult.totalDurationMs > 0 &&
+                startTimeMs + CHUNK_DURATION_MS >= chunkResult.totalDurationMs);
+
+            const estimatedTotal =
+              chunkResult.totalDurationMs > 0
+                ? Math.max(
+                    Math.ceil(chunkResult.totalDurationMs / CHUNK_DURATION_MS),
+                    chunkIndex + 1,
+                  )
+                : chunkIndex + (isFinalChunk ? 1 : 2);
+
+            checkpoint = {
+              totalChunks: isFinalChunk ? chunkIndex + 1 : estimatedTotal,
+              completedChunks: chunkIndex + 1,
+              partialTranscript: stitched,
+              lastContextTail,
+              isComplete: isFinalChunk,
+            };
+
+            // Save checkpoint to DB FIRST (also atomically resets retry count in DB)
+            await entriesDao.updateTranscriptionCheckpoint(
+              entry.id,
+              checkpoint,
+            );
+            entry.transcription_retry_count = 0; // Reset in-memory retry count on progress
+          } finally {
+            // Always delete the processed chunk from disk so failed retries do not leak cache files
+            try {
+              const chunkFile = new File(chunkUri);
+              if (chunkFile.exists) {
+                chunkFile.delete();
+              }
+            } catch {
+              // Non-fatal
+            }
+          }
+
+          if (checkpoint.isComplete) {
+            isFinished = true;
+          }
+        }
+      } finally {
+        try {
+          const dir = new Directory(chunksDir);
+          if (dir.exists) {
+            dir.delete();
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+    }
+
+    const finalTranscript = checkpoint.partialTranscript.trim();
+    const promptTranscript =
+      finalTranscript || "No speech detected in recording.";
+    const analysis = await geminiService.analyzeTranscript(promptTranscript);
+
+    return {
+      title: analysis.title,
+      summary: analysis.summary,
+      tags: analysis.tags,
+      transcript: finalTranscript,
+    };
   }
 
   async processQueue(): Promise<void> {
@@ -139,9 +355,21 @@ export class TranscriptionQueueService {
         this.notifyListeners({ entryId: entry.id, status: "processing" });
 
         try {
-          const aiResult = await geminiService.analyzeAudio(
-            entry.local_audio_path,
-          );
+          const isLongAudio = await isLongAudioEntry(entry);
+          if (isLongAudio && !VoiceRecorder.hasChunkExtraction()) {
+            // Segmented transcription requires native module support from a dev client / native build.
+            // Defer processing so it doesn't exhaust retries and fail permanently on older binaries.
+            console.warn(
+              `Entry ${entry.id} requires segmented transcription, but native chunk extraction is unavailable in this app build. Deferring until next app update.`,
+            );
+            await entriesDao.updateTranscriptionStatus(entry.id, "queued");
+            this.notifyListeners({ entryId: entry.id, status: "queued" });
+            continue;
+          }
+
+          const aiResult = isLongAudio
+            ? await this.transcribeLongAudio(entry)
+            : await geminiService.analyzeAudio(entry.local_audio_path);
 
           await entriesDao.updateTranscription(entry.id, {
             title: aiResult.title,

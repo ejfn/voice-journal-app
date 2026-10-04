@@ -116,6 +116,35 @@ export const initDatabase = async (
         }
       }
 
+      // Safe migration for existing databases missing transcription_checkpoint
+      try {
+        const columns = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(entries);`,
+        );
+        const hasCheckpointCol = columns.some(
+          (col) => col.name === "transcription_checkpoint",
+        );
+        if (!hasCheckpointCol) {
+          await db.execAsync(
+            `ALTER TABLE entries ADD COLUMN transcription_checkpoint TEXT DEFAULT NULL;`,
+          );
+        }
+      } catch (migrationError) {
+        try {
+          const columns = await db.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(entries);`,
+          );
+          const hasCheckpointCol = columns.some(
+            (col) => col.name === "transcription_checkpoint",
+          );
+          if (!hasCheckpointCol) {
+            throw migrationError;
+          }
+        } catch {
+          throw migrationError;
+        }
+      }
+
       return db;
     })().catch((err) => {
       initPromise = null;

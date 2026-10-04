@@ -1,6 +1,11 @@
 import { File } from "expo-file-system";
 import { getDatabase } from "../database";
-import { JournalEntry, JournalEntryRow, TranscriptionStatus } from "../schema";
+import {
+  JournalEntry,
+  JournalEntryRow,
+  TranscriptionCheckpoint,
+  TranscriptionStatus,
+} from "../schema";
 import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
 import { deletedEntriesDao } from "./deletedEntriesDao";
 
@@ -87,6 +92,17 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
     transcription_next_retry_at: row.transcription_next_retry_at ?? null,
     waveform_data: parsedWaveform,
     deleted_at: row.deleted_at ?? null,
+    transcription_checkpoint: row.transcription_checkpoint
+      ? (() => {
+          try {
+            return JSON.parse(
+              row.transcription_checkpoint,
+            ) as TranscriptionCheckpoint;
+          } catch {
+            return null;
+          }
+        })()
+      : null,
   };
 };
 
@@ -119,14 +135,17 @@ export const entriesDao = {
     const waveformJson = sanitizedWaveform
       ? JSON.stringify(sanitizedWaveform)
       : null;
+    const checkpointJson = entry.transcription_checkpoint
+      ? JSON.stringify(entry.transcription_checkpoint)
+      : null;
     await db.runAsync(
       `INSERT INTO entries (
         id, title, summary, transcript, tags, duration_sec, source_type,
         local_audio_path, drive_audio_file_id, drive_sidecar_file_id,
         is_audio_cached, created_at, updated_at, drive_synced_at, last_accessed_at,
         transcription_status, transcription_retry_count, transcription_next_retry_at,
-        waveform_data, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        waveform_data, deleted_at, transcription_checkpoint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.title,
@@ -148,6 +167,7 @@ export const entriesDao = {
         nextRetryAt,
         waveformJson,
         entry.deleted_at ?? null,
+        checkpointJson,
       ],
     );
   },
@@ -226,7 +246,7 @@ export const entriesDao = {
     await db.runAsync(
       `UPDATE entries SET
         title = ?, summary = ?, transcript = ?, tags = ?,
-        transcription_status = ?, updated_at = ?
+        transcription_status = ?, transcription_checkpoint = NULL, updated_at = ?
       WHERE id = ?`,
       [
         updates.title,
@@ -238,6 +258,25 @@ export const entriesDao = {
         id,
       ],
     );
+  },
+
+  async updateTranscriptionCheckpoint(
+    id: string,
+    checkpoint: TranscriptionCheckpoint | null,
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE entries SET transcription_checkpoint = ?, transcription_retry_count = 0, transcription_next_retry_at = NULL WHERE id = ?`,
+      [checkpoint ? JSON.stringify(checkpoint) : null, id],
+    );
+  },
+
+  async updateDuration(id: string, durationSec: number): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(`UPDATE entries SET duration_sec = ? WHERE id = ?`, [
+      durationSec,
+      id,
+    ]);
   },
 
   async getQueuedEntries(now: number = Date.now()): Promise<JournalEntry[]> {

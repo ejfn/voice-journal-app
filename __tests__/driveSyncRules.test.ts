@@ -219,6 +219,12 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       updated_at: 1758290000000,
       drive_synced_at: null,
       last_accessed_at: 1758290000000,
+      transcription_checkpoint: {
+        totalChunks: 2,
+        completedChunks: 1,
+        partialTranscript: "part",
+        lastContextTail: "tail",
+      },
     };
     await entriesDao.insertEntry(entry);
 
@@ -278,6 +284,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     expect(sidecarBodies[0]).toContain(
       '"drive_audio_file_id": "existing-audio-id"',
     );
+    expect(sidecarBodies[0]).toContain('"transcription_checkpoint": null');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockUpload).not.toHaveBeenCalled();
   });
@@ -947,6 +954,7 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     const remoteEntryInDb = await entriesDao.getEntryById("entry-remote-only");
     expect(remoteEntryInDb).not.toBeNull();
     expect(remoteEntryInDb?.title).toBe("Downloaded Remote Clip");
+    expect(remoteEntryInDb?.transcription_checkpoint).toBeNull();
   });
 
   it("enforces storage threshold via LRU eviction (least accessed first, only backed-up)", async () => {

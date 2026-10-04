@@ -38,6 +38,79 @@ Instructions:
 Return pure JSON conforming to the schema.
 `.trim();
 
+export const TRANSCRIBE_CHUNK_PROMPT = `
+You are an expert audio transcription system transcribing a segment of speech.
+
+Language Awareness:
+- Detect the language spoken in the audio chunk.
+- Always output the transcript in the original language spoken in the audio. Never translate.
+- If multiple languages are spoken, preserve code-switching naturally as spoken.
+
+Instructions:
+1. Transcribe actual spoken words verbatim in the spoken language, cleaning out distracting filler words (um, uh, like).
+2. Transcribe speech only. Never describe physical actions, ambient sounds, music, or non-speech background audio.
+3. If the audio chunk contains no discernible speech (e.g., silence or background noise only), return an empty transcript string "".
+4. If preceding context is provided, use it solely to ensure continuity at the audio boundary. Never repeat or include the preceding context in your output transcript.
+
+Return pure JSON conforming to the schema.
+`.trim();
+
+export const ANALYZE_TRANSCRIPT_PROMPT = `
+You are a voice journal assistant analyzing a completed diary transcript.
+
+Language Awareness:
+- Detect the language used in the transcript.
+- Always output the title, summary, and tags in the original language of the transcript. Never translate.
+
+Speaker Context:
+- Personal diary entry: When the speaker is sharing personal thoughts, reflections, or daily logs, adopt their perspective using first-person ("I...") or concise diary style.
+- External speaker: When recording someone else (e.g. lecture, presentation, doctor visit), summarize the subject matter objectively without forcing "I".
+- Conversation: When multiple people speak, summarize the dialogue and key points naturally.
+
+Instructions:
+1. Summary:
+   - Provide a clear 1-sentence executive summary of the entry in the spoken language.
+   - Never refer to the speaker in the third person as "the user" or "the speaker".
+2. Title:
+   - Create a short, natural diary headline title (3 to 6 words) in the spoken language.
+3. Tags:
+   - Generate 3 to 5 relevant, specific, single-word lowercase tags without hashtags in the spoken language. Never use uppercase and never prefix with '#'.
+
+Return pure JSON conforming to the schema.
+`.trim();
+
+export function detectAudioMimeType(
+  audioUri: string,
+  base64Audio?: string,
+): string {
+  if (base64Audio) {
+    if (base64Audio.startsWith("UklGR")) {
+      return "audio/wav"; // ASCII "RIFF"
+    }
+    if (
+      base64Audio.startsWith("SUQz") || // ASCII "ID3"
+      base64Audio.startsWith("/+M") || // MPEG frame sync
+      base64Audio.startsWith("/+X")
+    ) {
+      return "audio/mp3";
+    }
+    if (base64Audio.startsWith("T2dnUw")) {
+      return "audio/ogg"; // ASCII "OggS"
+    }
+    if (base64Audio.startsWith("ZkxhQw")) {
+      return "audio/flac"; // ASCII "fLaC"
+    }
+  }
+
+  const clean = audioUri.toLowerCase();
+  if (clean.endsWith(".wav")) return "audio/wav";
+  if (clean.endsWith(".mp3")) return "audio/mp3";
+  if (clean.endsWith(".ogg")) return "audio/ogg";
+  if (clean.endsWith(".flac")) return "audio/flac";
+  if (clean.endsWith(".aac")) return "audio/aac";
+  return "audio/mp4";
+}
+
 export class GeminiService {
   private apiKey: string;
 
@@ -115,63 +188,22 @@ export class GeminiService {
       .filter((t) => t.length > 0 && !t.includes(" "));
   }
 
-  async analyzeAudio(audioUri: string): Promise<GeminiAnalysisResult> {
-    const effectiveKey = await this.resolveApiKey();
-    if (!effectiveKey) {
-      throw new Error(
-        "Gemini API key is not configured. Please add your key in Settings.",
-      );
-    }
-
-    // Read audio as base64 string
-    const audioFile = new File(audioUri);
-    const base64Audio = await audioFile.base64();
-
+  private async generateJson<T>(
+    effectiveKey: string,
+    parts: unknown[],
+    responseSchema: Record<string, unknown>,
+  ): Promise<T> {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${effectiveKey}`;
 
     const requestBody = {
       contents: [
         {
-          parts: [
-            {
-              inlineData: {
-                mimeType: "audio/mp4",
-                data: base64Audio,
-              },
-            },
-            {
-              text: ANALYZE_AUDIO_PROMPT,
-            },
-          ],
+          parts,
         },
       ],
       generationConfig: {
         responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            title: {
-              type: "STRING",
-              description: "Short, natural diary headline (3-6 words)",
-            },
-            transcript: {
-              type: "STRING",
-              description:
-                "Verbatim transcript of spoken speech, cleaned of filler words. Do not describe actions or use third-person commentary like 'the speaker/user is doing'.",
-            },
-            tags: {
-              type: "ARRAY",
-              items: { type: "STRING" },
-              description: "3-5 relevant, lowercase tags without hashtags",
-            },
-            summary: {
-              type: "STRING",
-              description:
-                "1-sentence summary. Use first-person ('I...') for phone owner, or objective topic summary for external/distant speakers. Never use 'the user is doing...' or 'the speaker is doing...'.",
-            },
-          },
-          required: ["title", "transcript", "tags", "summary"],
-        },
+        responseSchema,
       },
     };
 
@@ -194,25 +226,183 @@ export class GeminiService {
       throw new Error("Gemini returned an empty response candidate");
     }
 
-    let parsed: {
-      title?: string;
-      transcript?: string;
-      tags?: string[];
-      summary?: string;
-    };
     try {
-      parsed = JSON.parse(candidateText);
+      return JSON.parse(candidateText) as T;
     } catch {
       throw new Error(
         `Failed to parse Gemini response as JSON: ${candidateText}`,
       );
     }
+  }
+
+  async analyzeAudio(audioUri: string): Promise<GeminiAnalysisResult> {
+    const effectiveKey = await this.resolveApiKey();
+    if (!effectiveKey) {
+      throw new Error(
+        "Gemini API key is not configured. Please add your key in Settings.",
+      );
+    }
+
+    // Read audio as base64 string
+    const audioFile = new File(audioUri);
+    const base64Audio = await audioFile.base64();
+
+    const mimeType = detectAudioMimeType(audioUri, base64Audio);
+
+    const parts = [
+      {
+        inlineData: {
+          mimeType,
+          data: base64Audio,
+        },
+      },
+      {
+        text: ANALYZE_AUDIO_PROMPT,
+      },
+    ];
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        title: {
+          type: "STRING",
+          description: "Short, natural diary headline (3-6 words)",
+        },
+        transcript: {
+          type: "STRING",
+          description:
+            "Verbatim transcript of spoken speech, cleaned of filler words. Do not describe actions or use third-person commentary like 'the speaker/user is doing'.",
+        },
+        tags: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "3-5 relevant, lowercase tags without hashtags",
+        },
+        summary: {
+          type: "STRING",
+          description:
+            "1-sentence summary. Use first-person ('I...') for phone owner, or objective topic summary for external/distant speakers. Never use 'the user is doing...' or 'the speaker is doing...'.",
+        },
+      },
+      required: ["title", "transcript", "tags", "summary"],
+    };
+
+    const parsed = await this.generateJson<{
+      title?: string;
+      transcript?: string;
+      tags?: string[];
+      summary?: string;
+    }>(effectiveKey, parts, schema);
 
     return {
       title: parsed.title || "Voice Journal Entry",
       transcript: parsed.transcript || "",
       tags: this.cleanTags(parsed.tags || []),
       summary: parsed.summary || "",
+    };
+  }
+
+  async transcribeChunk(
+    audioUri: string,
+    contextTail?: string,
+  ): Promise<string> {
+    const effectiveKey = await this.resolveApiKey();
+    if (!effectiveKey) {
+      throw new Error(
+        "Gemini API key is not configured. Please add your key in Settings.",
+      );
+    }
+
+    const audioFile = new File(audioUri);
+    const base64Audio = await audioFile.base64();
+
+    const mimeType = detectAudioMimeType(audioUri, base64Audio);
+
+    const parts: unknown[] = [
+      {
+        inlineData: {
+          mimeType,
+          data: base64Audio,
+        },
+      },
+      {
+        text: TRANSCRIBE_CHUNK_PROMPT,
+      },
+    ];
+
+    if (contextTail && contextTail.trim().length > 0) {
+      parts.push({
+        text: `Preceding speech context from prior segment (for continuity only, DO NOT repeat):\n"${contextTail.trim()}"`,
+      });
+    }
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        transcript: {
+          type: "STRING",
+          description:
+            "Verbatim transcript of spoken speech in the audio segment",
+        },
+      },
+      required: ["transcript"],
+    };
+
+    const parsed = await this.generateJson<{ transcript?: string }>(
+      effectiveKey,
+      parts,
+      schema,
+    );
+
+    return parsed.transcript || "";
+  }
+
+  async analyzeTranscript(
+    fullTranscript: string,
+  ): Promise<Omit<GeminiAnalysisResult, "transcript">> {
+    const effectiveKey = await this.resolveApiKey();
+    if (!effectiveKey) {
+      throw new Error(
+        "Gemini API key is not configured. Please add your key in Settings.",
+      );
+    }
+
+    const parts = [
+      {
+        text: `${ANALYZE_TRANSCRIPT_PROMPT}\n\nTranscript:\n${fullTranscript}`,
+      },
+    ];
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        title: {
+          type: "STRING",
+          description: "Short, natural diary headline (3-6 words)",
+        },
+        summary: {
+          type: "STRING",
+          description: "1-sentence summary",
+        },
+        tags: {
+          type: "ARRAY",
+          items: { type: "STRING" },
+          description: "3-5 relevant, lowercase tags without hashtags",
+        },
+      },
+      required: ["title", "summary", "tags"],
+    };
+
+    const parsed = await this.generateJson<{
+      title?: string;
+      summary?: string;
+      tags?: string[];
+    }>(effectiveKey, parts, schema);
+
+    return {
+      title: parsed.title || "Voice Journal Entry",
+      summary: parsed.summary || "",
+      tags: this.cleanTags(parsed.tags || []),
     };
   }
 }
