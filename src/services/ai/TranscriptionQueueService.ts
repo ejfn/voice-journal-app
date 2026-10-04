@@ -159,82 +159,87 @@ export class TranscriptionQueueService {
     const chunksDir = `${cacheDir.replace(/\/+$/, "")}/chunks_${entry.id}`;
 
     let isFinished = false;
-    while (!isFinished) {
-      const chunkIndex = checkpoint.completedChunks;
-      const startTimeMs = chunkIndex * CHUNK_DURATION_MS;
+    try {
+      while (!isFinished) {
+        const chunkIndex = checkpoint.completedChunks;
+        const startTimeMs = chunkIndex * CHUNK_DURATION_MS;
 
-      const chunkResult = await VoiceRecorder.extractAudioChunk(
-        entry.local_audio_path,
-        startTimeMs,
-        CHUNK_DURATION_MS,
-        chunksDir,
-      );
-
-      // If chunk extraction failed on long audio, do NOT fall back to analyzeAudio!
-      // Throw retryable error so it remains in queue with exponential backoff.
-      if (!chunkResult || !chunkResult.chunkUri) {
-        throw new Error(
-          `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+        const chunkResult = await VoiceRecorder.extractAudioChunk(
+          entry.local_audio_path,
+          startTimeMs,
+          CHUNK_DURATION_MS,
+          chunksDir,
         );
+
+        // If chunk extraction failed on long audio, do NOT fall back to analyzeAudio!
+        // Throw retryable error so it remains in queue with exponential backoff.
+        if (!chunkResult || !chunkResult.chunkUri) {
+          throw new Error(
+            `Unable to extract audio chunk ${chunkIndex} for long audio entry ${entry.id}`,
+          );
+        }
+
+        const chunkUri = chunkResult.chunkUri;
+        try {
+          const chunkText = await geminiService.transcribeChunk(
+            chunkUri,
+            checkpoint.lastContextTail,
+          );
+
+          const stitched: string = checkpoint.partialTranscript
+            ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
+            : chunkText.trim();
+
+          const lastContextTail = buildContextTail(stitched, 350);
+
+          const estimatedTotal =
+            chunkResult.totalDurationMs > 0
+              ? Math.max(
+                  Math.ceil(chunkResult.totalDurationMs / CHUNK_DURATION_MS),
+                  chunkIndex + 1,
+                )
+              : chunkIndex + (chunkResult.isLastChunk ? 1 : 2);
+
+          checkpoint = {
+            totalChunks: estimatedTotal,
+            completedChunks: chunkIndex + 1,
+            partialTranscript: stitched,
+            lastContextTail,
+          };
+
+          // Save checkpoint to DB FIRST
+          await entriesDao.updateTranscriptionCheckpoint(entry.id, checkpoint);
+        } finally {
+          // Always delete the processed chunk from disk so failed retries do not leak cache files
+          try {
+            const chunkFile = new File(chunkUri);
+            if (chunkFile.exists) {
+              chunkFile.delete();
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+
+        if (chunkResult.isLastChunk) {
+          isFinished = true;
+        }
       }
-
-      const chunkUri = chunkResult.chunkUri;
-      const chunkText = await geminiService.transcribeChunk(
-        chunkUri,
-        checkpoint.lastContextTail,
-      );
-
-      const stitched: string = checkpoint.partialTranscript
-        ? `${checkpoint.partialTranscript.trim()} ${chunkText.trim()}`.trim()
-        : chunkText.trim();
-
-      const lastContextTail = buildContextTail(stitched, 350);
-
-      const estimatedTotal =
-        chunkResult.totalDurationMs > 0
-          ? Math.max(
-              Math.ceil(chunkResult.totalDurationMs / CHUNK_DURATION_MS),
-              chunkIndex + 1,
-            )
-          : chunkIndex + (chunkResult.isLastChunk ? 1 : 2);
-
-      checkpoint = {
-        totalChunks: estimatedTotal,
-        completedChunks: chunkIndex + 1,
-        partialTranscript: stitched,
-        lastContextTail,
-      };
-
-      // Comment 5: Save checkpoint to DB FIRST
-      await entriesDao.updateTranscriptionCheckpoint(entry.id, checkpoint);
-
-      // Comment 5: THEN delete the processed chunk from disk
+    } finally {
       try {
-        const chunkFile = new File(chunkUri);
-        if (chunkFile.exists) {
-          chunkFile.delete();
+        const dir = new Directory(chunksDir);
+        if (dir.exists) {
+          dir.delete();
         }
       } catch {
         // Non-fatal
       }
-
-      if (chunkResult.isLastChunk) {
-        isFinished = true;
-      }
     }
 
-    try {
-      const dir = new Directory(chunksDir);
-      if (dir.exists) {
-        dir.delete();
-      }
-    } catch {
-      // Non-fatal
-    }
-
-    const finalTranscript =
-      checkpoint.partialTranscript.trim() || "No speech detected in recording.";
-    const analysis = await geminiService.analyzeTranscript(finalTranscript);
+    const finalTranscript = checkpoint.partialTranscript.trim();
+    const promptTranscript =
+      finalTranscript || "No speech detected in recording.";
+    const analysis = await geminiService.analyzeTranscript(promptTranscript);
 
     return {
       title: analysis.title,

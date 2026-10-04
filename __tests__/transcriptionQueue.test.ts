@@ -573,5 +573,82 @@ describe("TranscriptionQueueService", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (File as any).defaultSize = 1000;
     });
+
+    it("deletes temporary extracted chunk file if transcription fails so retries do not leak disk space", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      jest.spyOn(VoiceRecorder, "extractAudioChunk").mockResolvedValueOnce({
+        chunkUri: "file:///cache/chunk_transcribe_fail.m4a",
+        durationMs: 300_000,
+        isLastChunk: false,
+        totalDurationMs: 600_000,
+      });
+
+      (geminiService.transcribeChunk as jest.Mock).mockRejectedValueOnce(
+        new Error("Gemini 503 Service Unavailable"),
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).mockDelete.mockClear();
+
+      await service.processQueue();
+
+      // Ensure the temporary chunk was deleted from disk despite the failure
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((File as any).mockDelete).toHaveBeenCalledWith(
+        expect.stringContaining("chunk_transcribe_fail.m4a"),
+      );
+
+      // Error was handled by backoff retry scheduling
+      expect(entriesDao.recordTranscriptionFailure).toHaveBeenCalledWith(
+        "entry-long-1",
+        1,
+        expect.any(Number),
+        "queued",
+      );
+    });
+
+    it("persists empty transcript for all-silence recording while passing placeholder to analyzeTranscript", async () => {
+      (entriesDao.getQueuedEntries as jest.Mock).mockResolvedValue([
+        mockLongEntry,
+      ]);
+
+      jest.spyOn(VoiceRecorder, "extractAudioChunk").mockResolvedValueOnce({
+        chunkUri: "file:///cache/chunk_silent.m4a",
+        durationMs: 300_000,
+        isLastChunk: true,
+        totalDurationMs: 300_000,
+      });
+
+      // Gemini returns empty text for silence on chunk transcription
+      (geminiService.transcribeChunk as jest.Mock).mockResolvedValueOnce("");
+
+      (geminiService.analyzeTranscript as jest.Mock).mockResolvedValue({
+        title: "Silent Journal",
+        summary: "No speech was detected in this recording.",
+        tags: ["silent"],
+      });
+
+      await service.processQueue();
+
+      // Placeholder is passed to analyzeTranscript for metadata synthesis
+      expect(geminiService.analyzeTranscript).toHaveBeenCalledWith(
+        "No speech detected in recording.",
+      );
+
+      // Persisted transcript remains empty string ("")
+      expect(entriesDao.updateTranscription).toHaveBeenCalledWith(
+        "entry-long-1",
+        expect.objectContaining({
+          title: "Silent Journal",
+          summary: "No speech was detected in this recording.",
+          transcript: "",
+          tags: ["silent"],
+          transcription_status: "completed",
+        }),
+      );
+    });
   });
 });
