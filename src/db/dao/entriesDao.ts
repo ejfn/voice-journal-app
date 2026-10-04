@@ -55,8 +55,10 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
       .filter(Boolean);
   }
 
-  // If audio is marked cached, dynamically resolve to the current device's sandbox path
-  const canonicalPath = getEntryAudioPath(row.id, row.created_at);
+  // If audio is marked cached, dynamically resolve to the current device's sandbox path while preserving extension
+  const extMatch = row.local_audio_path?.match(/\.([a-zA-Z0-9]+)$/);
+  const ext = extMatch ? extMatch[1] : "m4a";
+  const canonicalPath = getEntryAudioPath(row.id, row.created_at, ext);
   const localAudioPath =
     row.is_audio_cached === 1 ? canonicalPath : row.local_audio_path || null;
 

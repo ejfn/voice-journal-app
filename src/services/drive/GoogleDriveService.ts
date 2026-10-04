@@ -937,9 +937,13 @@ export class GoogleDriveService {
 
             if (contentRes.ok) {
               const entryJson: JournalEntry = await contentRes.json();
+              const extMatch =
+                entryJson.local_audio_path?.match(/\.([a-zA-Z0-9]+)$/);
+              const ext = extMatch ? extMatch[1] : "m4a";
               const localAudioPath = getEntryAudioPath(
                 entryJson.id,
                 entryJson.created_at,
+                ext,
               );
               const audioExists = new File(localAudioPath).exists;
 
@@ -985,7 +989,9 @@ export class GoogleDriveService {
     const entry = await entriesDao.getEntryById(entryId);
     if (!entry) throw new Error(`Entry ${entryId} not found`);
 
-    const localPath = getEntryAudioPath(entryId, entry.created_at);
+    const extMatch = entry.local_audio_path?.match(/\.([a-zA-Z0-9]+)$/);
+    const ext = extMatch ? extMatch[1] : "m4a";
+    const localPath = getEntryAudioPath(entryId, entry.created_at, ext);
     const localFile = new File(localPath);
     if (localFile.exists) {
       await entriesDao.setAudioCached(entryId, true, localPath);

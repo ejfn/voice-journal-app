@@ -321,6 +321,9 @@ object AudioSplitter {
         return null
       }
 
+      if (samplesWritten > 0) {
+        m.stop()
+      }
       success = true
 
       if (totalDurationUs > 0 && endUs >= totalDurationUs) {
@@ -340,13 +343,6 @@ object AudioSplitter {
         "totalDurationMs" to (totalDurationUs / 1000L)
       )
     } finally {
-      try {
-        if (samplesWritten > 0) {
-          muxer?.stop()
-        }
-      } catch (e: Exception) {
-        Log.w(TAG, "Error stopping muxer", e)
-      }
       try {
         muxer?.release()
       } catch (_: Exception) {}
