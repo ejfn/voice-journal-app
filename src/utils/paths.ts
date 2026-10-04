@@ -24,13 +24,11 @@ export const getAudioDirectory = (
 export const getEntryAudioPath = (
   entryId: string,
   timestamp: number = Date.now(),
-  extension: string = "m4a",
 ): string => {
   const date = new Date(timestamp);
   const year = date.getFullYear();
   const month = date.getMonth() + 1;
-  const cleanExt = extension.replace(/^\./, "").toLowerCase() || "m4a";
-  return `${getAudioDirectory(year, month)}${entryId}.${cleanExt}`;
+  return `${getAudioDirectory(year, month)}${entryId}.m4a`;
 };
 
 /**

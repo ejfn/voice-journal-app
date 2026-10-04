@@ -65,9 +65,7 @@ export class AudioImportService {
     for (const asset of pickerResult.assets) {
       const entryId = generateUUID();
       const now = Date.now();
-      const extMatch = asset.name?.match(/\.([a-zA-Z0-9]+)$/);
-      const extension = extMatch ? extMatch[1].toLowerCase() : "m4a";
-      const destinationPath = getEntryAudioPath(entryId, now, extension);
+      const destinationPath = getEntryAudioPath(entryId, now);
 
       // Ensure directory exists
       const dir = destinationPath.substring(

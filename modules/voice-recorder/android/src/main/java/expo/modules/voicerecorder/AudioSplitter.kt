@@ -594,6 +594,10 @@ object AudioSplitter {
     chunkDurationMs: Long,
     outputDir: String
   ): List<String> {
+    if (chunkDurationMs <= 0L) {
+      return emptyList()
+    }
+
     val totalDurationMs = getAudioDuration(inputUri)
     if (totalDurationMs <= chunkDurationMs && totalDurationMs > 0) {
       return listOf(inputUri)
