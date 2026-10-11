@@ -12,8 +12,11 @@ import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
 import { createTestDb } from "./helpers/testDb";
 import { setDatabaseConnection, initDatabase } from "../src/db/database";
 import { entriesDao } from "../src/db/dao/entriesDao";
+import { syncQueueDao } from "../src/db/dao/syncQueueDao";
 import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { JournalEntry } from "../src/db/schema";
+import { transcriptionQueueService } from "../src/services/ai/TranscriptionQueueService";
+import { uploadQueueService } from "../src/services/drive/UploadQueueService";
 
 describe("Audio Persistence & Storage Resilience", () => {
   beforeEach(() => {
@@ -873,6 +876,132 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(loaded).not.toBeNull();
       // Must preserve the actual fallback path on disk
       expect(loaded?.local_audio_path).toBe(fallbackTempUri);
+    });
+  });
+
+  describe("Producer-only recovery, directory traversal, and recording state detachment", () => {
+    beforeEach(async () => {
+      const db = createTestDb();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setDatabaseConnection(db as any);
+      await initDatabase();
+    });
+
+    it("recovery scan does not trigger queue passes and leaves PENDING sync_queue items for recovered entries", async () => {
+      const file1 =
+        "file:///mock/document/audio/2026/09/a1111111-1111-1111-1111-111111111111.m4a";
+      const file2 =
+        "file:///mock/document/audio/2026/09/b2222222-2222-2222-2222-222222222222.m4a";
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([file1, file2]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [new Directory("file:///mock/document/audio/2026/09/")];
+        }
+        if (normalized === "file:///mock/document/audio/2026/09") {
+          return [new File(file1), new File(file2)];
+        }
+        return [];
+      });
+
+      const transcriptionSpy = jest
+        .spyOn(transcriptionQueueService, "processQueue")
+        .mockImplementation(async () => {});
+      const uploadSpy = jest
+        .spyOn(uploadQueueService, "processQueue")
+        .mockImplementation(async () => {});
+
+      const recovered =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recovered).toBe(2);
+
+      // Must NOT trigger queue processing during scan (pure producer)
+      expect(transcriptionSpy).not.toHaveBeenCalled();
+      expect(uploadSpy).not.toHaveBeenCalled();
+
+      // Must leave pending items in sync_queue for both recovered entries
+      const pendingUploads = await syncQueueDao.getPendingItems();
+      expect(pendingUploads).toHaveLength(2);
+      const enqueuedEntryIds = pendingUploads.map((i) => i.entry_id).sort();
+      expect(enqueuedEntryIds).toEqual([
+        "a1111111-1111-1111-1111-111111111111",
+        "b2222222-2222-2222-2222-222222222222",
+      ]);
+
+      transcriptionSpy.mockRestore();
+      uploadSpy.mockRestore();
+    });
+
+    it("traverses Directory.list() returning primitive string URIs without throwing TypeError", async () => {
+      const file1 =
+        "file:///mock/document/audio/2026/09/c3333333-3333-3333-3333-333333333333.m4a";
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([file1]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          // Returning primitive string path instead of Directory instance
+          return ["file:///mock/document/audio/2026/09/"];
+        }
+        if (normalized === "file:///mock/document/audio/2026/09") {
+          // Returning primitive string path instead of File instance
+          return [file1];
+        }
+        return [];
+      });
+
+      // Must not throw "TypeError: Cannot use 'in' operator to search for 'list' in file:///..."
+      await expect(
+        audioRecoveryService.scanAndRecoverOrphanedAudioFiles(),
+      ).resolves.toBe(1);
+
+      const entry = await entriesDao.getEntryById(
+        "c3333333-3333-3333-3333-333333333333",
+      );
+      expect(entry).not.toBeNull();
+    });
+
+    it("allows consecutive recordings without previous stop clobbering new recording state", async () => {
+      const entryId1 = "entry-rec-1";
+      const entryId2 = "entry-rec-2";
+
+      // First recording
+      await audioRecordingService.startRecording(entryId1);
+      // Advance duration beyond minimum 3s
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 4000;
+      const res1 = await audioRecordingService.stopRecording();
+      expect(res1.localUri).toBeTruthy();
+      expect(res1.durationSec).toBe(4);
+
+      // Verify instance fields were detached and reset to IDLE immediately
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((audioRecordingService as any).activeRecorder).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((audioRecordingService as any).currentEntryId).toBeNull();
+
+      // Second recording starts immediately
+      await audioRecordingService.startRecording(entryId2);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((audioRecordingService as any).currentEntryId).toBe(entryId2);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 5000;
+
+      const res2 = await audioRecordingService.stopRecording();
+      expect(res2.localUri).toBeTruthy();
+      expect(res2.durationSec).toBe(5);
+      expect(res2.localUri).toContain(entryId2);
     });
   });
 });

@@ -311,22 +311,23 @@ export class GoogleDriveService {
     return this.getOrCreateFolder(mStr, yearId, token, sessionVersion);
   }
 
-  private async findFileId(
+  private async findFileDetails(
     name: string,
     parentId: string,
     token: string,
     mimeType: string,
-  ): Promise<string | null> {
+  ): Promise<{ id: string; size: number } | null> {
     const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const query = encodeURIComponent(
       `name = '${escapedName}' and '${parentId}' in parents and mimeType = '${mimeType}' and trashed = false`,
     );
     const requestUrl =
       `https://www.googleapis.com/drive/v3/files?q=${query}` +
-      "&fields=nextPageToken,files(id,createdTime)" +
+      "&fields=nextPageToken,files(id,size,createdTime)" +
       "&orderBy=createdTime&pageSize=100";
     let pageToken: string | null = null;
-    let bestMatch: { id?: string; createdTime?: string } | null = null;
+    let bestMatch: { id?: string; size?: string; createdTime?: string } | null =
+      null;
 
     while (true) {
       const response: Response = await fetch(
@@ -342,14 +343,11 @@ export class GoogleDriveService {
       }
 
       const data: {
-        files?: { id?: string; createdTime?: string }[];
+        files?: { id?: string; size?: string; createdTime?: string }[];
         nextPageToken?: string;
       } = await response.json();
-      const files: { id?: string; createdTime?: string }[] = Array.isArray(
-        data.files,
-      )
-        ? [...data.files]
-        : [];
+      const files: { id?: string; size?: string; createdTime?: string }[] =
+        Array.isArray(data.files) ? [...data.files] : [];
       files.sort((first, second) => {
         const createdTimeCompare = (first.createdTime ?? "").localeCompare(
           second.createdTime ?? "",
@@ -383,9 +381,35 @@ export class GoogleDriveService {
       pageToken =
         typeof data.nextPageToken === "string" ? data.nextPageToken : null;
       if (!pageToken) {
-        return bestMatch?.id || null;
+        return bestMatch?.id
+          ? {
+              id: bestMatch.id,
+              size: Number.parseInt(bestMatch.size ?? "0", 10) || 0,
+            }
+          : null;
       }
     }
+  }
+
+  private assertUploadOk(
+    result: { status: number; body?: string },
+    entryId: string,
+  ): void {
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(
+        `Drive audio upload failed for entry ${entryId} (HTTP ${result.status}): ${result.body || ""}`,
+      );
+    }
+  }
+
+  private async findFileId(
+    name: string,
+    parentId: string,
+    token: string,
+    mimeType: string,
+  ): Promise<string | null> {
+    const details = await this.findFileDetails(name, parentId, token, mimeType);
+    return details?.id ?? null;
   }
 
   /**
@@ -466,19 +490,28 @@ export class GoogleDriveService {
 
       const audioFile = localAudioUri ? new File(localAudioUri) : null;
 
+      let remoteAudioSize = 0;
       if (!audioFileId) {
-        audioFileId = await this.findFileId(
+        const remoteDetails = await this.findFileDetails(
           `${entry.id}.m4a`,
           monthFolderId,
           token,
           "audio/mp4",
         );
-        reusedAudioFile = Boolean(audioFileId);
+        if (remoteDetails) {
+          audioFileId = remoteDetails.id;
+          remoteAudioSize = remoteDetails.size;
+          reusedAudioFile = true;
+        }
       }
 
-      // If audio file is not in Drive and missing locally:
-      // Do NOT upload a hollow sidecar claiming the entry is synced! Fail early so it retries or alerts.
-      if (!audioFileId && entry.deleted_at == null && !localAudioExists) {
+      const adoptedUnverifiedRemote =
+        !entry.drive_audio_file_id && Boolean(audioFileId);
+      if (
+        entry.deleted_at == null &&
+        !localAudioExists &&
+        (!audioFileId || (adoptedUnverifiedRemote && remoteAudioSize === 0))
+      ) {
         throw new Error(
           `Cannot upload entry ${entry.id}: audio file is missing locally and not present in Drive.`,
         );
@@ -512,7 +545,7 @@ export class GoogleDriveService {
           audioFileId = audioData.id;
 
           // Stream binary audio file directly to Drive via audioFile.upload
-          await audioFile.upload(
+          const uploadRes = await audioFile.upload(
             `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
             {
               httpMethod: "PATCH",
@@ -523,6 +556,7 @@ export class GoogleDriveService {
               uploadType: UploadType.BINARY_CONTENT,
             },
           );
+          this.assertUploadOk(uploadRes, entry.id);
 
           // Persist audioFileId immediately in SQLite so sidecar retry won't re-upload binary
           await entriesDao.updateSyncStatus(
@@ -533,7 +567,7 @@ export class GoogleDriveService {
           );
         }
         if (audioFileId && reusedAudioFile) {
-          await audioFile.upload(
+          const uploadRes = await audioFile.upload(
             `https://www.googleapis.com/upload/drive/v3/files/${audioFileId}?uploadType=media`,
             {
               httpMethod: "PATCH",
@@ -544,6 +578,7 @@ export class GoogleDriveService {
               uploadType: UploadType.BINARY_CONTENT,
             },
           );
+          this.assertUploadOk(uploadRes, entry.id);
         }
       }
 

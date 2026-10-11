@@ -3,7 +3,6 @@ import { entriesDao } from "../../db/dao/entriesDao";
 import { deletedEntriesDao } from "../../db/dao/deletedEntriesDao";
 import { JournalEntry } from "../../db/schema";
 import { uploadQueueService } from "../drive/UploadQueueService";
-import { transcriptionQueueService } from "../ai/TranscriptionQueueService";
 import { getEntryAudioPath } from "../../utils/paths";
 import {
   isAudioFileValid,
@@ -33,7 +32,9 @@ async function collectAudioFilesRecursively(dirUri: string): Promise<string[]> {
       const isDir =
         item instanceof Directory ||
         itemUri.endsWith("/") ||
-        ("list" in (item as object) &&
+        (typeof item === "object" &&
+          item !== null &&
+          "list" in item &&
           typeof (item as unknown as { list: unknown }).list === "function");
 
       if (isDir) {
@@ -61,6 +62,8 @@ export class AudioRecoveryService {
   /**
    * Scans all permanent sandbox audio directories (across all years and months)
    * plus the OS cache directory to recover stranded audio files.
+   * Producer only: writes to SQLite and never triggers queues.
+   * Callers must start queues after this resolves (see App.tsx startup).
    *
    * Reconciles:
    * 1. Stranded in-flight recordings (e.g. process was killed before saveRecordedEntry).
@@ -180,8 +183,10 @@ export class AudioRecoveryService {
                 transcription_status: "queued",
               };
               await entriesDao.insertEntry(recoveredEntry);
-              uploadQueueService.enqueueUpload(entryId, "ANALYZE_AND_UPLOAD");
-              transcriptionQueueService.processQueue().catch(() => {});
+              await uploadQueueService.addToQueue(
+                entryId,
+                "ANALYZE_AND_UPLOAD",
+              );
               recoveredCount++;
             }
           } catch (err) {
@@ -209,14 +214,13 @@ export class AudioRecoveryService {
             if (recovered) {
               await entriesDao.setAudioCached(existing.id, true, recovered);
               if (!existing.drive_audio_file_id) {
-                uploadQueueService.enqueueUpload(
+                await uploadQueueService.addToQueue(
                   existing.id,
                   "ANALYZE_AND_UPLOAD",
                 );
               }
               if (existing.transcription_status === "failed") {
                 await entriesDao.resetTranscriptionRetry(existing.id);
-                transcriptionQueueService.processQueue().catch(() => {});
               }
               recoveredCount++;
             }
@@ -261,10 +265,9 @@ export class AudioRecoveryService {
           );
           if (recovered) {
             await entriesDao.setAudioCached(entry.id, true, recovered);
-            uploadQueueService.enqueueUpload(entry.id, "ANALYZE_AND_UPLOAD");
+            await uploadQueueService.addToQueue(entry.id, "ANALYZE_AND_UPLOAD");
             if (entry.transcription_status === "failed") {
               await entriesDao.resetTranscriptionRetry(entry.id);
-              transcriptionQueueService.processQueue().catch(() => {});
             }
             recoveredCount++;
           }

@@ -297,8 +297,29 @@ class AudioRecordingService {
         entryId,
         ctx?.timestamp || this.currentTimestamp || Date.now(),
       );
+    const samples = [...this.recordedSamples];
+    const externalCallback = this.externalStopCallback;
 
+    // Immediately detach hardware recorder and reset instance fields to IDLE
+    // so any subsequent startRecording operates with a clean slate without races
+    this.activeRecorder = null;
+    this.statusCallback = null;
+    this.currentEntryId = null;
+    this.recordedSamples = [];
     this.activeContext = null;
+    this.isStoppingInternally = false;
+    this.isPaused = false;
+    this.durationMillis = 0;
+
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        allowsBackgroundRecording: false,
+      });
+    } catch {
+      // Ignore
+    }
 
     if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
       if (recordedTempUri) {
@@ -311,22 +332,9 @@ class AudioRecordingService {
           // Ignore temp cleanup errors
         }
       }
-      this.activeRecorder = null;
-      this.statusCallback = null;
-      this.currentEntryId = null;
 
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          allowsBackgroundRecording: false,
-        });
-      } catch {
-        // Ignore
-      }
-
-      if (this.externalStopCallback) {
-        await this.externalStopCallback({
+      if (externalCallback) {
+        await externalCallback({
           entryId,
           localUri: "",
           durationSec: finalDurationSec,
@@ -336,50 +344,33 @@ class AudioRecordingService {
     }
 
     let finalUri = "";
-    try {
-      if (recordedTempUri) {
-        try {
-          const persistResult = await persistAudioFile(
-            recordedTempUri,
-            destinationUri,
-          );
-          finalUri = persistResult.uri;
-        } catch (persistErr) {
-          console.error(
-            "Failed to persist recorded audio on external stop:",
-            persistErr,
-          );
-        }
-      }
-
-      const waveformData =
-        this.recordedSamples.length > 0
-          ? resampleWaveform(this.recordedSamples, WAVEFORM_BAR_COUNT)
-          : undefined;
-
-      if (this.externalStopCallback) {
-        await this.externalStopCallback({
-          entryId,
-          localUri: finalUri,
-          durationSec: finalDurationSec,
-          waveformData,
-        });
-      }
-    } finally {
-      this.activeRecorder = null;
-      this.statusCallback = null;
-      this.currentEntryId = null;
-      this.recordedSamples = [];
-
+    if (recordedTempUri) {
       try {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          allowsBackgroundRecording: false,
-        });
-      } catch {
-        // Ignore
+        const persistResult = await persistAudioFile(
+          recordedTempUri,
+          destinationUri,
+        );
+        finalUri = persistResult.uri;
+      } catch (persistErr) {
+        console.error(
+          "Failed to persist recorded audio on external stop:",
+          persistErr,
+        );
       }
+    }
+
+    const waveformData =
+      samples.length > 0
+        ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
+        : undefined;
+
+    if (externalCallback) {
+      await externalCallback({
+        entryId,
+        localUri: finalUri,
+        durationSec: finalDurationSec,
+        waveformData,
+      });
     }
   }
 
@@ -601,6 +592,27 @@ class AudioRecordingService {
     }
 
     this.activeContext = null;
+    const samples = [...this.recordedSamples];
+
+    // Immediately detach hardware recorder and reset instance fields to IDLE
+    // so any subsequent startRecording operates with a clean slate without races
+    this.activeRecorder = null;
+    this.statusCallback = null;
+    this.currentEntryId = null;
+    this.recordedSamples = [];
+    this.isStoppingInternally = false;
+    this.isPaused = false;
+    this.durationMillis = 0;
+
+    try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        allowsBackgroundRecording: false,
+      });
+    } catch {
+      // Ignore
+    }
 
     // Recordings shorter than MIN_RECORDING_DURATION_SEC will not be saved
     if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
@@ -614,19 +626,6 @@ class AudioRecordingService {
           // Ignore temp cleanup errors
         }
       }
-      this.activeRecorder = null;
-      this.statusCallback = null;
-      this.currentEntryId = null;
-
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          allowsBackgroundRecording: false,
-        });
-      } catch {
-        // Ignore
-      }
 
       return {
         localUri: "",
@@ -634,44 +633,27 @@ class AudioRecordingService {
       };
     }
 
-    try {
-      if (!recordedTempUri) {
-        throw new Error(
-          "Audio recording failed: no recorded audio data was captured. Your device storage may be full.",
-        );
-      }
-
-      const persistResult = await persistAudioFile(
-        recordedTempUri,
-        destinationUri,
+    if (!recordedTempUri) {
+      throw new Error(
+        "Audio recording failed: no recorded audio data was captured. Your device storage may be full.",
       );
-
-      const waveformData =
-        this.recordedSamples.length > 0
-          ? resampleWaveform(this.recordedSamples, WAVEFORM_BAR_COUNT)
-          : undefined;
-
-      return {
-        localUri: persistResult.uri,
-        durationSec: finalDurationSec,
-        waveformData,
-      };
-    } finally {
-      this.activeRecorder = null;
-      this.statusCallback = null;
-      this.currentEntryId = null;
-      this.recordedSamples = [];
-
-      try {
-        await setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          allowsBackgroundRecording: false,
-        });
-      } catch {
-        // Ignore audio mode reset error
-      }
     }
+
+    const persistResult = await persistAudioFile(
+      recordedTempUri,
+      destinationUri,
+    );
+
+    const waveformData =
+      samples.length > 0
+        ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
+        : undefined;
+
+    return {
+      localUri: persistResult.uri,
+      durationSec: finalDurationSec,
+      waveformData,
+    };
   }
 
   async cancelRecording(): Promise<void> {
@@ -713,6 +695,9 @@ class AudioRecordingService {
     this.activeRecorder = null;
     this.statusCallback = null;
     this.currentEntryId = null;
+    this.isStoppingInternally = false;
+    this.isPaused = false;
+    this.durationMillis = 0;
 
     try {
       await setAudioModeAsync({

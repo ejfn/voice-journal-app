@@ -89,9 +89,10 @@ export class UploadQueueService {
   }
 
   /**
-   * Enqueues an entry for upload and triggers queue processing.
+   * Persists an upload request in sync_queue without starting a queue pass.
+   * Used by producers (e.g. startup recovery) that manage queue triggers separately.
    */
-  async enqueueUpload(
+  async addToQueue(
     entryId: string,
     action: SyncQueueItem["action"] = "ANALYZE_AND_UPLOAD",
   ): Promise<void> {
@@ -106,6 +107,16 @@ export class UploadQueueService {
         status: "PENDING",
       });
     }
+  }
+
+  /**
+   * Enqueues an entry for upload and triggers queue processing.
+   */
+  async enqueueUpload(
+    entryId: string,
+    action: SyncQueueItem["action"] = "ANALYZE_AND_UPLOAD",
+  ): Promise<void> {
+    await this.addToQueue(entryId, action);
 
     this.processQueue().catch((err) => {
       console.warn("Background upload queue error after enqueue:", err);

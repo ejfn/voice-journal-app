@@ -245,7 +245,9 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
         }
         if (query.includes("name = 'entry-cloud-only.m4a'")) {
           return new Response(
-            JSON.stringify({ files: [{ id: "existing-audio-id" }] }),
+            JSON.stringify({
+              files: [{ id: "existing-audio-id", size: "12345" }],
+            }),
             { status: 200 },
           );
         }
@@ -287,6 +289,199 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
     expect(sidecarBodies[0]).toContain('"transcription_checkpoint": null');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockUpload).not.toHaveBeenCalled();
+  });
+
+  it("aborts sync, does not save audio ID, and does not upload sidecar when binary upload returns HTTP error", async () => {
+    const entry: JournalEntry = {
+      id: "entry-binary-fail",
+      title: "Binary Fail",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 15,
+      source_type: "recorded",
+      local_audio_path:
+        "file:///mock/document/audio/2026/09/entry-binary-fail.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload = jest.fn(async () => ({
+      status: 500,
+      body: "Internal Server Error",
+      headers: {},
+    }));
+
+    let sidecarRequested = false;
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      const urlStr = url.toString();
+      const query = decodeURIComponent(urlStr);
+      if (query.includes("application/vnd.google-apps.folder")) {
+        return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+          status: 200,
+        });
+      }
+      if (query.includes("name = 'entry-binary-fail.m4a'")) {
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      if (urlStr.endsWith("/files") && !urlStr.includes("?")) {
+        // Audio placeholder creation
+        return new Response(JSON.stringify({ id: "created-audio-id" }), {
+          status: 200,
+        });
+      }
+      if (query.includes("name = 'entry-binary-fail.json'")) {
+        sidecarRequested = true;
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await expect(driveService.uploadEntry(entry)).rejects.toThrow(
+      /Drive audio upload failed for entry entry-binary-fail \(HTTP 500\)/,
+    );
+
+    expect(sidecarRequested).toBe(false);
+    const updated = await entriesDao.getEntryById("entry-binary-fail");
+    expect(updated?.drive_audio_file_id).toBeNull();
+    expect(updated?.drive_sidecar_file_id).toBeNull();
+  });
+
+  it("rejects sync and does not upload sidecar when unverified remote audio file has size 0 and local file is missing", async () => {
+    const entry: JournalEntry = {
+      id: "entry-zero-byte-missing",
+      title: "Zero Byte Missing",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 0,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = false;
+
+    let sidecarRequested = false;
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      const urlStr = url.toString();
+      const query = decodeURIComponent(urlStr);
+      if (query.includes("application/vnd.google-apps.folder")) {
+        return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+          status: 200,
+        });
+      }
+      if (query.includes("name = 'entry-zero-byte-missing.m4a'")) {
+        return new Response(
+          JSON.stringify({ files: [{ id: "empty-remote-id", size: "0" }] }),
+          { status: 200 },
+        );
+      }
+      if (query.includes("name = 'entry-zero-byte-missing.json'")) {
+        sidecarRequested = true;
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await expect(driveService.uploadEntry(entry)).rejects.toThrow(
+      /Cannot upload entry entry-zero-byte-missing: audio file is missing locally and not present in Drive/,
+    );
+
+    expect(sidecarRequested).toBe(false);
+  });
+
+  it("heals 0-byte remote audio placeholder by re-uploading bytes when local file is present", async () => {
+    const entry: JournalEntry = {
+      id: "entry-zero-byte-healed",
+      title: "Zero Byte Healed",
+      summary: "Summary",
+      transcript: "Transcript",
+      tags: [],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path:
+        "file:///mock/document/audio/2026/09/entry-zero-byte-healed.m4a",
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: 1758290000000,
+      updated_at: 1758290000000,
+      drive_synced_at: null,
+      last_accessed_at: 1758290000000,
+    };
+    await entriesDao.insertEntry(entry);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).defaultExists = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (File as any).mockUpload = jest.fn(async () => ({
+      status: 200,
+      body: "OK",
+      headers: {},
+    }));
+
+    let placeholderCreated = false;
+    global.fetch = jest.fn(
+      async (url: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const query = decodeURIComponent(urlStr);
+        if (query.includes("application/vnd.google-apps.folder")) {
+          return new Response(JSON.stringify({ files: [{ id: "month-id" }] }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-zero-byte-healed.m4a'")) {
+          return new Response(
+            JSON.stringify({
+              files: [{ id: "existing-placeholder-id", size: "0" }],
+            }),
+            { status: 200 },
+          );
+        }
+        if (init?.method === "POST" && urlStr.endsWith("/files")) {
+          placeholderCreated = true;
+          return new Response(JSON.stringify({ id: "new-placeholder-id" }), {
+            status: 200,
+          });
+        }
+        if (query.includes("name = 'entry-zero-byte-healed.json'")) {
+          return new Response(
+            JSON.stringify({ files: [{ id: "sidecar-id" }] }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ id: "sidecar-id" }), {
+          status: 200,
+        });
+      },
+    );
+
+    const result = await driveService.uploadEntry(entry);
+    expect(result.audioFileId).toBe("existing-placeholder-id");
+    expect(placeholderCreated).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockUpload).toHaveBeenCalledWith(
+      expect.stringContaining("existing-placeholder-id"),
+      expect.any(Object),
+    );
   });
 
   it("serializes concurrent uploadEntry calls for the same entry", async () => {
