@@ -716,7 +716,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                         { color: colors.primary },
                       ]}
                     >
-                      Transcribing with Gemini 3.5...
+                      Transcribing with Gemini Flash Lite...
                     </Text>
                   </View>
                 ) : activeEntry.transcription_status === "queued" ? (

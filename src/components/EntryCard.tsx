@@ -178,7 +178,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               <Text
                 style={[styles.transcriptionText, { color: colors.primary }]}
               >
-                Transcribing with Gemini 3.5...
+                Transcribing...
               </Text>
             </View>
           ) : (

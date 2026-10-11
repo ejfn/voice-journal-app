@@ -140,7 +140,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (result.valid) {
         setKeyValidationStatus("valid");
         showToast({
-          message: "API key is valid and connected to Gemini 3.5!",
+          message: "API key is valid and connected to Gemini!",
           icon: "check-circle",
           type: "success",
         });
