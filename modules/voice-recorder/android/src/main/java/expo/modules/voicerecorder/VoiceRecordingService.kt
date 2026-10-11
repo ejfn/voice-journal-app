@@ -125,15 +125,29 @@ class VoiceRecordingService : Service() {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    val stopIntent = Intent(this, VoiceRecordingService::class.java).apply {
-      action = ACTION_STOP
+    val stopIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+      action = ACTION_STOP_FROM_NOTIFICATION
+      putExtra(EXTRA_STOP_RECORDING, true)
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
-    val stopPendingIntent = PendingIntent.getService(
-      this,
-      3,
-      stopIntent,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
+    val stopPendingIntent = if (stopIntent != null) {
+      PendingIntent.getActivity(
+        this,
+        3,
+        stopIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+    } else {
+      val fallbackStopIntent = Intent(this, VoiceRecordingService::class.java).apply {
+        action = ACTION_STOP
+      }
+      PendingIntent.getService(
+        this,
+        3,
+        fallbackStopIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+    }
 
     val durationMillis = getCurrentDurationMillis()
     val formattedDuration = formatDuration(durationMillis)
@@ -324,8 +338,8 @@ class VoiceRecordingService : Service() {
         Log.e(TAG, "Error stopping MediaRecorder", e)
       }
 
-      cleanup()
       listener?.onRecordingFinished(path, finalDuration)
+      cleanup()
       return Pair(path, finalDuration)
     }
   }
@@ -405,6 +419,8 @@ class VoiceRecordingService : Service() {
     const val ACTION_PAUSE = "expo.modules.voicerecorder.action.PAUSE"
     const val ACTION_RESUME = "expo.modules.voicerecorder.action.RESUME"
     const val ACTION_STOP = "expo.modules.voicerecorder.action.STOP"
+    const val ACTION_STOP_FROM_NOTIFICATION = "expo.modules.voicerecorder.action.STOP_FROM_NOTIFICATION"
+    const val EXTRA_STOP_RECORDING = "expo.modules.voicerecorder.extra.STOP_RECORDING"
     const val EXTRA_FILE_PATH = "file_path"
   }
 }

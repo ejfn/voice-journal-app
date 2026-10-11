@@ -11,6 +11,7 @@ import {
 } from "../../utils/audioPersistence";
 import { isValidUUID } from "../../utils/uuid";
 import { audioRecordingService } from "./AudioRecordingService";
+import { VoiceRecorder } from "voice-recorder";
 
 /**
  * Recursively collects all audio files (.m4a, .tmp) within a given directory URI.
@@ -184,13 +185,27 @@ export class AudioRecoveryService {
             const canonical = getEntryAudioPath(entryId, createdAt);
             const persistResult = await persistAudioFile(fileUri, canonical);
             if (isAudioFileValid(persistResult.uri)) {
+              let recoveredDurationSec = 0;
+              if (VoiceRecorder.isAvailable()) {
+                try {
+                  const durMs = await VoiceRecorder.getAudioDuration(
+                    persistResult.uri,
+                  );
+                  if (durMs > 0) {
+                    recoveredDurationSec = Math.floor(durMs / 1000);
+                  }
+                } catch {
+                  // Non-fatal
+                }
+              }
+
               const recoveredEntry: JournalEntry = {
                 id: entryId,
                 title: "Recovered Voice Recording",
                 summary: "Recovered recording waiting for transcription...",
                 transcript: "",
                 tags: ["voice", "recovered"],
-                duration_sec: 0,
+                duration_sec: recoveredDurationSec,
                 source_type: "recorded",
                 local_audio_path: persistResult.uri,
                 drive_audio_file_id: null,

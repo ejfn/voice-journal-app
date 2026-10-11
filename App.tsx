@@ -8,6 +8,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Platform,
+  AppState,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { File } from "expo-file-system";
@@ -550,6 +551,20 @@ const MainScreen: React.FC = () => {
       audioRecordingService.setOnExternalStop(null);
     };
   }, [saveRecordedEntry]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        if (!audioRecordingService.isRecording() && isRecordingVisible) {
+          setIsRecordingVisible(false);
+          setCurrentRecordingId(null);
+        }
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [isRecordingVisible]);
 
   const handleStopRecording = async () => {
     try {

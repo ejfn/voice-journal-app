@@ -16,18 +16,42 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
   private var recordingService: VoiceRecordingService? = null
   private var isBound = false
 
+  private var pendingStopRequest = false
+
   private val serviceConnection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
       val binder = service as? VoiceRecordingService.LocalBinder
       recordingService = binder?.getService()
       recordingService?.setListener(this@VoiceRecorderModule)
       isBound = true
+      if (pendingStopRequest) {
+        pendingStopRequest = false
+        recordingService?.stopRecordingInternal()
+      }
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
       recordingService?.setListener(null)
       recordingService = null
       isBound = false
+    }
+  }
+
+  private fun checkAndHandleStopIntent(intent: Intent?) {
+    if (intent == null) return
+    val shouldStop = intent.getBooleanExtra(VoiceRecordingService.EXTRA_STOP_RECORDING, false) ||
+                     intent.action == VoiceRecordingService.ACTION_STOP_FROM_NOTIFICATION
+    if (shouldStop) {
+      intent.removeExtra(VoiceRecordingService.EXTRA_STOP_RECORDING)
+      if (intent.action == VoiceRecordingService.ACTION_STOP_FROM_NOTIFICATION) {
+        intent.action = null
+      }
+      if (recordingService != null) {
+        recordingService?.stopRecordingInternal()
+      } else {
+        pendingStopRequest = true
+        bindToServiceIfRunning()
+      }
     }
   }
 
@@ -38,10 +62,19 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
 
     OnCreate {
       bindToServiceIfRunning()
+      checkAndHandleStopIntent(appContext.currentActivity?.intent)
     }
 
     OnDestroy {
       unbindFromService()
+    }
+
+    OnNewIntent { intent ->
+      checkAndHandleStopIntent(intent)
+    }
+
+    OnActivityEntersForeground {
+      checkAndHandleStopIntent(appContext.currentActivity?.intent)
     }
 
     AsyncFunction("startRecording") { filePath: String ->
