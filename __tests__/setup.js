@@ -59,29 +59,75 @@ jest.mock("expo-audio", () => ({
   setAudioModeAsync: jest.fn(async () => {}),
 }));
 
+function normalizeMockUri(raw) {
+  if (!raw) return "";
+  const str = typeof raw === "object" && raw.uri ? raw.uri : String(raw);
+  const withoutScheme = str.replace(/^file:\/*/, "").replace(/\/+/g, "/");
+  return `file:///${withoutScheme}`;
+}
+
 class MockFile {
   constructor(...uris) {
     const raw = uris
       .map((u) => (u && typeof u === "object" && u.uri ? u.uri : String(u)))
-      .join("/")
-      .replace(/\/+/g, "/");
-    this.uri = raw.startsWith("file:/")
-      ? raw
-      : `file:///${raw.replace(/^\/+/, "")}`;
-    this.exists =
-      MockFile.defaultExists !== undefined ? MockFile.defaultExists : true;
-    this.size =
-      MockFile.defaultSize !== undefined ? MockFile.defaultSize : 1024;
+      .join("/");
+    this.uri = normalizeMockUri(raw);
+    if (MockFile.existingFiles instanceof Set) {
+      this.exists = MockFile.existingFiles.has(this.uri);
+    } else {
+      this.exists =
+        MockFile.defaultExists !== undefined ? MockFile.defaultExists : true;
+    }
+    if (MockFile.fileSizes instanceof Map && MockFile.fileSizes.has(this.uri)) {
+      this.size = MockFile.fileSizes.get(this.uri);
+    } else {
+      this.size =
+        MockFile.defaultSize !== undefined ? MockFile.defaultSize : 1024;
+    }
   }
   async base64() {
     return "mock_base64_data";
   }
   async copy(destination) {
     MockFile.mockCopy(this, destination);
+    const destUri = normalizeMockUri(destination);
+    if (MockFile.existingFiles instanceof Set) {
+      MockFile.existingFiles.add(destUri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      const srcSize =
+        MockFile.fileSizes.get(this.uri) !== undefined
+          ? MockFile.fileSizes.get(this.uri)
+          : MockFile.defaultSize;
+      MockFile.fileSizes.set(destUri, srcSize);
+    }
+    return Promise.resolve();
+  }
+  async move(destination) {
+    MockFile.mockMove(this, destination);
+    const destUri = normalizeMockUri(destination);
+    if (MockFile.existingFiles instanceof Set) {
+      MockFile.existingFiles.add(destUri);
+      MockFile.existingFiles.delete(this.uri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      const srcSize =
+        MockFile.fileSizes.get(this.uri) !== undefined
+          ? MockFile.fileSizes.get(this.uri)
+          : MockFile.defaultSize;
+      MockFile.fileSizes.set(destUri, srcSize);
+      MockFile.fileSizes.delete(this.uri);
+    }
     return Promise.resolve();
   }
   delete() {
     MockFile.mockDelete(this.uri);
+    if (MockFile.existingFiles instanceof Set) {
+      MockFile.existingFiles.delete(this.uri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      MockFile.fileSizes.delete(this.uri);
+    }
   }
   async upload(url, options) {
     return MockFile.mockUpload(url, options);
@@ -92,6 +138,7 @@ class MockFile {
 }
 
 MockFile.mockCopy = jest.fn();
+MockFile.mockMove = jest.fn();
 MockFile.mockDelete = jest.fn();
 MockFile.mockUpload = jest.fn(async () => ({
   status: 200,
@@ -103,16 +150,15 @@ MockFile.mockDownload = jest.fn(
 );
 MockFile.defaultExists = true;
 MockFile.defaultSize = 1024;
+MockFile.existingFiles = null;
+MockFile.fileSizes = null;
 
 class MockDirectory {
   constructor(...uris) {
     const raw = uris
       .map((u) => (u && typeof u === "object" && u.uri ? u.uri : String(u)))
-      .join("/")
-      .replace(/\/+/g, "/");
-    const formatted = raw.startsWith("file:/")
-      ? raw
-      : `file:///${raw.replace(/^\/+/, "")}`;
+      .join("/");
+    const formatted = normalizeMockUri(raw);
     this.uri = formatted.endsWith("/") ? formatted : `${formatted}/`;
     this.exists = true;
   }
@@ -122,9 +168,16 @@ class MockDirectory {
   delete() {
     MockDirectory.mockDelete(this.uri);
   }
+  list() {
+    if (typeof MockDirectory.mockList === "function") {
+      return MockDirectory.mockList(this.uri);
+    }
+    return [];
+  }
 }
 MockDirectory.mockCreate = jest.fn();
 MockDirectory.mockDelete = jest.fn();
+MockDirectory.mockList = jest.fn(() => []);
 
 const mockFileSystem = {
   File: MockFile,

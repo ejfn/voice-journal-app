@@ -170,8 +170,12 @@ describe("Android Background Recording & Notification Controls", () => {
 
       const calledResult = externalStopMock.mock.calls[0][0];
       expect(calledResult.localUri).toContain("notif-stop-id.m4a");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((File as any).mockCopy).toHaveBeenCalled();
+      const filePersisted =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (File as any).mockMove.mock.calls.length > 0 ||
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (File as any).mockCopy.mock.calls.length > 0;
+      expect(filePersisted).toBe(true);
 
       // Clean up
       audioRecordingService.setOnExternalStop(null);

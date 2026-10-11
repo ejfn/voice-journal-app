@@ -31,9 +31,9 @@ import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
 import { transcriptionQueueService } from "./src/services/ai/TranscriptionQueueService";
-import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
+import { audioRecoveryService } from "./src/services/audio/AudioRecoveryService";
 import {
   AudioNotFoundError,
   googleDriveService,
@@ -49,6 +49,10 @@ import { generateUUID } from "./src/utils/uuid";
 import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import { getRefreshedReviewEntry } from "./src/utils/reviewEntryRefresh";
 import { getAppVersion } from "./src/utils/versioning";
+import {
+  isAudioFileValid,
+  recoverAudioFromCache,
+} from "./src/utils/audioPersistence";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -240,13 +244,27 @@ const MainScreen: React.FC = () => {
   // Startup lifecycle: run strictly once on app mount
   useEffect(() => {
     initDatabase()
-      .then(() => {
+      .then(async () => {
         isDbReadyRef.current = true;
-        loadData();
+
+        // 1. Run recovery scan before starting queues so recovered entries are indexed in SQLite
+        // and immediately picked up for transcription and backup without dropped triggers
+        try {
+          await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+        } catch (err) {
+          console.warn("Startup audio recovery error:", err);
+        }
+
+        // 2. Load timeline entries and kick off queues
+        await loadData();
         transcriptionQueueService.processQueue().catch((err) => {
           console.warn("Transcription queue startup error:", err);
         });
+        uploadQueueService.processQueue().catch((err) => {
+          console.warn("Upload queue startup error:", err);
+        });
         smartSyncService.startAutoSync();
+
         // Check for APK updates strictly on app start (Android only)
         if (Platform.OS === "android") {
           updateService
@@ -443,7 +461,29 @@ const MainScreen: React.FC = () => {
         return;
       }
 
+      // Verify recorded audio file actually exists and is non-empty
+      if (!isAudioFileValid(localUri)) {
+        setIsRecordingVisible(false);
+        setCurrentRecordingId(null);
+        setIsProcessingAI(false);
+        showToast({
+          message:
+            "Recording failed: audio file could not be saved. Check storage space.",
+          icon: "error-outline",
+          type: "error",
+        });
+        return;
+      }
+
       const entryId = givenEntryId || currentRecordingId || generateUUID();
+
+      // An in-flight external (notification) stop may already have saved this entry
+      if (await entriesDao.getEntryById(entryId)) {
+        setIsRecordingVisible(false);
+        setCurrentRecordingId(null);
+        setIsProcessingAI(false);
+        return;
+      }
       const now = Date.now();
       const hasKey = await geminiService.hasKeyConfigured();
 
@@ -518,32 +558,9 @@ const MainScreen: React.FC = () => {
     } catch (err) {
       setIsProcessingAI(false);
       setIsRecordingVisible(false);
+      setCurrentRecordingId(null);
       showToast({
         message: (err as Error).message || "Failed to save recording.",
-        icon: "error-outline",
-        type: "error",
-      });
-    }
-  };
-
-  // Import Audio Files
-  const handleImportAudio = async () => {
-    try {
-      const imported = await audioImportService.importAudioFiles();
-      if (imported.length > 0) {
-        await loadData();
-        showToast({
-          message: `Imported ${imported.length} audio file(s) • Transcribing in background`,
-          icon: "check-circle",
-          type: "success",
-        });
-        transcriptionQueueService.processQueue().catch((err) => {
-          console.warn("Background import transcription error:", err);
-        });
-      }
-    } catch (err) {
-      showToast({
-        message: (err as Error).message || "Failed to import audio.",
         icon: "error-outline",
         type: "error",
       });
@@ -564,17 +581,25 @@ const MainScreen: React.FC = () => {
     }
 
     try {
-      const localPath = entry.local_audio_path;
+      let localPath = entry.local_audio_path;
       let isCached = entry.is_audio_cached === 1 && Boolean(localPath);
 
       if (isCached && localPath) {
-        try {
-          const file = new File(localPath);
-          if (!file.exists) {
-            isCached = false;
-          }
-        } catch {
+        if (!isAudioFileValid(localPath)) {
           isCached = false;
+        }
+      }
+
+      if (!isCached && !entry.drive_audio_file_id) {
+        const recovered = await recoverAudioFromCache(
+          entry.id,
+          entry.created_at,
+        );
+        if (recovered) {
+          localPath = recovered;
+          isCached = true;
+          await entriesDao.setAudioCached(entry.id, true, recovered);
+          uploadQueueService.enqueueUpload(entry.id, "ANALYZE_AND_UPLOAD");
         }
       }
 
@@ -803,11 +828,8 @@ const MainScreen: React.FC = () => {
           }
         />
 
-        {/* Centered Microphone FAB with Hold-and-Slide Import Gesture */}
-        <RecordGestureFab
-          onStartRecording={handleStartRecording}
-          onImportAudio={handleImportAudio}
-        />
+        {/* Centered Microphone FAB */}
+        <RecordGestureFab onStartRecording={handleStartRecording} />
 
         {/* Active Recording Modal */}
         <RecordingModal

@@ -1,12 +1,12 @@
 # Voice Journal
 
-> *Speak your mind. AI captures the rest.*
+> _Speak your mind. AI captures the rest._
 
 Voice Journal is a zero-subscription, privacy-first mobile voice diary application for **Android**. Speak your mind naturally—Voice Journal captures your audio, automatically transcribes your entries, generates concise titles, summaries, and tags with AI, and keeps your memories searchable and safely backed up to your personal Google Drive.
 
 ## Platform Support
 
-Voice Journal is developed specifically for **Android**. It includes a custom native recording service with background controls so you can record, pause, and stop seamlessly from your notification shade. *(iOS is not supported).*
+Voice Journal is developed specifically for **Android**. It includes a custom native recording service with background controls so you can record, pause, and stop seamlessly from your notification shade. _(iOS is not supported)._
 
 ## Features
 
@@ -15,7 +15,6 @@ Voice Journal is developed specifically for **Android**. It includes a custom na
 - **Works Anywhere, Even Offline**: Journal on planes, subway commutes, or remote trails. Recordings are saved to your device immediately, and AI transcription processes automatically as soon as you're connected.
 - **Instant Keyword Search**: Find past memories and reflections in seconds. Search across all your transcripts, titles, summaries, and tags with fast, on-device keyword search.
 - **Private Cloud Backup & Smart Storage**: Back up entries securely to your personal Google Drive account. Visual backup badges let you know what's stored on your phone or in the cloud, while smart storage management lets you clear older local audio files to save space and re-download them whenever you want to listen.
-- **Import Audio Anytime**: Bring in voice memos, voice notes, or recorded conversations from other apps by simply holding and sliding up on the record button.
 - **Adaptive Day & Night Themes**: Enjoy a clean interface that automatically matches your device's light or dark mode.
 
 ## Gemini API Key & Zero-Cost Personal Usage
@@ -23,14 +22,16 @@ Voice Journal is developed specifically for **Android**. It includes a custom na
 Voice Journal adopts a **Bring Your Own Key (BYOK)** model to deliver a premium AI journaling experience without recurring subscriptions or middleman fees.
 
 ### Free Tier for Personal Use
+
 - **Generous Free Allowance**: Google AI Studio provides a free tier for Gemini models (`gemini-3.5-flash-lite`) offering up to **15 requests per minute** and **1,500 requests per day** at no cost.
 - **No Credit Card Required**: Even active daily journalers recording 5–15 entries a day utilize less than 1% of the daily free tier quota. You do not need a paid Google Cloud account or billing method.
 - **Privacy & Direct Connection**: Your API key is stored locally on your device. Audio and transcripts are transmitted directly between your phone and Google's official Gemini API endpoints—never through a proprietary backend server.
 
 ### Setting Up Your API Key
+
 1. Obtain a free API key at [Google AI Studio](https://aistudio.google.com/apikey).
 2. Open Voice Journal, navigate to **Settings (gear icon) → Gemini API Key**, paste your key, tap **Test Key** to verify, and tap **Save Key**.
-3. *Alternative (for developers)*: Add `EXPO_PUBLIC_GEMINI_API_KEY=your_key_here` to your local `.env` file.
+3. _Alternative (for developers)_: Add `EXPO_PUBLIC_GEMINI_API_KEY=your_key_here` to your local `.env` file.
 
 ## Development Setup
 

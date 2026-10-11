@@ -32,6 +32,24 @@ export const getEntryAudioPath = (
 };
 
 /**
+ * Returns the permanent sandboxed temporary file URI for an in-flight recording.
+ * e.g., FileSystem.documentDirectory + "audio/2026/09/recording_{entryId}.tmp.m4a"
+ *
+ * Placing this directly in the sandbox instead of the cache directory prevents
+ * OS memory-pressure cache purges from destroying the recording, and enables
+ * zero-copy atomic renames on completion.
+ */
+export const getEntryAudioTempPath = (
+  entryId: string,
+  timestamp: number = Date.now(),
+): string => {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  return `${getAudioDirectory(year, month)}recording_${entryId}.m4a`;
+};
+
+/**
  * Normalizes dB metering (-60dB to 0dB) into a linear amplitude between 0.0 and 1.0.
  */
 export const normalizeMetering = (

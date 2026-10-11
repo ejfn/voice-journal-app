@@ -55,7 +55,6 @@
         }
       ],
       "@react-native-google-signin/google-signin",
-      "expo-document-picker",
       "expo-updates",
       "expo-asset",
       "expo-font",

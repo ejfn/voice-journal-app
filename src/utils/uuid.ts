@@ -20,3 +20,13 @@ export function generateUUID(): string {
     return v.toString(16);
   });
 }
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isValidUUID(id: unknown): boolean {
+  if (typeof id !== "string" || id.length !== 36) {
+    return false;
+  }
+  return UUID_REGEX.test(id);
+}

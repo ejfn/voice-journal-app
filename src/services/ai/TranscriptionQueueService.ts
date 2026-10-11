@@ -7,6 +7,10 @@ import {
 import { GeminiAnalysisResult, geminiService } from "./GeminiService";
 import { Directory, File, Paths } from "expo-file-system";
 import { VoiceRecorder } from "voice-recorder";
+import {
+  isAudioFileValid,
+  recoverAudioFromCache,
+} from "../../utils/audioPersistence";
 
 export type TranscriptionEvent = {
   entryId: string;
@@ -308,38 +312,53 @@ export class TranscriptionQueueService {
       const queuedEntries = await entriesDao.getQueuedEntries(now);
 
       for (const entry of queuedEntries) {
-        const isCloudEntry = Boolean(
-          entry.drive_audio_file_id || entry.drive_sidecar_file_id,
-        );
+        const hasCloudAudio = Boolean(entry.drive_audio_file_id);
 
         // Never attempt transcription on cloud-only entries until downloaded to local
-        if (entry.is_audio_cached === 0 && isCloudEntry) {
+        if (entry.is_audio_cached === 0 && hasCloudAudio) {
           continue;
         }
 
         // If entry has no local audio path, check if it's cloud-only or genuinely missing
         if (!entry.local_audio_path) {
-          if (isCloudEntry) {
-            if (entry.is_audio_cached !== 0) {
-              await entriesDao.setAudioCached(entry.id, false, null);
+          if (!hasCloudAudio) {
+            const recovered = await recoverAudioFromCache(
+              entry.id,
+              entry.created_at,
+            );
+            if (recovered) {
+              entry.local_audio_path = recovered;
+              await entriesDao.setAudioCached(entry.id, true, recovered);
             }
+          }
+          if (!entry.local_audio_path) {
+            if (hasCloudAudio) {
+              if (entry.is_audio_cached !== 0) {
+                await entriesDao.setAudioCached(entry.id, false, null);
+              }
+              continue;
+            }
+            await entriesDao.updateTranscriptionStatus(entry.id, "failed");
+            this.notifyListeners({ entryId: entry.id, status: "failed" });
             continue;
           }
-          await entriesDao.updateTranscriptionStatus(entry.id, "failed");
-          this.notifyListeners({ entryId: entry.id, status: "failed" });
-          continue;
         }
 
-        let fileExists = false;
-        try {
-          const audioFile = new File(entry.local_audio_path);
-          fileExists = audioFile.exists;
-        } catch {
-          fileExists = false;
+        let fileExists = isAudioFileValid(entry.local_audio_path);
+        if (!fileExists && !hasCloudAudio) {
+          const recovered = await recoverAudioFromCache(
+            entry.id,
+            entry.created_at,
+          );
+          if (recovered) {
+            entry.local_audio_path = recovered;
+            await entriesDao.setAudioCached(entry.id, true, recovered);
+            fileExists = true;
+          }
         }
 
         if (!fileExists) {
-          if (isCloudEntry) {
+          if (hasCloudAudio) {
             if (entry.is_audio_cached !== 0) {
               await entriesDao.setAudioCached(entry.id, false, null);
             }

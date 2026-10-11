@@ -17,7 +17,7 @@ This file provides guidance and constraints for coding agents working in this re
 **Voice Journal** is a zero-subscription mobile voice diary application built with React Native and Expo (SDK 57).
 
 - **Platform**: Android only (at this stage)
-- **Tagline**: *Speak your mind. AI captures the rest.*
+- **Tagline**: _Speak your mind. AI captures the rest._
 - **Core Capabilities**: Custom native Android audio recording service with dynamic background notification controls, offline-first SQLite database with FTS5 search, background transcription with Gemini (`gemini-3.5-flash-lite`, BYOK), on-demand Google Drive synchronization with LRU caching, and Google Photos-style storage status badges.
 
 ## Documentation References
@@ -63,33 +63,38 @@ src/
 │   └── schema.ts        # Table definitions, FTS5 virtual table, triggers, and migrations
 ├── services/            # Business logic & external services
 │   ├── ai/              # GeminiService (gemini-3.5-flash-lite) & TranscriptionQueueService
-│   ├── audio/           # AudioRecordingService, AudioPlaybackService, AudioImportService (expo-audio)
+│   ├── audio/           # AudioRecordingService, AudioPlaybackService (expo-audio)
 │   └── drive/           # GoogleDriveService, UploadQueueService, SmartSyncService
 ├── theme/               # Semantic color definitions and ThemeContext (Light/Dark/Auto)
 └── utils/               # Path resolvers, storageStatus helpers, uuid, versioning
 ```
 
 ### Test Directory Structure (`__tests__/`)
+
 - `__tests__/helpers/testDb.ts`: Node-compatible SQLite in-memory database mock using `better-sqlite3` mimicking `expo-sqlite`.
 - Unit and integration tests for DAOs, SmartSync, UploadQueue, TranscriptionQueue, GeminiService, storage status, and paths.
 
 ## Key Design Principles & Conventions
 
 ### 1. Modern Expo SDK 57 & Audio
+
 - **Use `expo-audio`**: Always use `expo-audio` for recording and playback (`createAudioPlayer`, `AudioRecorder`). Do NOT use deprecated `expo-av`.
 - **Resource Cleanup**: Always release audio player and recorder instances (`player.removeListener()`, player release/stop) to prevent memory leaks or audio ducking bugs.
 
 ### 2. UI, Icons & Dialogs
+
 - **Vector Icons**: Use `@react-native-vector-icons/material-icons`. Never use system emoji characters (e.g., ▶️, 🎙️, ⚙️) or `@expo/vector-icons` for functional controls.
 - **Themed Dialogs**: Never use raw `Alert.alert` for user confirmations or notifications. Use `src/components/common/ConfirmDialog.tsx` and `src/components/common/Toast.tsx`.
 - **Theme Awareness**: Consume `useTheme()` from `src/theme/ThemeContext.tsx` and reference palette colors from `src/theme/colors.ts`.
 
 ### 3. Offline-First & Data Persistence
+
 - **DAO Pattern**: All database interactions must go through DAOs (`src/db/dao/*`). Never execute raw SQL queries directly in UI components or services.
 - **Immediate Local Writes**: User actions (recording save, edit, delete) persist to local SQLite immediately.
 - **FTS5 Search**: Full-text search queries utilize the `entries_fts` SQLite virtual table via `entriesDao.ts`.
 
 ### 4. Background AI & Cloud Sync Queues
+
 - **Gemini Transcription**: Use `gemini-3.5-flash-lite` in `GeminiService.ts` for fast, cost-effective audio transcription and structured metadata extraction (title, summary, transcript, tags).
 - **Background Transcription Queue**: On recording completion, entry is saved immediately with `transcription_status = 'queued'`. `TranscriptionQueueService` processes entries in the background with graduated exponential backoff.
 - **Dedicated Upload Queue**: `UploadQueueService` manages background uploads to Google Drive (`VoiceJournal/YYYY/MM/`).
@@ -100,6 +105,7 @@ src/
   - `cloud_only`: Evicted locally by LRU, available in Drive (auto-download on play).
 
 ### 5. Type Safety & Code Quality
+
 - Strict TypeScript: No `any` where avoidable. Use explicit interfaces and types.
 - Always check that changes pass `npm run qualitycheck` before finishing.
 

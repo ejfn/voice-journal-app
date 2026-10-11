@@ -19,6 +19,7 @@ export interface VoiceRecorderStatus {
   isRecording: boolean;
   isPaused: boolean;
   durationMillis: number;
+  currentFilePath?: string;
 }
 
 export interface VoiceRecorderResult {

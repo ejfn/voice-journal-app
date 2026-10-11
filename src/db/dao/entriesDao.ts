@@ -55,10 +55,11 @@ const rowToEntry = (row: JournalEntryRow): JournalEntry => {
       .filter(Boolean);
   }
 
-  // If audio is marked cached, dynamically resolve to the current device's sandbox path
+  // Preserve stored local_audio_path (e.g. permanent sandbox fallback paths).
+  // If local_audio_path is unset but is_audio_cached is 1, dynamically resolve canonical sandbox path.
   const canonicalPath = getEntryAudioPath(row.id, row.created_at);
   const localAudioPath =
-    row.is_audio_cached === 1 ? canonicalPath : row.local_audio_path || null;
+    row.local_audio_path || (row.is_audio_cached === 1 ? canonicalPath : null);
 
   let parsedWaveform: number[] | undefined = undefined;
   if (row.waveform_data) {
@@ -377,12 +378,15 @@ export const entriesDao = {
         entry.drive_audio_file_id,
       );
 
-      // Clean up local audio file on device
-      const localAudioUri =
-        entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
-      if (localAudioUri) {
+      // Clean up local audio file on device (both local_audio_path and canonical path if different)
+      const canonicalPath = getEntryAudioPath(entry.id, entry.created_at);
+      const pathsToDelete = new Set<string>();
+      if (entry.local_audio_path) pathsToDelete.add(entry.local_audio_path);
+      if (canonicalPath) pathsToDelete.add(canonicalPath);
+
+      for (const p of pathsToDelete) {
         try {
-          const file = new File(localAudioUri);
+          const file = new File(p);
           if (file.exists) {
             file.delete();
           }
@@ -529,6 +533,17 @@ export const entriesDao = {
          drive_synced_at IS NULL
          OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
        ))
+       ORDER BY created_at ASC`,
+    );
+    return rows.map(rowToEntry);
+  },
+
+  async getEntriesNeedingAudioRecovery(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries
+       WHERE deleted_at IS NULL
+         AND drive_audio_file_id IS NULL
        ORDER BY created_at ASC`,
     );
     return rows.map(rowToEntry);
