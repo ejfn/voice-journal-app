@@ -23,7 +23,7 @@ Voice Journal adopts a **Bring Your Own Key (BYOK)** model to deliver a premium 
 
 ### Free Tier for Personal Use
 
-- **Generous Free Allowance**: Google AI Studio provides a free tier for Gemini models (`gemini-3.5-flash-lite`) offering up to **15 requests per minute** and **1,500 requests per day** at no cost.
+- **Generous Free Allowance**: Google AI Studio provides a free tier for Gemini models (`gemini-flash-lite-latest`) offering up to **15 requests per minute** and **1,500 requests per day** at no cost.
 - **No Credit Card Required**: Even active daily journalers recording 5–15 entries a day utilize less than 1% of the daily free tier quota. You do not need a paid Google Cloud account or billing method.
 - **Privacy & Direct Connection**: Your API key is stored locally on your device. Audio and transcripts are transmitted directly between your phone and Google's official Gemini API endpoints—never through a proprietary backend server.
 
