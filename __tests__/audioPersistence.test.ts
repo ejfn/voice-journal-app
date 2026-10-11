@@ -12,6 +12,7 @@ import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
 import { createTestDb } from "./helpers/testDb";
 import { setDatabaseConnection, initDatabase } from "../src/db/database";
 import { entriesDao } from "../src/db/dao/entriesDao";
+import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { JournalEntry } from "../src/db/schema";
 
 describe("Audio Persistence & Storage Resilience", () => {
@@ -122,6 +123,18 @@ describe("Audio Persistence & Storage Resilience", () => {
       const result = await persistAudioFile(src, dest);
       expect(result).toEqual({ uri: dest, method: "moved" });
       expect(MockFile.mockMove).toHaveBeenCalled();
+    });
+
+    it("deletes existing destination file before move to ensure clean overwrite", async () => {
+      const src = "file:///tmp/recording.m4a";
+      const dest = "file:///dest/entry.m4a";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([src, dest]);
+
+      const result = await persistAudioFile(src, dest);
+      expect(result).toEqual({ uri: dest, method: "moved" });
+      expect(MockFile.mockDelete).toHaveBeenCalledWith(dest);
     });
 
     it("falls back to copy when move fails (e.g. cross-partition EXDEV)", async () => {
@@ -591,6 +604,111 @@ describe("Audio Persistence & Storage Resilience", () => {
       const cacheEntry = await entriesDao.getEntryById(orphanCache);
       expect(cacheEntry).not.toBeNull();
       expect(cacheEntry?.tags).toContain("recovered");
+    });
+
+    it("excludes transcription chunk scratch directories and chunk files during recovery (Finding 1)", async () => {
+      const chunkDir = "file:///mock/cache/chunks_entry-123";
+      const chunkFile = "file:///mock/cache/chunks_entry-123/chunk_0_12345.m4a";
+      const rootChunkFile = "file:///mock/cache/chunk_0_9999.m4a";
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([chunkFile, rootChunkFile]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/cache") {
+          return [new Directory(chunkDir), new File(rootChunkFile)];
+        }
+        if (normalized === chunkDir) {
+          return [new File(chunkFile)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(0);
+
+      const chunkEntry = await entriesDao.getEntryById("chunk_0_12345");
+      expect(chunkEntry).toBeNull();
+      const rootChunkEntry = await entriesDao.getEntryById("chunk_0_9999");
+      expect(rootChunkEntry).toBeNull();
+    });
+
+    it("skips tombstoned recordings in deleted_entries table and cleans up abandoned file (Finding 2)", async () => {
+      const tombstonedId = "tombstoned-entry-id";
+      const fileUri = `file:///mock/document/audio/2026/01/recording_${tombstonedId}.m4a`;
+
+      // Record tombstone deletion in DB
+      await deletedEntriesDao.recordDeletion(tombstonedId);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([fileUri]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [new Directory("file:///mock/document/audio/2026/01/")];
+        }
+        if (normalized === "file:///mock/document/audio/2026/01") {
+          return [new File(fileUri)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(0);
+
+      const entry = await entriesDao.getEntryById(tombstonedId);
+      expect(entry).toBeNull();
+      // Should delete the abandoned file
+      expect(MockFile.mockDelete).toHaveBeenCalledWith(fileUri);
+    });
+  });
+
+  describe("entriesDao fallback temp path preservation (Finding 4)", () => {
+    beforeEach(async () => {
+      const db = createTestDb();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setDatabaseConnection(db as any);
+      await initDatabase();
+    });
+
+    it("preserves fallback temporary sandbox URI instead of replacing with canonical path", async () => {
+      const entryId = "entry-with-fallback";
+      const now = Date.now();
+      const fallbackTempUri = `${Paths.document.uri}audio/fallback_${entryId}.tmp.m4a`;
+
+      const entry: JournalEntry = {
+        id: entryId,
+        title: "Fallback Entry",
+        summary: "Summary",
+        transcript: "",
+        tags: ["voice"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: fallbackTempUri,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1, // Marked cached
+        created_at: now,
+        updated_at: now,
+        last_accessed_at: now,
+        transcription_status: "queued",
+      };
+
+      await entriesDao.insertEntry(entry);
+      const loaded = await entriesDao.getEntryById(entryId);
+      expect(loaded).not.toBeNull();
+      // Must preserve the actual fallback path on disk
+      expect(loaded?.local_audio_path).toBe(fallbackTempUri);
     });
   });
 });

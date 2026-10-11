@@ -96,7 +96,14 @@ export async function persistAudioFile(
 
   // 2. Try atomic move first (instantaneous rename in the same directory, 0 extra disk bytes)
   try {
-    await sourceFile.move(targetFile, { overwrite: true });
+    if (targetFile.exists) {
+      try {
+        targetFile.delete();
+      } catch {
+        // Non-fatal
+      }
+    }
+    await sourceFile.move(targetFile);
     if (isAudioFileValid(destinationUri)) {
       persisted = true;
       method = "moved";
@@ -111,7 +118,14 @@ export async function persistAudioFile(
   // 3. Fallback to copy with overwrite (e.g. cross-partition EXDEV)
   if (!persisted) {
     try {
-      await sourceFile.copy(targetFile, { overwrite: true });
+      if (targetFile.exists) {
+        try {
+          targetFile.delete();
+        } catch {
+          // Non-fatal
+        }
+      }
+      await sourceFile.copy(targetFile);
       if (isAudioFileValid(destinationUri)) {
         persisted = true;
         method = "copied";

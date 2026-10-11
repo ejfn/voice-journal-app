@@ -1,5 +1,6 @@
-import { Directory, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { entriesDao } from "../../db/dao/entriesDao";
+import { deletedEntriesDao } from "../../db/dao/deletedEntriesDao";
 import { JournalEntry } from "../../db/schema";
 import { uploadQueueService } from "../drive/UploadQueueService";
 import { transcriptionQueueService } from "../ai/TranscriptionQueueService";
@@ -12,6 +13,7 @@ import {
 
 /**
  * Recursively collects all audio files (.m4a, .tmp) within a given directory URI.
+ * Skips transcription chunk directories (e.g. cache/chunks_<id>/).
  */
 async function collectAudioFilesRecursively(dirUri: string): Promise<string[]> {
   const collected: string[] = [];
@@ -21,6 +23,10 @@ async function collectAudioFilesRecursively(dirUri: string): Promise<string[]> {
     const items = dir.list();
     for (const item of items) {
       if (!item || !item.uri) continue;
+      // Exclude transcription chunk scratch directories and chunk files
+      if (item.uri.includes("/chunks_") || item.uri.includes("/chunk_")) {
+        continue;
+      }
       const isDir =
         item instanceof Directory ||
         item.uri.endsWith("/") ||
@@ -31,7 +37,10 @@ async function collectAudioFilesRecursively(dirUri: string): Promise<string[]> {
         const subFiles = await collectAudioFilesRecursively(item.uri);
         collected.push(...subFiles);
       } else if (item.uri.endsWith(".m4a") || item.uri.endsWith(".tmp")) {
-        collected.push(item.uri);
+        const filename = item.uri.substring(item.uri.lastIndexOf("/") + 1);
+        if (!filename.startsWith("chunk_")) {
+          collected.push(item.uri);
+        }
       }
     }
   } catch {
@@ -49,6 +58,10 @@ export class AudioRecoveryService {
    * 1. Stranded in-flight recordings (e.g. process was killed before saveRecordedEntry).
    * 2. Legacy cache recordings left from older app versions without a SQLite row.
    * 3. Existing SQLite rows (including legacy hollow-sidecar entries) missing local audio.
+   *
+   * Excludes:
+   * - Transcription chunk scratch files (e.g. chunk_<start>_<timestamp>.m4a).
+   * - Tombstoned recordings previously deleted by the user.
    */
   async scanAndRecoverOrphanedAudioFiles(): Promise<number> {
     let recoveredCount = 0;
@@ -73,7 +86,15 @@ export class AudioRecoveryService {
     const uniqueFiles = Array.from(new Set(candidateUris));
 
     for (const fileUri of uniqueFiles) {
+      // Exclude chunk paths and chunk filenames
+      if (fileUri.includes("/chunks_") || fileUri.includes("/chunk_")) {
+        continue;
+      }
       const filename = fileUri.substring(fileUri.lastIndexOf("/") + 1);
+      if (filename.startsWith("chunk_") || filename.includes("_chunk_")) {
+        continue;
+      }
+
       // Match recording_<uuid>.m4a, <uuid>.m4a, or .tmp variations
       const match = filename.match(
         /^(?:recording_)?([a-zA-Z0-9_-]+?)(?:\.tmp)?\.m4a$/,
@@ -81,6 +102,22 @@ export class AudioRecoveryService {
       if (!match) continue;
 
       const entryId = match[1];
+
+      // Check if entry was tombstoned by user deletion
+      const isTombstoned = await deletedEntriesDao.isDeleted(entryId);
+      if (isTombstoned) {
+        // Skip tombstoned recording and clean up stranded file so it doesn't resurrect
+        try {
+          const orphanedFile = new File(fileUri);
+          if (orphanedFile.exists) {
+            orphanedFile.delete();
+          }
+        } catch {
+          // Non-fatal cleanup
+        }
+        continue;
+      }
+
       const existing = await entriesDao.getEntryById(entryId);
 
       if (!existing) {
