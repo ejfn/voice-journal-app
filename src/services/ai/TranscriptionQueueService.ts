@@ -312,18 +312,16 @@ export class TranscriptionQueueService {
       const queuedEntries = await entriesDao.getQueuedEntries(now);
 
       for (const entry of queuedEntries) {
-        const isCloudEntry = Boolean(
-          entry.drive_audio_file_id || entry.drive_sidecar_file_id,
-        );
+        const hasCloudAudio = Boolean(entry.drive_audio_file_id);
 
         // Never attempt transcription on cloud-only entries until downloaded to local
-        if (entry.is_audio_cached === 0 && isCloudEntry) {
+        if (entry.is_audio_cached === 0 && hasCloudAudio) {
           continue;
         }
 
         // If entry has no local audio path, check if it's cloud-only or genuinely missing
         if (!entry.local_audio_path) {
-          if (!isCloudEntry) {
+          if (!hasCloudAudio) {
             const recovered = await recoverAudioFromCache(
               entry.id,
               entry.created_at,
@@ -334,7 +332,7 @@ export class TranscriptionQueueService {
             }
           }
           if (!entry.local_audio_path) {
-            if (isCloudEntry) {
+            if (hasCloudAudio) {
               if (entry.is_audio_cached !== 0) {
                 await entriesDao.setAudioCached(entry.id, false, null);
               }
@@ -347,7 +345,7 @@ export class TranscriptionQueueService {
         }
 
         let fileExists = isAudioFileValid(entry.local_audio_path);
-        if (!fileExists && !isCloudEntry) {
+        if (!fileExists && !hasCloudAudio) {
           const recovered = await recoverAudioFromCache(
             entry.id,
             entry.created_at,
@@ -360,7 +358,7 @@ export class TranscriptionQueueService {
         }
 
         if (!fileExists) {
-          if (isCloudEntry) {
+          if (hasCloudAudio) {
             if (entry.is_audio_cached !== 0) {
               await entriesDao.setAudioCached(entry.id, false, null);
             }

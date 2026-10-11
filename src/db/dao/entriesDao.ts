@@ -534,6 +534,17 @@ export const entriesDao = {
     return rows.map(rowToEntry);
   },
 
+  async getEntriesNeedingAudioRecovery(): Promise<JournalEntry[]> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<JournalEntryRow>(
+      `SELECT * FROM entries
+       WHERE deleted_at IS NULL
+         AND drive_audio_file_id IS NULL
+       ORDER BY created_at ASC`,
+    );
+    return rows.map(rowToEntry);
+  },
+
   async getPrunableCachedEntries(): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(

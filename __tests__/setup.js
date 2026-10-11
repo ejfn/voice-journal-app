@@ -150,9 +150,16 @@ class MockDirectory {
   delete() {
     MockDirectory.mockDelete(this.uri);
   }
+  list() {
+    if (typeof MockDirectory.mockList === "function") {
+      return MockDirectory.mockList(this.uri);
+    }
+    return [];
+  }
 }
 MockDirectory.mockCreate = jest.fn();
 MockDirectory.mockDelete = jest.fn();
+MockDirectory.mockList = jest.fn(() => []);
 
 const mockFileSystem = {
   File: MockFile,

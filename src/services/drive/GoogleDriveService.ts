@@ -452,12 +452,7 @@ export class GoogleDriveService {
       let reusedAudioFile = false;
 
       // If local audio is missing and not yet on Drive, try recovering from sandbox temp/cache
-      if (
-        !audioFileId &&
-        !localAudioExists &&
-        entry.deleted_at == null &&
-        entry.duration_sec > 0
-      ) {
+      if (!audioFileId && !localAudioExists && entry.deleted_at == null) {
         const recoveredUri = await recoverAudioFromCache(
           entry.id,
           entry.created_at,
@@ -481,14 +476,9 @@ export class GoogleDriveService {
         reusedAudioFile = Boolean(audioFileId);
       }
 
-      // If voice entry has audio duration > 0 and no audio file in Drive, but audio is missing locally:
+      // If audio file is not in Drive and missing locally:
       // Do NOT upload a hollow sidecar claiming the entry is synced! Fail early so it retries or alerts.
-      if (
-        !audioFileId &&
-        entry.deleted_at == null &&
-        entry.duration_sec > 0 &&
-        !localAudioExists
-      ) {
+      if (!audioFileId && entry.deleted_at == null && !localAudioExists) {
         throw new Error(
           `Cannot upload entry ${entry.id}: audio file is missing locally and not present in Drive.`,
         );

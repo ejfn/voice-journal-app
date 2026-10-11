@@ -10,7 +10,7 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { File } from "expo-file-system";
+import { Directory, File } from "expo-file-system";
 import { DayGroupHeader } from "./src/components/DayGroupHeader";
 import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
@@ -49,8 +49,10 @@ import { generateUUID } from "./src/utils/uuid";
 import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import { getRefreshedReviewEntry } from "./src/utils/reviewEntryRefresh";
 import { getAppVersion } from "./src/utils/versioning";
+import { getAudioDirectory, getEntryAudioPath } from "./src/utils/paths";
 import {
   isAudioFileValid,
+  persistAudioFile,
   recoverAudioFromCache,
 } from "./src/utils/audioPersistence";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
@@ -252,36 +254,94 @@ const MainScreen: React.FC = () => {
         });
         smartSyncService.startAutoSync();
 
-        // Background scan to recover any interrupted recordings stranded in cache/tmp
+        // Background scan to recover any interrupted recordings stranded in cache/tmp or filesystem
         (async () => {
           try {
-            const unsynced = await entriesDao.getUnsyncedEntries();
             let recoveredAny = false;
-            for (const entry of unsynced) {
-              if (entry.duration_sec > 0 && !entry.drive_audio_file_id) {
-                const fileExists = entry.local_audio_path
-                  ? new File(entry.local_audio_path).exists
-                  : false;
-                if (!fileExists) {
-                  const recovered = await recoverAudioFromCache(
+
+            // 1. Recover existing SQLite entries that are missing audio and have no Drive backup
+            // (covers both unsynced rows and legacy hollow-sidecar rows)
+            const entriesNeedingAudio =
+              await entriesDao.getEntriesNeedingAudioRecovery();
+            for (const entry of entriesNeedingAudio) {
+              const fileValid = entry.local_audio_path
+                ? isAudioFileValid(entry.local_audio_path)
+                : false;
+              if (!fileValid) {
+                const recovered = await recoverAudioFromCache(
+                  entry.id,
+                  entry.created_at,
+                );
+                if (recovered) {
+                  recoveredAny = true;
+                  await entriesDao.setAudioCached(entry.id, true, recovered);
+                  uploadQueueService.enqueueUpload(
                     entry.id,
-                    entry.created_at,
+                    "ANALYZE_AND_UPLOAD",
                   );
-                  if (recovered) {
-                    recoveredAny = true;
-                    await entriesDao.setAudioCached(entry.id, true, recovered);
-                    uploadQueueService.enqueueUpload(
-                      entry.id,
-                      "ANALYZE_AND_UPLOAD",
-                    );
-                    if (entry.transcription_status === "failed") {
-                      await entriesDao.resetTranscriptionRetry(entry.id);
-                      transcriptionQueueService.processQueue().catch(() => {});
-                    }
+                  if (entry.transcription_status === "failed") {
+                    await entriesDao.resetTranscriptionRetry(entry.id);
+                    transcriptionQueueService.processQueue().catch(() => {});
                   }
                 }
               }
             }
+
+            // 2. Discover stranded in-flight recordings (e.g. process died before saveRecordedEntry)
+            try {
+              const date = new Date();
+              const currentAudioDir = getAudioDirectory(
+                date.getFullYear(),
+                date.getMonth() + 1,
+              );
+              const dir = new Directory(currentAudioDir);
+              if (dir.exists && typeof dir.list === "function") {
+                const items = dir.list();
+                for (const item of items) {
+                  const match = item.uri.match(/recording_([^/.]+)\.m4a$/);
+                  if (match) {
+                    const entryId = match[1];
+                    const existing = await entriesDao.getEntryById(entryId);
+                    if (!existing && isAudioFileValid(item.uri)) {
+                      const canonical = getEntryAudioPath(entryId, Date.now());
+                      const persistResult = await persistAudioFile(
+                        item.uri,
+                        canonical,
+                      );
+                      const now = Date.now();
+                      const recoveredEntry: JournalEntry = {
+                        id: entryId,
+                        title: "Recovered Voice Recording",
+                        summary:
+                          "Recovered recording waiting for transcription...",
+                        transcript: "",
+                        tags: ["voice", "recovered"],
+                        duration_sec: 0,
+                        source_type: "recorded",
+                        local_audio_path: persistResult.uri,
+                        drive_audio_file_id: null,
+                        drive_sidecar_file_id: null,
+                        is_audio_cached: 1,
+                        created_at: now,
+                        updated_at: now,
+                        last_accessed_at: now,
+                        transcription_status: "queued",
+                      };
+                      await entriesDao.insertEntry(recoveredEntry);
+                      uploadQueueService.enqueueUpload(
+                        entryId,
+                        "ANALYZE_AND_UPLOAD",
+                      );
+                      transcriptionQueueService.processQueue().catch(() => {});
+                      recoveredAny = true;
+                    }
+                  }
+                }
+              }
+            } catch {
+              // Non-fatal filesystem scan
+            }
+
             if (recoveredAny) {
               await loadData();
             }

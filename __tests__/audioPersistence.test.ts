@@ -397,5 +397,89 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(synced?.drive_synced_at).not.toBeNull();
       expect(synced?.drive_audio_file_id).toBe("recovered-audio-id");
     });
+
+    it("guards zero-duration audio entries (such as imported audio) from hollow sidecar upload", async () => {
+      const t0 = 1758290000000;
+      const entry: JournalEntry = {
+        id: "entry-zero-duration-imported",
+        title: "Imported Audio Zero Dur",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: ["imported"],
+        duration_sec: 0,
+        source_type: "imported",
+        local_audio_path:
+          "file:///mock/document/audio/2026/09/entry-zero-duration-imported.m4a",
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: t0,
+        updated_at: t0,
+        drive_synced_at: null,
+        last_accessed_at: t0,
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set(); // missing
+
+      global.fetch = jest.fn(async () => {
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      });
+
+      await expect(driveService.uploadEntry(entry)).rejects.toThrow(
+        "audio file is missing locally and not present in Drive",
+      );
+    });
+
+    it("recovers audio for legacy hollow-sidecar entries where drive_sidecar_file_id is set but drive_audio_file_id is null", async () => {
+      const t0 = 1758290000000;
+      const entryId = "entry-legacy-hollow";
+      const canonical = getEntryAudioPath(entryId, t0);
+
+      const entry: JournalEntry = {
+        id: entryId,
+        title: "Legacy Hollow Entry",
+        summary: "Summary",
+        transcript: "",
+        tags: ["voice"],
+        duration_sec: 15,
+        source_type: "recorded",
+        local_audio_path: canonical,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: "legacy-sidecar-id",
+        is_audio_cached: 1,
+        created_at: t0,
+        updated_at: t0,
+        drive_synced_at: t0, // marked synced despite missing audio
+        last_accessed_at: t0,
+        transcription_status: "queued",
+      };
+      await entriesDao.insertEntry(entry);
+
+      // Verify getEntriesNeedingAudioRecovery finds it
+      const needing = await entriesDao.getEntriesNeedingAudioRecovery();
+      expect(needing.some((e) => e.id === entryId)).toBe(true);
+    });
+  });
+
+  describe("AudioRecordingService finally cleanup block", () => {
+    it("cleans up active recorder and resets audio mode in finally block even if persist throws", async () => {
+      const entryId = "entry-persist-throws";
+      await audioRecordingService.startRecording(entryId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 4000;
+
+      // Mock zero-size to cause persistAudioFile error
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (File as any).defaultSize = 0;
+
+      await expect(audioRecordingService.stopRecording()).rejects.toThrow();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((audioRecordingService as any).activeRecorder).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((audioRecordingService as any).currentEntryId).toBeNull();
+    });
   });
 });
