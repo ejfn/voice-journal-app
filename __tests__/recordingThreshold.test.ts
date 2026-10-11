@@ -22,9 +22,11 @@ describe("Recording Minimum Duration Threshold", () => {
 
     expect(result.durationSec).toBeLessThan(MIN_RECORDING_DURATION_SEC);
     expect(result.localUri).toBe("");
-    // Should not copy to destination path
+    // Should not copy or move to destination path
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((File as any).mockCopy).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((File as any).mockMove).not.toHaveBeenCalled();
   });
 
   it("saves and copies recordings that meet or exceed 3 seconds", async () => {

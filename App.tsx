@@ -49,6 +49,10 @@ import { generateUUID } from "./src/utils/uuid";
 import { isEntryActivelyTransferring } from "./src/utils/storageStatus";
 import { getRefreshedReviewEntry } from "./src/utils/reviewEntryRefresh";
 import { getAppVersion } from "./src/utils/versioning";
+import {
+  isAudioFileValid,
+  recoverAudioFromCache,
+} from "./src/utils/audioPersistence";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { ToastProvider, useToast } from "./src/components/common/Toast";
 import { ConfirmDialog } from "./src/components/common/ConfirmDialog";
@@ -247,6 +251,45 @@ const MainScreen: React.FC = () => {
           console.warn("Transcription queue startup error:", err);
         });
         smartSyncService.startAutoSync();
+
+        // Background scan to recover any interrupted recordings stranded in cache/tmp
+        (async () => {
+          try {
+            const unsynced = await entriesDao.getUnsyncedEntries();
+            let recoveredAny = false;
+            for (const entry of unsynced) {
+              if (entry.duration_sec > 0 && !entry.drive_audio_file_id) {
+                const fileExists = entry.local_audio_path
+                  ? new File(entry.local_audio_path).exists
+                  : false;
+                if (!fileExists) {
+                  const recovered = await recoverAudioFromCache(
+                    entry.id,
+                    entry.created_at,
+                  );
+                  if (recovered) {
+                    recoveredAny = true;
+                    await entriesDao.setAudioCached(entry.id, true, recovered);
+                    uploadQueueService.enqueueUpload(
+                      entry.id,
+                      "ANALYZE_AND_UPLOAD",
+                    );
+                    if (entry.transcription_status === "failed") {
+                      await entriesDao.resetTranscriptionRetry(entry.id);
+                      transcriptionQueueService.processQueue().catch(() => {});
+                    }
+                  }
+                }
+              }
+            }
+            if (recoveredAny) {
+              await loadData();
+            }
+          } catch {
+            // Non-fatal background check
+          }
+        })();
+
         // Check for APK updates strictly on app start (Android only)
         if (Platform.OS === "android") {
           updateService
@@ -443,6 +486,20 @@ const MainScreen: React.FC = () => {
         return;
       }
 
+      // Verify recorded audio file actually exists and is non-empty
+      if (!isAudioFileValid(localUri)) {
+        setIsRecordingVisible(false);
+        setCurrentRecordingId(null);
+        setIsProcessingAI(false);
+        showToast({
+          message:
+            "Recording failed: audio file could not be saved. Check storage space.",
+          icon: "error-outline",
+          type: "error",
+        });
+        return;
+      }
+
       const entryId = givenEntryId || currentRecordingId || generateUUID();
       const now = Date.now();
       const hasKey = await geminiService.hasKeyConfigured();
@@ -518,6 +575,7 @@ const MainScreen: React.FC = () => {
     } catch (err) {
       setIsProcessingAI(false);
       setIsRecordingVisible(false);
+      setCurrentRecordingId(null);
       showToast({
         message: (err as Error).message || "Failed to save recording.",
         icon: "error-outline",
@@ -564,17 +622,25 @@ const MainScreen: React.FC = () => {
     }
 
     try {
-      const localPath = entry.local_audio_path;
+      let localPath = entry.local_audio_path;
       let isCached = entry.is_audio_cached === 1 && Boolean(localPath);
 
       if (isCached && localPath) {
-        try {
-          const file = new File(localPath);
-          if (!file.exists) {
-            isCached = false;
-          }
-        } catch {
+        if (!isAudioFileValid(localPath)) {
           isCached = false;
+        }
+      }
+
+      if (!isCached && !entry.drive_audio_file_id) {
+        const recovered = await recoverAudioFromCache(
+          entry.id,
+          entry.created_at,
+        );
+        if (recovered) {
+          localPath = recovered;
+          isCached = true;
+          await entriesDao.setAudioCached(entry.id, true, recovered);
+          uploadQueueService.enqueueUpload(entry.id, "ANALYZE_AND_UPLOAD");
         }
       }
 

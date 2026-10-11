@@ -1,10 +1,10 @@
 import * as DocumentPicker from "expo-document-picker";
-import { Directory, File } from "expo-file-system";
 import { createAudioPlayer } from "expo-audio";
 import { entriesDao } from "../../db/dao/entriesDao";
 import { uploadQueueService } from "../drive/UploadQueueService";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
+import { persistAudioFile } from "../../utils/audioPersistence";
 import { generateUUID } from "../../utils/uuid";
 
 /**
@@ -67,21 +67,11 @@ export class AudioImportService {
       const now = Date.now();
       const destinationPath = getEntryAudioPath(entryId, now);
 
-      // Ensure directory exists
-      const dir = destinationPath.substring(
-        0,
-        destinationPath.lastIndexOf("/") + 1,
-      );
-      const directory = new Directory(dir);
-      if (!directory.exists) {
-        directory.create({ intermediates: true, idempotent: true });
-      }
-
-      // Copy from temporary cache to sandbox
-      await new File(asset.uri).copy(new File(destinationPath));
+      const persistResult = await persistAudioFile(asset.uri, destinationPath);
+      const finalAudioPath = persistResult.uri;
 
       // Probe actual duration from the copied file; falls back to 0 if unavailable
-      const durationSec = await probeAudioDuration(destinationPath);
+      const durationSec = await probeAudioDuration(finalAudioPath);
 
       const title =
         asset.name.replace(/\.[^/.]+$/, "").trim() || "Imported Audio";
@@ -94,7 +84,7 @@ export class AudioImportService {
         tags: ["imported"],
         duration_sec: durationSec,
         source_type: "imported",
-        local_audio_path: destinationPath,
+        local_audio_path: finalAudioPath,
         drive_audio_file_id: null,
         drive_sidecar_file_id: null,
         is_audio_cached: 1,
@@ -110,7 +100,7 @@ export class AudioImportService {
       importedResults.push({
         entryId,
         name: asset.name,
-        localPath: destinationPath,
+        localPath: finalAudioPath,
         size: asset.size,
         durationSec,
       });

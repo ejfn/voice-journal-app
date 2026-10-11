@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Keyboard,
 } from "react-native";
-import { File } from "expo-file-system";
 import { JournalEntry } from "../db/schema";
 import { entriesDao } from "../db/dao/entriesDao";
 import {
@@ -35,6 +34,10 @@ import {
 import { WAVEFORM_BAR_COUNT } from "../utils/waveform";
 import { useToast } from "./common/Toast";
 import { formatDate, formatTime } from "../utils/paths";
+import {
+  isAudioFileValid,
+  recoverAudioFromCache,
+} from "../utils/audioPersistence";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -335,17 +338,30 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       return;
     }
 
-    const localPath = active.local_audio_path;
+    let localPath = active.local_audio_path;
     let isLocal = active.is_audio_cached === 1 && Boolean(localPath);
 
     if (isLocal && localPath) {
-      try {
-        const file = new File(localPath);
-        if (!file.exists) {
-          isLocal = false;
-        }
-      } catch {
+      if (!isAudioFileValid(localPath)) {
         isLocal = false;
+      }
+    }
+
+    if (!isLocal && !active.drive_audio_file_id) {
+      const recovered = await recoverAudioFromCache(
+        active.id,
+        active.created_at,
+      );
+      if (recovered) {
+        localPath = recovered;
+        isLocal = true;
+        await entriesDao.setAudioCached(active.id, true, recovered);
+        uploadQueueService.enqueueUpload(active.id, "ANALYZE_AND_UPLOAD");
+        setCurrentEntry((prev) =>
+          prev
+            ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }
+            : null,
+        );
       }
     }
 

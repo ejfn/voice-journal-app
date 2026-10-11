@@ -1,5 +1,5 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync } from "expo-audio";
-import { Directory, File, Paths } from "expo-file-system";
+import { File } from "expo-file-system";
 import { VoiceRecorder } from "voice-recorder";
 import {
   AppState,
@@ -8,7 +8,15 @@ import {
   PermissionsAndroid,
   Platform,
 } from "react-native";
-import { getEntryAudioPath, normalizeMetering } from "../../utils/paths";
+import {
+  getEntryAudioPath,
+  getEntryAudioTempPath,
+  normalizeMetering,
+} from "../../utils/paths";
+import {
+  ensureAudioDirectoryExists,
+  persistAudioFile,
+} from "../../utils/audioPersistence";
 import { generateUUID } from "../../utils/uuid";
 import { resampleWaveform, WAVEFORM_BAR_COUNT } from "../../utils/waveform";
 import { audioPlaybackService } from "./AudioPlaybackService";
@@ -59,6 +67,13 @@ interface AudioRecorderInstance {
   ) => { remove: () => void };
 }
 
+interface ActiveRecordingContext {
+  entryId: string;
+  timestamp: number;
+  tempFilePath: string;
+  destinationUri: string;
+}
+
 export const MIN_RECORDING_DURATION_SEC = 3;
 
 class AudioRecordingService {
@@ -74,6 +89,7 @@ class AudioRecordingService {
   private appStateSubscription: NativeEventSubscription | null = null;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
+  private activeContext: ActiveRecordingContext | null = null;
   private recordedSamples: number[] = [];
 
   setOnExternalStop(callback: ExternalStopCallback | null) {
@@ -113,6 +129,15 @@ class AudioRecordingService {
     entryId: string,
     onStatusUpdate?: RecordingStatusCallback,
   ): Promise<void> {
+    // If a previous recording is active or in-flight, cancel/finalize it to avoid state races
+    if (this.activeRecorder) {
+      try {
+        await this.cancelRecording();
+      } catch {
+        // Non-fatal
+      }
+    }
+
     // Ensure any active playback is halted to avoid feedback/conflicts
     try {
       await audioPlaybackService.stop();
@@ -120,8 +145,21 @@ class AudioRecordingService {
       // Ignore
     }
 
+    const timestamp = Date.now();
+    const destinationUri = getEntryAudioPath(entryId, timestamp);
+    // Write directly into the persistent sandboxed audio directory using a unique temp name.
+    // This avoids volatile OS cache purges and enables instant zero-copy atomic renames on stop.
+    const tempFilePath = getEntryAudioTempPath(entryId, timestamp);
+
+    this.activeContext = {
+      entryId,
+      timestamp,
+      tempFilePath,
+      destinationUri,
+    };
+
     this.currentEntryId = entryId;
-    this.currentTimestamp = Date.now();
+    this.currentTimestamp = timestamp;
     this.statusCallback = onStatusUpdate || null;
     this.durationMillis = 0;
     this.isPaused = false;
@@ -136,10 +174,11 @@ class AudioRecordingService {
       allowsBackgroundRecording: true,
     });
 
+    // Ensure target sandboxed directory exists before recording starts
+    await ensureAudioDirectoryExists(tempFilePath);
+
     if (Platform.OS === "android" && VoiceRecorder.isAvailable()) {
       try {
-        const cacheDir = Paths.cache?.uri || "";
-        const tempFilePath = `${cacheDir.endsWith("/") ? cacheDir : cacheDir + "/"}recording_${entryId}.m4a`;
         const recorder = this.createVoiceRecorderAdapter(tempFilePath);
         this.activeRecorder = recorder;
         if (typeof recorder.addListener === "function") {
@@ -242,14 +281,24 @@ class AudioRecordingService {
     this.removeStatusSubscription();
     this.isActionInProgress = false;
 
+    const ctx = this.activeContext;
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
     const recordedTempUri =
       url ||
+      ctx?.tempFilePath ||
       this.activeRecorder?.uri ||
       this.activeRecorder?.getURI?.() ||
       null;
 
-    const entryId = this.currentEntryId || generateUUID();
+    const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
+    const destinationUri =
+      ctx?.destinationUri ||
+      getEntryAudioPath(
+        entryId,
+        ctx?.timestamp || this.currentTimestamp || Date.now(),
+      );
+
+    this.activeContext = null;
 
     if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
       if (recordedTempUri) {
@@ -286,26 +335,20 @@ class AudioRecordingService {
       return;
     }
 
-    const destinationUri = getEntryAudioPath(
-      entryId,
-      this.currentTimestamp || Date.now(),
-    );
-
-    const dir = destinationUri.substring(
-      0,
-      destinationUri.lastIndexOf("/") + 1,
-    );
-    try {
-      const directory = new Directory(dir);
-      if (!directory.exists) {
-        directory.create({ intermediates: true, idempotent: true });
+    let finalUri = "";
+    if (recordedTempUri) {
+      try {
+        const persistResult = await persistAudioFile(
+          recordedTempUri,
+          destinationUri,
+        );
+        finalUri = persistResult.uri;
+      } catch (persistErr) {
+        console.error(
+          "Failed to persist recorded audio on external stop:",
+          persistErr,
+        );
       }
-
-      if (recordedTempUri && recordedTempUri !== destinationUri) {
-        await new File(recordedTempUri).copy(new File(destinationUri));
-      }
-    } catch (fsErr) {
-      console.warn("Could not copy recording to sandbox path:", fsErr);
     }
 
     const waveformData =
@@ -331,7 +374,7 @@ class AudioRecordingService {
     if (this.externalStopCallback) {
       await this.externalStopCallback({
         entryId,
-        localUri: destinationUri,
+        localUri: finalUri,
         durationSec: finalDurationSec,
         waveformData,
       });
@@ -528,6 +571,15 @@ class AudioRecordingService {
     this.isActionInProgress = false;
     const finalDurationSec = Math.floor(this.durationMillis / 1000);
 
+    const ctx = this.activeContext;
+    const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
+    const destinationUri =
+      ctx?.destinationUri ||
+      getEntryAudioPath(
+        entryId,
+        ctx?.timestamp || this.currentTimestamp || Date.now(),
+      );
+
     let recordedTempUri: string | null = null;
     if (this.activeRecorder) {
       try {
@@ -535,11 +587,18 @@ class AudioRecordingService {
           await this.activeRecorder.stop();
         }
         recordedTempUri =
-          this.activeRecorder.uri || this.activeRecorder.getURI?.() || null;
+          this.activeRecorder.uri ||
+          this.activeRecorder.getURI?.() ||
+          ctx?.tempFilePath ||
+          null;
       } catch (err) {
         console.warn("Error stopping audio recorder:", err);
       }
+    } else if (ctx?.tempFilePath) {
+      recordedTempUri = ctx.tempFilePath;
     }
+
+    this.activeContext = null;
 
     // Recordings shorter than MIN_RECORDING_DURATION_SEC will not be saved
     if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
@@ -573,29 +632,20 @@ class AudioRecordingService {
       };
     }
 
-    const entryId = this.currentEntryId || generateUUID();
-    const destinationUri = getEntryAudioPath(
-      entryId,
-      this.currentTimestamp || Date.now(),
-    );
-
-    // Ensure sandboxed destination directory exists (e.g. audio/YYYY/MM/)
-    const dir = destinationUri.substring(
-      0,
-      destinationUri.lastIndexOf("/") + 1,
-    );
-    try {
-      const directory = new Directory(dir);
-      if (!directory.exists) {
-        directory.create({ intermediates: true, idempotent: true });
-      }
-
-      if (recordedTempUri && recordedTempUri !== destinationUri) {
-        await new File(recordedTempUri).copy(new File(destinationUri));
-      }
-    } catch (fsErr) {
-      console.warn("Could not copy recording to sandbox path:", fsErr);
+    if (!recordedTempUri) {
+      this.activeRecorder = null;
+      this.statusCallback = null;
+      this.currentEntryId = null;
+      this.recordedSamples = [];
+      throw new Error(
+        "Audio recording failed: no recorded audio data was captured. Your device storage may be full.",
+      );
     }
+
+    const persistResult = await persistAudioFile(
+      recordedTempUri,
+      destinationUri,
+    );
 
     const waveformData =
       this.recordedSamples.length > 0
@@ -618,7 +668,7 @@ class AudioRecordingService {
     }
 
     return {
-      localUri: destinationUri,
+      localUri: persistResult.uri,
       durationSec: finalDurationSec,
       waveformData,
     };
@@ -631,10 +681,16 @@ class AudioRecordingService {
     this.removeStatusSubscription();
     this.isActionInProgress = false;
     this.recordedSamples = [];
+    const ctx = this.activeContext;
+    this.activeContext = null;
+
     if (this.activeRecorder) {
       try {
         await this.activeRecorder.stop?.();
-        const uri = this.activeRecorder.uri || this.activeRecorder.getURI?.();
+        const uri =
+          this.activeRecorder.uri ||
+          this.activeRecorder.getURI?.() ||
+          ctx?.tempFilePath;
         if (uri) {
           const tempFile = new File(uri);
           if (tempFile.exists) {
@@ -643,6 +699,15 @@ class AudioRecordingService {
         }
       } catch {
         // Ignore cancel cleanup errors
+      }
+    } else if (ctx?.tempFilePath) {
+      try {
+        const tempFile = new File(ctx.tempFilePath);
+        if (tempFile.exists) {
+          tempFile.delete();
+        }
+      } catch {
+        // Ignore
       }
     }
     this.activeRecorder = null;

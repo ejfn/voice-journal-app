@@ -6,6 +6,10 @@ import { settingsDao } from "../../db/dao/settingsDao";
 import { syncQueueDao } from "../../db/dao/syncQueueDao";
 import { JournalEntry } from "../../db/schema";
 import { getEntryAudioPath } from "../../utils/paths";
+import {
+  isAudioFileValid,
+  recoverAudioFromCache,
+} from "../../utils/audioPersistence";
 import { transcriptionQueueService } from "../ai/TranscriptionQueueService";
 
 export interface DriveFolderInfo {
@@ -442,11 +446,30 @@ export class GoogleDriveService {
 
       // 1. Upload Audio File first if locally available and not yet uploaded
       let audioFileId = entry.drive_audio_file_id;
-      const localAudioUri =
+      let localAudioUri =
         entry.local_audio_path || getEntryAudioPath(entry.id, entry.created_at);
-      const audioFile = localAudioUri ? new File(localAudioUri) : null;
-      const localAudioExists = audioFile?.exists ?? false;
+      let localAudioExists = isAudioFileValid(localAudioUri);
       let reusedAudioFile = false;
+
+      // If local audio is missing and not yet on Drive, try recovering from sandbox temp/cache
+      if (
+        !audioFileId &&
+        !localAudioExists &&
+        entry.deleted_at == null &&
+        entry.duration_sec > 0
+      ) {
+        const recoveredUri = await recoverAudioFromCache(
+          entry.id,
+          entry.created_at,
+        );
+        if (recoveredUri) {
+          localAudioUri = recoveredUri;
+          localAudioExists = true;
+          await entriesDao.setAudioCached(entry.id, true, recoveredUri);
+        }
+      }
+
+      const audioFile = localAudioUri ? new File(localAudioUri) : null;
 
       if (!audioFileId) {
         audioFileId = await this.findFileId(
@@ -456,6 +479,19 @@ export class GoogleDriveService {
           "audio/mp4",
         );
         reusedAudioFile = Boolean(audioFileId);
+      }
+
+      // If voice entry has audio duration > 0 and no audio file in Drive, but audio is missing locally:
+      // Do NOT upload a hollow sidecar claiming the entry is synced! Fail early so it retries or alerts.
+      if (
+        !audioFileId &&
+        entry.deleted_at == null &&
+        entry.duration_sec > 0 &&
+        !localAudioExists
+      ) {
+        throw new Error(
+          `Cannot upload entry ${entry.id}: audio file is missing locally and not present in Drive.`,
+        );
       }
       if (audioFile && localAudioExists && entry.deleted_at == null) {
         if (!audioFileId) {
