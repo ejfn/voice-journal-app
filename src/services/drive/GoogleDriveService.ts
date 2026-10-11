@@ -17,6 +17,18 @@ export interface DriveFolderInfo {
   name: string;
 }
 
+export interface DriveSidecarInfo {
+  id: string;
+  name: string;
+  entryId: string;
+  modifiedMs: number;
+  appProperties?: {
+    updatedAt?: string;
+    deletedAt?: string;
+    entryId?: string;
+  };
+}
+
 /**
  * Per-entry transfer events fired only around real Drive I/O
  * (uploadEntry / downloadAudioOnDemand). Scan/list passes do not emit these.
@@ -609,6 +621,7 @@ export class GoogleDriveService {
           "application/json",
         );
       }
+      let remoteSidecarModifiedMs = 0;
       if (sidecarFileId) {
         // Update existing sidecar file on Drive
         const updateRes = await fetch(
@@ -631,6 +644,38 @@ export class GoogleDriveService {
               `Failed to update sidecar JSON for entry ${entry.id}: ${await updateRes.text()}`,
             );
           }
+        } else {
+          try {
+            const data = await updateRes.json();
+            if (data.modifiedTime) {
+              remoteSidecarModifiedMs = new Date(data.modifiedTime).getTime();
+            }
+          } catch {
+            // Ignore if response body is empty or non-JSON
+          }
+
+          // Also patch appProperties metadata
+          try {
+            await fetch(
+              `https://www.googleapis.com/drive/v3/files/${sidecarFileId}`,
+              {
+                method: "PATCH",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  appProperties: {
+                    entryId: entry.id,
+                    updatedAt: String(snapshotUpdatedAt),
+                    deletedAt: String(freshEntry.deleted_at ?? ""),
+                  },
+                }),
+              },
+            );
+          } catch {
+            // Non-critical if appProperties patch fails
+          }
         }
       }
 
@@ -639,6 +684,11 @@ export class GoogleDriveService {
           name: `${entry.id}.json`,
           parents: [monthFolderId],
           mimeType: "application/json",
+          appProperties: {
+            entryId: entry.id,
+            updatedAt: String(snapshotUpdatedAt),
+            deletedAt: String(freshEntry.deleted_at ?? ""),
+          },
         };
 
         const sidecarRes = await fetch(
@@ -666,6 +716,11 @@ export class GoogleDriveService {
 
         const sidecarData = await sidecarRes.json();
         sidecarFileId = sidecarData.id;
+        if (sidecarData.modifiedTime) {
+          remoteSidecarModifiedMs = new Date(
+            sidecarData.modifiedTime,
+          ).getTime();
+        }
       }
 
       if (!sidecarFileId) {
@@ -711,7 +766,7 @@ export class GoogleDriveService {
         entry.id,
         sidecarFileId,
         audioFileId,
-        Date.now(),
+        Math.max(Date.now(), remoteSidecarModifiedMs, snapshotUpdatedAt),
       );
 
       this.assertCurrentSession(sessionVersion);
@@ -805,27 +860,27 @@ export class GoogleDriveService {
   /**
    * Helper to list all sidecar JSON files in Drive with pagination.
    */
-  async listDriveSidecars(token: string): Promise<
-    {
-      id: string;
-      name: string;
-      entryId: string;
-      modifiedMs: number;
-    }[]
-  > {
-    const results: {
-      id: string;
-      name: string;
-      entryId: string;
-      modifiedMs: number;
-    }[] = [];
+  async listDriveSidecars(
+    token: string,
+    options?: {
+      maxResults?: number;
+      sinceMs?: number;
+    },
+  ): Promise<DriveSidecarInfo[]> {
+    const results: DriveSidecarInfo[] = [];
+    const maxResults = options?.maxResults;
 
     let pageToken: string | null = null;
     do {
-      const query = encodeURIComponent(
-        "mimeType = 'application/json' and name contains '.json' and trashed = false",
-      );
-      let searchUrl = `https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=1000&orderBy=${encodeURIComponent("modifiedTime desc")}&fields=nextPageToken,files(id,name,modifiedTime)`;
+      let queryStr =
+        "mimeType = 'application/json' and name contains '.json' and trashed = false";
+      if (options?.sinceMs) {
+        const sinceIso = new Date(options.sinceMs).toISOString();
+        queryStr += ` and modifiedTime >= '${sinceIso}'`;
+      }
+      const query = encodeURIComponent(queryStr);
+      const pageSize = maxResults ? Math.min(maxResults, 1000) : 1000;
+      let searchUrl = `https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=${pageSize}&orderBy=${encodeURIComponent("modifiedTime desc")}&fields=nextPageToken,files(id,name,modifiedTime,appProperties)`;
       if (pageToken) {
         searchUrl += `&pageToken=${encodeURIComponent(pageToken)}`;
       }
@@ -851,8 +906,17 @@ export class GoogleDriveService {
             name: file.name,
             entryId,
             modifiedMs,
+            appProperties: file.appProperties,
           });
+
+          if (maxResults && results.length >= maxResults) {
+            break;
+          }
         }
+      }
+
+      if (maxResults && results.length >= maxResults) {
+        break;
       }
       pageToken = data.nextPageToken || null;
     } while (pageToken);
@@ -865,10 +929,12 @@ export class GoogleDriveService {
 
   /**
    * Complete two-way sync:
-   * Rule 1: Always upload if local is newer (updated).
-   * Rule 2: Download only when local is missing (newest first).
+   * Rule 1: Upload if local is newer than cloud.
+   * Rule 2: Download/update if cloud is missing or newer than local.
    */
   async syncTwoWay(options?: {
+    fullSync?: boolean;
+    maxEntries?: number;
     onProgress?: (downloadedCount: number) => void;
   }): Promise<{
     uploadedCount: number;
@@ -897,9 +963,15 @@ export class GoogleDriveService {
       console.warn("Failed to process pending deletions:", err);
     }
 
-    // Fetch all existing sidecars in Drive
-    const driveSidecars = await this.listDriveSidecars(token);
-    const driveSidecarsMap = new Map<string, (typeof driveSidecars)[0]>();
+    // Determine cap for listing: default 100 most recent unless fullSync requested
+    const isFullSync = Boolean(options?.fullSync);
+    const maxEntries = isFullSync ? undefined : (options?.maxEntries ?? 100);
+
+    // Fetch existing sidecars in Drive (capped to maxEntries newest unless fullSync)
+    const driveSidecars = await this.listDriveSidecars(token, {
+      maxResults: maxEntries,
+    });
+    const driveSidecarsMap = new Map<string, DriveSidecarInfo>();
     for (const sc of driveSidecars) {
       driveSidecarsMap.set(sc.entryId, sc);
     }
@@ -918,13 +990,26 @@ export class GoogleDriveService {
           const cloudSidecar = driveSidecarsMap.get(entry.id);
           const localUpdatedTime = entry.updated_at || entry.created_at;
 
+          let cloudTime = 0;
+          if (cloudSidecar) {
+            cloudTime = cloudSidecar.appProperties?.updatedAt
+              ? Number(cloudSidecar.appProperties.updatedAt)
+              : cloudSidecar.modifiedMs;
+          }
+
+          // If entry is in Drive and cloud is strictly newer, do NOT upload (let download update local)
+          if (cloudSidecar && cloudTime > localUpdatedTime) {
+            continue;
+          }
+
           // Upload if not in Drive or if local is newer than cloud
           const shouldUpload =
             !cloudSidecar ||
-            localUpdatedTime > cloudSidecar.modifiedMs ||
+            localUpdatedTime > cloudTime ||
             (entry.drive_synced_at != null &&
               entry.updated_at != null &&
-              entry.updated_at > entry.drive_synced_at);
+              entry.updated_at > entry.drive_synced_at) ||
+            entry.drive_sidecar_file_id == null;
 
           if (shouldUpload) {
             const entryToUpload = {
@@ -959,12 +1044,15 @@ export class GoogleDriveService {
       console.warn("Failed to check unsynced entries:", err);
     }
 
-    // 2. DOWNLOAD PHASE: "download only when local is missing (newest first)"
-    const existingEntryIds = await entriesDao.getAllEntryIds();
+    // 2. DOWNLOAD & UPDATE PHASE:
+    // Process items in Drive:
+    // - If missing locally: download and insert.
+    // - If exists locally: compare timestamps. If Cloud is newer, download and apply update.
+    const localEntriesMap = await entriesDao.getEntrySyncInfoMap();
     const pendingDeletions = await deletedEntriesDao.getPendingDeletions();
     const deletedIds = new Set(pendingDeletions.map((d) => d.id));
 
-    // Handle any Drive sidecars whose entries were deleted locally
+    // Handle any Drive sidecars whose entries were deleted permanently on this device
     for (const sc of driveSidecars) {
       if (deletedIds.has(sc.entryId)) {
         try {
@@ -979,17 +1067,54 @@ export class GoogleDriveService {
       }
     }
 
-    // Filter to only missing entries (driveSidecars is already sorted newest first)
-    const missingSidecars = driveSidecars.filter(
-      (sc) => !existingEntryIds.has(sc.entryId) && !deletedIds.has(sc.entryId),
-    );
+    // Determine which sidecars need to be downloaded or updated
+    const sidecarsToProcess: {
+      sidecar: DriveSidecarInfo;
+      isMissing: boolean;
+    }[] = [];
 
-    // Download missing entries concurrently in batches of 5 to populate the timeline dynamically
+    for (const sc of driveSidecars) {
+      if (deletedIds.has(sc.entryId)) continue;
+
+      const localInfo = localEntriesMap.get(sc.entryId);
+      if (!localInfo) {
+        // Missing locally
+        sidecarsToProcess.push({ sidecar: sc, isMissing: true });
+      } else {
+        // Exists locally: compare timestamps
+        const localUpdatedTime = localInfo.updated_at ?? localInfo.created_at;
+        const localSyncedAt = localInfo.drive_synced_at ?? 0;
+
+        let isCloudNewer = false;
+        if (sc.appProperties?.updatedAt) {
+          const cloudUpdatedAt = Number(sc.appProperties.updatedAt);
+          isCloudNewer = cloudUpdatedAt > localUpdatedTime;
+        } else {
+          // Fallback to Drive modifiedMs
+          isCloudNewer =
+            sc.modifiedMs > localSyncedAt && sc.modifiedMs > localUpdatedTime;
+        }
+
+        if (isCloudNewer) {
+          sidecarsToProcess.push({ sidecar: sc, isMissing: false });
+        } else if (localInfo.drive_synced_at == null) {
+          // If local entry is already in sync or newer, make sure drive_synced_at is recorded
+          await entriesDao.updateSyncStatus(
+            localInfo.id,
+            sc.id,
+            localInfo.drive_audio_file_id,
+            Math.max(Date.now(), sc.modifiedMs),
+          );
+        }
+      }
+    }
+
+    // Download and apply concurrently in batches of 5 to populate the timeline dynamically
     const BATCH_SIZE = 5;
-    for (let i = 0; i < missingSidecars.length; i += BATCH_SIZE) {
-      const batch = missingSidecars.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < sidecarsToProcess.length; i += BATCH_SIZE) {
+      const batch = sidecarsToProcess.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(async (sc) => {
+        batch.map(async ({ sidecar: sc, isMissing }) => {
           try {
             const fileContentUrl = `https://www.googleapis.com/drive/v3/files/${sc.id}?alt=media`;
             const contentRes = await fetch(fileContentUrl, {
@@ -998,21 +1123,50 @@ export class GoogleDriveService {
 
             if (contentRes.ok) {
               const entryJson: JournalEntry = await contentRes.json();
-              const localAudioPath = getEntryAudioPath(
-                entryJson.id,
-                entryJson.created_at,
-              );
-              const audioExists = new File(localAudioPath).exists;
+              const cloudTimestamp =
+                entryJson.updated_at ?? entryJson.created_at;
 
-              await entriesDao.insertEntry({
-                ...entryJson,
-                is_audio_cached: audioExists ? 1 : 0,
-                local_audio_path: audioExists ? localAudioPath : null,
-                drive_sidecar_file_id: sc.id,
-                drive_synced_at: Date.now(),
-                transcription_checkpoint: null,
-              });
-              return true;
+              if (isMissing) {
+                const localAudioPath = getEntryAudioPath(
+                  entryJson.id,
+                  entryJson.created_at,
+                );
+                const audioExists = isAudioFileValid(localAudioPath);
+
+                await entriesDao.insertEntry({
+                  ...entryJson,
+                  is_audio_cached: audioExists ? 1 : 0,
+                  local_audio_path: audioExists ? localAudioPath : null,
+                  drive_sidecar_file_id: sc.id,
+                  drive_synced_at: Math.max(Date.now(), sc.modifiedMs),
+                  transcription_checkpoint: null,
+                });
+                return true;
+              } else {
+                // Existing entry: verify cloud payload is actually newer than local
+                const localInfo = localEntriesMap.get(sc.entryId);
+                const localUpdatedTime = localInfo
+                  ? (localInfo.updated_at ?? localInfo.created_at)
+                  : 0;
+
+                if (cloudTimestamp > localUpdatedTime) {
+                  await entriesDao.applyCloudUpdate(
+                    entryJson,
+                    sc.id,
+                    Math.max(Date.now(), sc.modifiedMs),
+                  );
+                  return true;
+                } else if (cloudTimestamp === localUpdatedTime) {
+                  // Exactly identical; just update synced timestamp
+                  await entriesDao.updateSyncStatus(
+                    sc.entryId,
+                    sc.id,
+                    localInfo?.drive_audio_file_id ||
+                      entryJson.drive_audio_file_id,
+                    Math.max(Date.now(), sc.modifiedMs),
+                  );
+                }
+              }
             }
           } catch (err) {
             console.warn(`Download check failed for ${sc.entryId}:`, err);
@@ -1034,8 +1188,11 @@ export class GoogleDriveService {
   /**
    * Hydrates SQLite timeline from Google Drive (delegates to syncTwoWay).
    */
-  async syncTimelineFromDrive(): Promise<{ importedCount: number }> {
-    const { downloadedCount } = await this.syncTwoWay();
+  async syncTimelineFromDrive(options?: {
+    fullSync?: boolean;
+    maxEntries?: number;
+  }): Promise<{ importedCount: number }> {
+    const { downloadedCount } = await this.syncTwoWay(options);
     return { importedCount: downloadedCount };
   }
 

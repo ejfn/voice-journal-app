@@ -108,6 +108,8 @@ export class SmartSyncService {
   async sync(options?: {
     force?: boolean;
     reason?: string;
+    fullSync?: boolean;
+    maxEntries?: number;
   }): Promise<{ uploadedCount: number; downloadedCount: number }> {
     // Only sync if user is signed into Google Drive
     if (!googleDriveService.getCurrentUser()) {
@@ -138,6 +140,8 @@ export class SmartSyncService {
 
       // Run two-way sync (deletions, download missing, upload unsynced)
       const result = await googleDriveService.syncTwoWay({
+        fullSync: options?.fullSync,
+        maxEntries: options?.maxEntries,
         onProgress: (downloaded) => {
           this.notifyListeners({
             status: "syncing",

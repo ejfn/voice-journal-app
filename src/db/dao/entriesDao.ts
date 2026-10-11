@@ -7,7 +7,20 @@ import {
   TranscriptionStatus,
 } from "../schema";
 import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
+import { isAudioFileValid } from "../../utils/audioPersistence";
 import { deletedEntriesDao } from "./deletedEntriesDao";
+
+export interface EntrySyncInfo {
+  id: string;
+  created_at: number;
+  updated_at: number | null;
+  drive_synced_at: number | null;
+  deleted_at: number | null;
+  drive_sidecar_file_id: string | null;
+  drive_audio_file_id: string | null;
+  is_audio_cached: number;
+  local_audio_path: string | null;
+}
 
 export interface DayGroup {
   dayKey: string; // "2026-09-19"
@@ -630,6 +643,90 @@ export const entriesDao = {
       `SELECT id FROM entries;`,
     );
     return new Set(rows.map((r) => r.id));
+  },
+
+  async getEntrySyncInfoMap(): Promise<Map<string, EntrySyncInfo>> {
+    const db = getDatabase();
+    const rows = await db.getAllAsync<EntrySyncInfo>(
+      `SELECT id, created_at, updated_at, drive_synced_at, deleted_at,
+              drive_sidecar_file_id, drive_audio_file_id, is_audio_cached, local_audio_path
+       FROM entries;`,
+    );
+    const map = new Map<string, EntrySyncInfo>();
+    for (const row of rows) {
+      map.set(row.id, row);
+    }
+    return map;
+  },
+
+  async applyCloudUpdate(
+    cloudEntry: JournalEntry,
+    sidecarFileId: string,
+    cloudSyncedAt: number,
+  ): Promise<void> {
+    const db = getDatabase();
+    const existing = await this.getEntryById(cloudEntry.id);
+    if (!existing) return;
+
+    // Check if audio file exists locally on this device
+    const localAudioPath =
+      existing.local_audio_path ||
+      getEntryAudioPath(existing.id, existing.created_at);
+    const localAudioExists = isAudioFileValid(localAudioPath);
+
+    const tagsJson = JSON.stringify(
+      (Array.isArray(cloudEntry.tags) ? cloudEntry.tags : []).map((t) =>
+        t.toLowerCase().replace(/^#/, "").trim(),
+      ),
+    );
+    const sanitizedWaveform = cloudEntry.waveform_data
+      ? sanitizeWaveform(cloudEntry.waveform_data)
+      : existing.waveform_data
+        ? sanitizeWaveform(existing.waveform_data)
+        : undefined;
+    const waveformJson = sanitizedWaveform
+      ? JSON.stringify(sanitizedWaveform)
+      : null;
+
+    const audioFileId =
+      cloudEntry.drive_audio_file_id || existing.drive_audio_file_id || null;
+    const updatedAt =
+      cloudEntry.updated_at ?? existing.updated_at ?? cloudEntry.created_at;
+    const deletedAt =
+      cloudEntry.deleted_at !== undefined ? cloudEntry.deleted_at : null;
+    const transcriptionStatus =
+      cloudEntry.transcription_status ||
+      existing.transcription_status ||
+      "completed";
+
+    await db.runAsync(
+      `UPDATE entries SET
+        title = ?, summary = ?, transcript = ?, tags = ?, duration_sec = ?,
+        source_type = ?, local_audio_path = ?, drive_audio_file_id = ?,
+        drive_sidecar_file_id = ?, is_audio_cached = ?, updated_at = ?,
+        drive_synced_at = ?, last_accessed_at = ?, transcription_status = ?,
+        waveform_data = COALESCE(?, waveform_data), deleted_at = ?
+      WHERE id = ?`,
+      [
+        cloudEntry.title,
+        cloudEntry.summary || null,
+        cloudEntry.transcript,
+        tagsJson,
+        cloudEntry.duration_sec,
+        cloudEntry.source_type,
+        localAudioExists ? localAudioPath : null,
+        audioFileId,
+        sidecarFileId,
+        localAudioExists ? 1 : 0,
+        updatedAt,
+        cloudSyncedAt,
+        Date.now(),
+        transcriptionStatus,
+        waveformJson,
+        deletedAt,
+        cloudEntry.id,
+      ],
+    );
   },
 };
 
