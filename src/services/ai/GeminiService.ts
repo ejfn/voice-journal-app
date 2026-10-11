@@ -111,6 +111,8 @@ export function detectAudioMimeType(
   return "audio/mp4";
 }
 
+export const GEMINI_MODEL = "gemini-flash-lite-latest";
+
 export class GeminiService {
   private apiKey: string;
 
@@ -150,7 +152,7 @@ export class GeminiService {
       return { valid: false, error: "Gemini API key is not configured." };
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${key}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -193,7 +195,7 @@ export class GeminiService {
     parts: unknown[],
     responseSchema: Record<string, unknown>,
   ): Promise<T> {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${effectiveKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${effectiveKey}`;
 
     const requestBody = {
       contents: [

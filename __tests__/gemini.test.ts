@@ -46,7 +46,9 @@ describe("Gemini AI Service", () => {
     const result = await service.analyzeAudio("file:///test/path.m4a");
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.stringContaining(
+        "models/gemini-flash-lite-latest:generateContent",
+      ),
       expect.any(Object),
     );
     expect(result.title).toBe("Science poster prep");
@@ -138,7 +140,9 @@ describe("Gemini AI Service", () => {
     );
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.stringContaining(
+        "models/gemini-flash-lite-latest:generateContent",
+      ),
       expect.objectContaining({
         body: expect.stringContaining(
           "Preceding speech context from prior segment",
@@ -210,7 +214,9 @@ describe("Gemini AI Service", () => {
     );
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("models/gemini-3.5-flash-lite:generateContent"),
+      expect.stringContaining(
+        "models/gemini-flash-lite-latest:generateContent",
+      ),
       expect.objectContaining({
         body: expect.stringContaining("We started the meeting"),
       }),

@@ -18,7 +18,7 @@ This file provides guidance and constraints for coding agents working in this re
 
 - **Platform**: Android only (at this stage)
 - **Tagline**: _Speak your mind. AI captures the rest._
-- **Core Capabilities**: Custom native Android audio recording service with dynamic background notification controls, offline-first SQLite database with FTS5 search, background transcription with Gemini (`gemini-3.5-flash-lite`, BYOK), on-demand Google Drive synchronization with LRU caching, and Google Photos-style storage status badges.
+- **Core Capabilities**: Custom native Android audio recording service with dynamic background notification controls, offline-first SQLite database with FTS5 search, background transcription with Gemini (`gemini-flash-lite-latest`, BYOK), on-demand Google Drive synchronization with LRU caching, and Google Photos-style storage status badges.
 
 ## Documentation References
 
@@ -62,7 +62,7 @@ src/
 │   ├── database.ts      # SQLite connection initialization (expo-sqlite)
 │   └── schema.ts        # Table definitions, FTS5 virtual table, triggers, and migrations
 ├── services/            # Business logic & external services
-│   ├── ai/              # GeminiService (gemini-3.5-flash-lite) & TranscriptionQueueService
+│   ├── ai/              # GeminiService (gemini-flash-lite-latest) & TranscriptionQueueService
 │   ├── audio/           # AudioRecordingService, AudioPlaybackService (expo-audio)
 │   └── drive/           # GoogleDriveService, UploadQueueService, SmartSyncService
 ├── theme/               # Semantic color definitions and ThemeContext (Light/Dark/Auto)
@@ -95,7 +95,7 @@ src/
 
 ### 4. Background AI & Cloud Sync Queues
 
-- **Gemini Transcription**: Use `gemini-3.5-flash-lite` in `GeminiService.ts` for fast, cost-effective audio transcription and structured metadata extraction (title, summary, transcript, tags).
+- **Gemini Transcription**: Use `gemini-flash-lite-latest` in `GeminiService.ts` for fast, cost-effective audio transcription and structured metadata extraction (title, summary, transcript, tags).
 - **Background Transcription Queue**: On recording completion, entry is saved immediately with `transcription_status = 'queued'`. `TranscriptionQueueService` processes entries in the background with graduated exponential backoff.
 - **Dedicated Upload Queue**: `UploadQueueService` manages background uploads to Google Drive (`VoiceJournal/YYYY/MM/`).
 - **Storage Status**: Compute and display storage states on cards using `src/utils/storageStatus.ts`:

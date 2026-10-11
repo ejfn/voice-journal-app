@@ -31,7 +31,7 @@ The App requires access to your device's microphone to record voice journal entr
 
 If you choose to enable AI transcription, you must provide your own Google Gemini API key (Bring Your Own Key — BYOK). When enabled:
 
-- Your audio recordings are sent **directly from your device** to the [Google Gemini API](https://ai.google.dev/) (`gemini-3.5-flash-lite` model).
+- Your audio recordings are sent **directly from your device** to the [Google Gemini API](https://ai.google.dev/) (`gemini-flash-lite-latest` model).
 - Audio is **never** routed through or stored on any Voice Journal developer-controlled server.
 - Google processes the audio and returns structured text (title, transcript, summary, tags) back to your device.
 - Your API key and usage are governed by [Google's Privacy Policy](https://policies.google.com/privacy) and the [Google Gemini API Terms of Service](https://ai.google.dev/terms).
