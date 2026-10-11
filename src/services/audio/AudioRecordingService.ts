@@ -61,6 +61,7 @@ interface AudioRecorderInstance {
     listener: (event: {
       isFinished?: boolean;
       isPaused?: boolean;
+      durationMillis?: number;
       error?: string | null;
       url?: string | null;
     }) => void,
@@ -286,6 +287,7 @@ class AudioRecordingService {
   private handleRecordingStatusUpdate(status: {
     isFinished?: boolean;
     isPaused?: boolean;
+    durationMillis?: number;
     error?: string | null;
     url?: string | null;
   }) {
@@ -301,11 +303,14 @@ class AudioRecordingService {
 
     if (status.isFinished && !this.isStoppingInternally) {
       // Stopped externally from Android notification
-      return this.handleExternalStop(status.url || null);
+      return this.handleExternalStop(status.url || null, status.durationMillis);
     }
   }
 
-  private async handleExternalStop(url: string | null): Promise<void> {
+  private async handleExternalStop(
+    url: string | null,
+    reportedDurationMillis?: number,
+  ): Promise<void> {
     if (this.isStoppingInternally || this.stopPromise) return;
     this.isStoppingInternally = true;
 
@@ -316,13 +321,31 @@ class AudioRecordingService {
       this.isActionInProgress = false;
 
       const ctx = this.activeContext;
-      const finalDurationSec = Math.floor(this.durationMillis / 1000);
       const recordedTempUri =
         url ||
         ctx?.tempFilePath ||
         this.activeRecorder?.uri ||
         this.activeRecorder?.getURI?.() ||
         null;
+
+      let durationMs =
+        typeof reportedDurationMillis === "number" && reportedDurationMillis > 0
+          ? reportedDurationMillis
+          : this.durationMillis;
+
+      if (recordedTempUri && VoiceRecorder.isAvailable()) {
+        try {
+          const fileDurationMs =
+            await VoiceRecorder.getAudioDuration(recordedTempUri);
+          if (fileDurationMs > 0) {
+            durationMs = Math.max(durationMs, fileDurationMs);
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      const finalDurationSec = Math.floor(durationMs / 1000);
 
       const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
       const destinationUri =
@@ -435,6 +458,12 @@ class AudioRecordingService {
             try {
               const st = this.activeRecorder.getStatus();
               if (st) {
+                if (
+                  typeof st.durationMillis === "number" &&
+                  st.durationMillis > 0
+                ) {
+                  this.durationMillis = st.durationMillis;
+                }
                 if (st.isRecording === false && !this.isPaused) {
                   this.isPaused = true;
                   this.emitStatus();
@@ -624,8 +653,6 @@ class AudioRecordingService {
       this.removeAppStateListener();
       this.removeStatusSubscription();
       this.isActionInProgress = false;
-      const finalDurationSec = Math.floor(this.durationMillis / 1000);
-
       const ctx = this.activeContext;
       const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
       const destinationUri =
@@ -636,10 +663,21 @@ class AudioRecordingService {
         );
 
       let recordedTempUri: string | null = null;
+      let nativeDurationMs = 0;
       if (this.activeRecorder) {
         try {
           if (this.activeRecorder.stop) {
-            await this.activeRecorder.stop();
+            const stopRes = (await this.activeRecorder.stop()) as {
+              durationMillis?: number;
+              uri?: string;
+            };
+            if (
+              stopRes &&
+              typeof stopRes.durationMillis === "number" &&
+              stopRes.durationMillis > 0
+            ) {
+              nativeDurationMs = stopRes.durationMillis;
+            }
           }
           recordedTempUri =
             this.activeRecorder.uri ||
@@ -652,6 +690,21 @@ class AudioRecordingService {
       } else if (ctx?.tempFilePath) {
         recordedTempUri = ctx.tempFilePath;
       }
+
+      let durationMs = Math.max(this.durationMillis, nativeDurationMs);
+      if (recordedTempUri && VoiceRecorder.isAvailable()) {
+        try {
+          const fileDurationMs =
+            await VoiceRecorder.getAudioDuration(recordedTempUri);
+          if (fileDurationMs > 0) {
+            durationMs = Math.max(durationMs, fileDurationMs);
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      const finalDurationSec = Math.floor(durationMs / 1000);
 
       this.activeContext = null;
       const samples = [...this.recordedSamples];
@@ -818,6 +871,10 @@ class AudioRecordingService {
         if (res.uri) {
           currentUri = res.uri;
         }
+        if (typeof res.durationMillis === "number" && res.durationMillis > 0) {
+          latestDuration = res.durationMillis;
+        }
+        return res;
       },
       getStatus: () => ({
         isRecording: isCurrentlyRecording && !isCurrentlyPaused,
@@ -849,6 +906,7 @@ class AudioRecordingService {
           listener({
             isFinished: update.isFinished,
             isPaused: update.isPaused,
+            durationMillis: update.durationMillis,
             url: update.uri || currentUri,
             error: update.error,
           });

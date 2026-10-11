@@ -216,6 +216,41 @@ describe("Android Background Recording & Notification Controls", () => {
       // Clean up
       audioRecordingService.setOnExternalStop(null);
     });
+
+    it("preserves full duration when stopped from notification even if JS timer was frozen", async () => {
+      const externalStopMock = jest.fn();
+      audioRecordingService.setOnExternalStop(externalStopMock);
+
+      await audioRecordingService.startRecording("frozen-timer-id");
+
+      // Simulate JS timer being frozen at 2 seconds while phone was asleep
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 2000;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).activeRecorder = {
+        uri: "file:///mock-cache/Audio/recording-full.m4a",
+        stop: jest.fn(),
+      };
+
+      // Native notification stop event delivers actual hardware duration (e.g. 15 seconds)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (audioRecordingService as any).handleRecordingStatusUpdate({
+        isFinished: true,
+        durationMillis: 15000,
+        url: "file:///mock-cache/Audio/recording-full.m4a",
+      });
+
+      // Must use the real 15 seconds, NOT the frozen 2 seconds (which would have been discarded as <3s)
+      expect(externalStopMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entryId: "frozen-timer-id",
+          durationSec: 15,
+        }),
+      );
+
+      // Clean up
+      audioRecordingService.setOnExternalStop(null);
+    });
   });
 
   describe("VoiceRecorder Local Module Adapter (Android)", () => {
