@@ -95,11 +95,13 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
       val isRecording = service?.isRecording ?: false
       val isPaused = service?.isPaused ?: false
       val durationMillis = service?.getCurrentDurationMillis() ?: 0L
+      val currentFilePath = service?.getCurrentFilePath() ?: ""
 
       mapOf(
         "isRecording" to isRecording,
         "isPaused" to isPaused,
-        "durationMillis" to durationMillis
+        "durationMillis" to durationMillis,
+        "currentFilePath" to currentFilePath
       )
     }
 

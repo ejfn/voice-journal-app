@@ -31,7 +31,6 @@ import { initDatabase } from "./src/db/database";
 import { JournalEntry } from "./src/db/schema";
 import { geminiService } from "./src/services/ai/GeminiService";
 import { transcriptionQueueService } from "./src/services/ai/TranscriptionQueueService";
-import { audioImportService } from "./src/services/audio/AudioImportService";
 import { audioPlaybackService } from "./src/services/audio/AudioPlaybackService";
 import { audioRecordingService } from "./src/services/audio/AudioRecordingService";
 import { audioRecoveryService } from "./src/services/audio/AudioRecoveryService";
@@ -560,30 +559,6 @@ const MainScreen: React.FC = () => {
     }
   };
 
-  // Import Audio Files
-  const handleImportAudio = async () => {
-    try {
-      const imported = await audioImportService.importAudioFiles();
-      if (imported.length > 0) {
-        await loadData();
-        showToast({
-          message: `Imported ${imported.length} audio file(s) • Transcribing in background`,
-          icon: "check-circle",
-          type: "success",
-        });
-        transcriptionQueueService.processQueue().catch((err) => {
-          console.warn("Background import transcription error:", err);
-        });
-      }
-    } catch (err) {
-      showToast({
-        message: (err as Error).message || "Failed to import audio.",
-        icon: "error-outline",
-        type: "error",
-      });
-    }
-  };
-
   // Play / Pause entry audio
   const handlePlayClip = async (entry: JournalEntry) => {
     if (pendingDownloadRequestsRef.current.has(entry.id)) {
@@ -845,11 +820,8 @@ const MainScreen: React.FC = () => {
           }
         />
 
-        {/* Centered Microphone FAB with Hold-and-Slide Import Gesture */}
-        <RecordGestureFab
-          onStartRecording={handleStartRecording}
-          onImportAudio={handleImportAudio}
-        />
+        {/* Centered Microphone FAB */}
+        <RecordGestureFab onStartRecording={handleStartRecording} />
 
         {/* Active Recording Modal */}
         <RecordingModal

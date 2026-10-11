@@ -10,6 +10,7 @@ import {
   recoverAudioFromCache,
 } from "../../utils/audioPersistence";
 import { isValidUUID } from "../../utils/uuid";
+import { audioRecordingService } from "./AudioRecordingService";
 
 /**
  * Recursively collects all audio files (.m4a, .tmp) within a given directory URI.
@@ -77,6 +78,9 @@ export class AudioRecoveryService {
   async scanAndRecoverOrphanedAudioFiles(): Promise<number> {
     let recoveredCount = 0;
 
+    const activeRecordingPath = audioRecordingService.getActiveRecordingPath();
+    const isServiceRecording = audioRecordingService.isRecording();
+
     const baseDocumentDir = Paths.document?.uri
       ? `${Paths.document.uri.replace(/\/+$/, "")}/audio/`
       : "";
@@ -97,6 +101,14 @@ export class AudioRecoveryService {
     const uniqueFiles = Array.from(new Set(candidateUris));
 
     for (const fileUri of uniqueFiles) {
+      if (
+        activeRecordingPath &&
+        (fileUri === activeRecordingPath ||
+          fileUri.endsWith(activeRecordingPath.replace(/^file:\/\//, "")))
+      ) {
+        continue;
+      }
+
       // Exclude chunk paths and chunk filenames
       if (fileUri.includes("/chunks_") || fileUri.includes("/chunk_")) {
         continue;
@@ -123,9 +135,16 @@ export class AudioRecoveryService {
       }
 
       // Restrict recovery strictly to valid journal entry UUIDs.
-      // This prevents unrelated cache files (e.g. from AudioImportService or third-party pickers)
+      // This prevents unrelated cache files or third-party temp files
       // from being imported as phantom JournalEntry records.
       if (!entryId || !isValidUUID(entryId)) {
+        continue;
+      }
+
+      if (
+        isServiceRecording &&
+        entryId === audioRecordingService.getCurrentEntryId()
+      ) {
         continue;
       }
 
@@ -207,12 +226,29 @@ export class AudioRecoveryService {
         // Existing entry: heal if local audio is missing
         if (!isAudioFileValid(existing.local_audio_path)) {
           try {
-            const recovered = await recoverAudioFromCache(
-              existing.id,
-              existing.created_at,
-            );
-            if (recovered) {
-              await entriesDao.setAudioCached(existing.id, true, recovered);
+            let healedPath: string | null = null;
+            if (isAudioFileValid(fileUri)) {
+              const canonical = getEntryAudioPath(
+                existing.id,
+                existing.created_at,
+              );
+              const persistResult = await persistAudioFile(fileUri, canonical);
+              if (isAudioFileValid(persistResult.uri)) {
+                await entriesDao.setAudioCached(existing.id, true, canonical);
+                healedPath = canonical;
+              }
+            } else {
+              const recovered = await recoverAudioFromCache(
+                existing.id,
+                existing.created_at,
+              );
+              if (recovered) {
+                await entriesDao.setAudioCached(existing.id, true, recovered);
+                healedPath = recovered;
+              }
+            }
+
+            if (healedPath) {
               if (!existing.drive_audio_file_id) {
                 await uploadQueueService.addToQueue(
                   existing.id,

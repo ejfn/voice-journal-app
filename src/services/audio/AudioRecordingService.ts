@@ -86,6 +86,7 @@ class AudioRecordingService {
   private isPaused: boolean = false;
   private isActionInProgress: boolean = false;
   private isStoppingInternally: boolean = false;
+  private stopPromise: Promise<unknown> | null = null;
   private appStateSubscription: NativeEventSubscription | null = null;
   private currentEntryId: string | null = null;
   private currentTimestamp: number = 0;
@@ -125,10 +126,41 @@ class AudioRecordingService {
     }
   }
 
+  getActiveRecordingPath(): string | null {
+    if (this.activeContext?.tempFilePath) {
+      return this.activeContext.tempFilePath;
+    }
+    if (Platform.OS === "android" && VoiceRecorder.isAvailable()) {
+      return VoiceRecorder.getStatus()?.currentFilePath || null;
+    }
+    return null;
+  }
+
+  getCurrentEntryId(): string | null {
+    return this.activeContext?.entryId || this.currentEntryId || null;
+  }
+
+  isRecording(): boolean {
+    return (
+      this.activeRecorder !== null ||
+      (Platform.OS === "android" &&
+        VoiceRecorder.isAvailable() &&
+        Boolean(VoiceRecorder.getStatus()?.isRecording))
+    );
+  }
+
   async startRecording(
     entryId: string,
     onStatusUpdate?: RecordingStatusCallback,
   ): Promise<void> {
+    if (this.stopPromise) {
+      try {
+        await this.stopPromise;
+      } catch {
+        // Non-fatal if previous stop failed
+      }
+    }
+
     // If a previous recording is active or in-flight, cancel/finalize it to avoid state races
     if (this.activeRecorder) {
       try {
@@ -273,105 +305,119 @@ class AudioRecordingService {
     }
   }
 
-  private async handleExternalStop(url: string | null) {
-    if (this.isStoppingInternally) return;
+  private async handleExternalStop(url: string | null): Promise<void> {
+    if (this.isStoppingInternally || this.stopPromise) return;
     this.isStoppingInternally = true;
-    this.stopStatusTimer();
-    this.removeAppStateListener();
-    this.removeStatusSubscription();
-    this.isActionInProgress = false;
 
-    const ctx = this.activeContext;
-    const finalDurationSec = Math.floor(this.durationMillis / 1000);
-    const recordedTempUri =
-      url ||
-      ctx?.tempFilePath ||
-      this.activeRecorder?.uri ||
-      this.activeRecorder?.getURI?.() ||
-      null;
+    const stopWork = async () => {
+      this.stopStatusTimer();
+      this.removeAppStateListener();
+      this.removeStatusSubscription();
+      this.isActionInProgress = false;
 
-    const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
-    const destinationUri =
-      ctx?.destinationUri ||
-      getEntryAudioPath(
-        entryId,
-        ctx?.timestamp || this.currentTimestamp || Date.now(),
-      );
-    const samples = [...this.recordedSamples];
-    const externalCallback = this.externalStopCallback;
+      const ctx = this.activeContext;
+      const finalDurationSec = Math.floor(this.durationMillis / 1000);
+      const recordedTempUri =
+        url ||
+        ctx?.tempFilePath ||
+        this.activeRecorder?.uri ||
+        this.activeRecorder?.getURI?.() ||
+        null;
 
-    // Immediately detach hardware recorder and reset instance fields to IDLE
-    // so any subsequent startRecording operates with a clean slate without races
-    this.activeRecorder = null;
-    this.statusCallback = null;
-    this.currentEntryId = null;
-    this.recordedSamples = [];
-    this.activeContext = null;
-    this.isStoppingInternally = false;
-    this.isPaused = false;
-    this.durationMillis = 0;
+      const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
+      const destinationUri =
+        ctx?.destinationUri ||
+        getEntryAudioPath(
+          entryId,
+          ctx?.timestamp || this.currentTimestamp || Date.now(),
+        );
+      const samples = [...this.recordedSamples];
+      const externalCallback = this.externalStopCallback;
 
-    try {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        allowsBackgroundRecording: false,
-      });
-    } catch {
-      // Ignore
-    }
+      // Immediately detach hardware recorder and reset instance fields to IDLE
+      // so any subsequent startRecording operates with a clean slate without races
+      this.activeRecorder = null;
+      this.statusCallback = null;
+      this.currentEntryId = null;
+      this.recordedSamples = [];
+      this.activeContext = null;
+      this.isStoppingInternally = false;
+      this.isPaused = false;
+      this.durationMillis = 0;
 
-    if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          allowsBackgroundRecording: false,
+        });
+      } catch {
+        // Ignore
+      }
+
+      if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
+        if (recordedTempUri) {
+          try {
+            const tempFile = new File(recordedTempUri);
+            if (tempFile.exists) {
+              tempFile.delete();
+            }
+          } catch {
+            // Ignore temp cleanup errors
+          }
+        }
+
+        if (externalCallback) {
+          await externalCallback({
+            entryId,
+            localUri: "",
+            durationSec: finalDurationSec,
+          });
+        }
+        return;
+      }
+
+      let finalUri = "";
       if (recordedTempUri) {
         try {
-          const tempFile = new File(recordedTempUri);
-          if (tempFile.exists) {
-            tempFile.delete();
-          }
-        } catch {
-          // Ignore temp cleanup errors
+          const persistResult = await persistAudioFile(
+            recordedTempUri,
+            destinationUri,
+          );
+          finalUri = persistResult.uri;
+        } catch (persistErr) {
+          console.error(
+            "Failed to persist recorded audio on external stop:",
+            persistErr,
+          );
         }
       }
+
+      const waveformData =
+        samples.length > 0
+          ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
+          : undefined;
 
       if (externalCallback) {
         await externalCallback({
           entryId,
-          localUri: "",
+          localUri: finalUri,
           durationSec: finalDurationSec,
+          waveformData,
         });
       }
-      return;
-    }
+    };
 
-    let finalUri = "";
-    if (recordedTempUri) {
+    const promise = (async () => {
       try {
-        const persistResult = await persistAudioFile(
-          recordedTempUri,
-          destinationUri,
-        );
-        finalUri = persistResult.uri;
-      } catch (persistErr) {
-        console.error(
-          "Failed to persist recorded audio on external stop:",
-          persistErr,
-        );
+        await stopWork();
+      } finally {
+        this.stopPromise = null;
       }
-    }
+    })();
 
-    const waveformData =
-      samples.length > 0
-        ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
-        : undefined;
-
-    if (externalCallback) {
-      await externalCallback({
-        entryId,
-        localUri: finalUri,
-        durationSec: finalDurationSec,
-        waveformData,
-      });
-    }
+    this.stopPromise = promise;
+    return await promise;
   }
 
   private setupAppStateListener() {
@@ -557,103 +603,128 @@ class AudioRecordingService {
     durationSec: number;
     waveformData?: number[];
   }> {
-    this.isStoppingInternally = true;
-    this.stopStatusTimer();
-    this.removeAppStateListener();
-    this.removeStatusSubscription();
-    this.isActionInProgress = false;
-    const finalDurationSec = Math.floor(this.durationMillis / 1000);
-
-    const ctx = this.activeContext;
-    const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
-    const destinationUri =
-      ctx?.destinationUri ||
-      getEntryAudioPath(
-        entryId,
-        ctx?.timestamp || this.currentTimestamp || Date.now(),
-      );
-
-    let recordedTempUri: string | null = null;
-    if (this.activeRecorder) {
-      try {
-        if (this.activeRecorder.stop) {
-          await this.activeRecorder.stop();
-        }
-        recordedTempUri =
-          this.activeRecorder.uri ||
-          this.activeRecorder.getURI?.() ||
-          ctx?.tempFilePath ||
-          null;
-      } catch (err) {
-        console.warn("Error stopping audio recorder:", err);
-      }
-    } else if (ctx?.tempFilePath) {
-      recordedTempUri = ctx.tempFilePath;
-    }
-
-    this.activeContext = null;
-    const samples = [...this.recordedSamples];
-
-    // Immediately detach hardware recorder and reset instance fields to IDLE
-    // so any subsequent startRecording operates with a clean slate without races
-    this.activeRecorder = null;
-    this.statusCallback = null;
-    this.currentEntryId = null;
-    this.recordedSamples = [];
-    this.isStoppingInternally = false;
-    this.isPaused = false;
-    this.durationMillis = 0;
-
-    try {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        allowsBackgroundRecording: false,
-      });
-    } catch {
-      // Ignore
-    }
-
-    // Recordings shorter than MIN_RECORDING_DURATION_SEC will not be saved
-    if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
-      if (recordedTempUri) {
-        try {
-          const tempFile = new File(recordedTempUri);
-          if (tempFile.exists) {
-            tempFile.delete();
-          }
-        } catch {
-          // Ignore temp cleanup errors
-        }
-      }
-
-      return {
-        localUri: "",
-        durationSec: finalDurationSec,
+    if (this.stopPromise) {
+      return (await this.stopPromise) as {
+        localUri: string;
+        durationSec: number;
+        waveformData?: number[];
       };
     }
 
-    if (!recordedTempUri) {
-      throw new Error(
-        "Audio recording failed: no recorded audio data was captured. Your device storage may be full.",
+    const stopWork = async (): Promise<{
+      localUri: string;
+      durationSec: number;
+      waveformData?: number[];
+    }> => {
+      this.isStoppingInternally = true;
+      this.stopStatusTimer();
+      this.removeAppStateListener();
+      this.removeStatusSubscription();
+      this.isActionInProgress = false;
+      const finalDurationSec = Math.floor(this.durationMillis / 1000);
+
+      const ctx = this.activeContext;
+      const entryId = ctx?.entryId || this.currentEntryId || generateUUID();
+      const destinationUri =
+        ctx?.destinationUri ||
+        getEntryAudioPath(
+          entryId,
+          ctx?.timestamp || this.currentTimestamp || Date.now(),
+        );
+
+      let recordedTempUri: string | null = null;
+      if (this.activeRecorder) {
+        try {
+          if (this.activeRecorder.stop) {
+            await this.activeRecorder.stop();
+          }
+          recordedTempUri =
+            this.activeRecorder.uri ||
+            this.activeRecorder.getURI?.() ||
+            ctx?.tempFilePath ||
+            null;
+        } catch (err) {
+          console.warn("Error stopping audio recorder:", err);
+        }
+      } else if (ctx?.tempFilePath) {
+        recordedTempUri = ctx.tempFilePath;
+      }
+
+      this.activeContext = null;
+      const samples = [...this.recordedSamples];
+
+      // Immediately detach hardware recorder and reset instance fields to IDLE
+      // so any subsequent startRecording operates with a clean slate without races
+      this.activeRecorder = null;
+      this.statusCallback = null;
+      this.currentEntryId = null;
+      this.recordedSamples = [];
+      this.isStoppingInternally = false;
+      this.isPaused = false;
+      this.durationMillis = 0;
+
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          allowsBackgroundRecording: false,
+        });
+      } catch {
+        // Ignore
+      }
+
+      // Recordings shorter than MIN_RECORDING_DURATION_SEC will not be saved
+      if (finalDurationSec < MIN_RECORDING_DURATION_SEC) {
+        if (recordedTempUri) {
+          try {
+            const tempFile = new File(recordedTempUri);
+            if (tempFile.exists) {
+              tempFile.delete();
+            }
+          } catch {
+            // Ignore temp cleanup errors
+          }
+        }
+
+        return {
+          localUri: "",
+          durationSec: finalDurationSec,
+        };
+      }
+
+      if (!recordedTempUri) {
+        throw new Error(
+          "Audio recording failed: no recorded audio data was captured. Your device storage may be full.",
+        );
+      }
+
+      const persistResult = await persistAudioFile(
+        recordedTempUri,
+        destinationUri,
       );
-    }
 
-    const persistResult = await persistAudioFile(
-      recordedTempUri,
-      destinationUri,
-    );
+      const waveformData =
+        samples.length > 0
+          ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
+          : undefined;
 
-    const waveformData =
-      samples.length > 0
-        ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
-        : undefined;
-
-    return {
-      localUri: persistResult.uri,
-      durationSec: finalDurationSec,
-      waveformData,
+      return {
+        localUri: persistResult.uri,
+        durationSec: finalDurationSec,
+        waveformData,
+      };
     };
+
+    const promise = (async () => {
+      try {
+        return await stopWork();
+      } finally {
+        this.stopPromise = null;
+      }
+    })();
+
+    this.stopPromise = promise;
+    return await promise;
   }
 
   async cancelRecording(): Promise<void> {

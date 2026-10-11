@@ -338,6 +338,9 @@ class VoiceRecordingService : Service() {
     }
   }
 
+  fun getCurrentFilePath(): String? = currentFilePath
+
+
   private fun startStatusTicker() {
     stopStatusTicker()
     statusRunnable = object : Runnable {

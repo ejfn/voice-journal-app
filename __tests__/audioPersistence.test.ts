@@ -17,6 +17,8 @@ import { deletedEntriesDao } from "../src/db/dao/deletedEntriesDao";
 import { JournalEntry } from "../src/db/schema";
 import { transcriptionQueueService } from "../src/services/ai/TranscriptionQueueService";
 import { uploadQueueService } from "../src/services/drive/UploadQueueService";
+import { Platform } from "react-native";
+import { VoiceRecorder } from "voice-recorder";
 
 describe("Audio Persistence & Storage Resilience", () => {
   beforeEach(() => {
@@ -1002,6 +1004,210 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(res2.localUri).toBeTruthy();
       expect(res2.durationSec).toBe(5);
       expect(res2.localUri).toContain(entryId2);
+    });
+
+    it("provides accurate state helper methods (getActiveRecordingPath, getCurrentEntryId, isRecording)", async () => {
+      const entryId = "entry-state-helpers-1";
+      expect(audioRecordingService.getActiveRecordingPath()).toBeNull();
+      expect(audioRecordingService.getCurrentEntryId()).toBeNull();
+      expect(audioRecordingService.isRecording()).toBe(false);
+
+      await audioRecordingService.startRecording(entryId);
+
+      expect(audioRecordingService.getCurrentEntryId()).toBe(entryId);
+      expect(audioRecordingService.getActiveRecordingPath()).toContain(entryId);
+      expect(audioRecordingService.isRecording()).toBe(true);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).durationMillis = 4000;
+      await audioRecordingService.stopRecording();
+
+      expect(audioRecordingService.getActiveRecordingPath()).toBeNull();
+      expect(audioRecordingService.getCurrentEntryId()).toBeNull();
+      expect(audioRecordingService.isRecording()).toBe(false);
+    });
+
+    it("evaluates Android VoiceRecorder fallback in state helper methods when recorder is idle", () => {
+      const originalOS = Platform.OS;
+      Object.defineProperty(Platform, "OS", {
+        value: "android",
+        configurable: true,
+      });
+
+      const isAvailSpy = jest
+        .spyOn(VoiceRecorder, "isAvailable")
+        .mockReturnValue(true);
+      const getStatusSpy = jest
+        .spyOn(VoiceRecorder, "getStatus")
+        .mockReturnValue({
+          isRecording: true,
+          isPaused: false,
+          durationMillis: 1000,
+          currentFilePath: "file:///android/path/recording.m4a",
+        });
+
+      expect(audioRecordingService.getActiveRecordingPath()).toBe(
+        "file:///android/path/recording.m4a",
+      );
+      expect(audioRecordingService.isRecording()).toBe(true);
+
+      isAvailSpy.mockRestore();
+      getStatusSpy.mockRestore();
+      Object.defineProperty(Platform, "OS", {
+        value: originalOS,
+        configurable: true,
+      });
+    });
+
+    it("serializes in-flight stops so startRecording awaits ongoing stop completion", async () => {
+      const entryId2 = "entry-stop-serialize-2";
+
+      let resolveSlowStop!: () => void;
+      const slowStopPromise = new Promise<void>((resolve) => {
+        resolveSlowStop = resolve;
+      });
+
+      // Inject a stopPromise representing in-flight stop/persistence
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (audioRecordingService as any).stopPromise = slowStopPromise;
+
+      let startCompleted = false;
+      const startPromise = audioRecordingService
+        .startRecording(entryId2)
+        .then(() => {
+          startCompleted = true;
+        });
+
+      // While stopPromise is in-flight, startRecording must be waiting
+      expect(startCompleted).toBe(false);
+
+      // Resolve stopPromise
+      resolveSlowStop();
+      await startPromise;
+
+      expect(startCompleted).toBe(true);
+      expect(audioRecordingService.getCurrentEntryId()).toBe(entryId2);
+
+      await audioRecordingService.cancelRecording();
+    });
+
+    it("AudioRecoveryService skips active recording files and active entries", async () => {
+      const activeId = "44444444-4444-4444-8444-444444444444";
+      await audioRecordingService.startRecording(activeId);
+
+      const activeTempPath = audioRecordingService.getActiveRecordingPath();
+      expect(activeTempPath).toBeTruthy();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([activeTempPath!]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation(() => [activeTempPath!]);
+
+      // Should skip active recording and recover 0
+      const recovered =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recovered).toBe(0);
+
+      await audioRecordingService.cancelRecording();
+    });
+
+    it("AudioRecoveryService heals existing entry missing local audio by directly persisting valid fileUri", async () => {
+      const entryId = "55555555-5555-4555-8555-555555555555";
+      const t0 = 1758290000000;
+      const canonical = getEntryAudioPath(entryId, t0);
+      const tempUri = `file:///mock/cache/recording_${entryId}.m4a`;
+
+      // Existing entry in SQLite with non-existent local_audio_path
+      const entry: JournalEntry = {
+        id: entryId,
+        title: "Existing Entry Missing Audio",
+        summary: "Summary",
+        transcript: "",
+        tags: ["voice"],
+        duration_sec: 20,
+        source_type: "recorded",
+        local_audio_path: canonical,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 0,
+        created_at: t0,
+        updated_at: t0,
+        last_accessed_at: t0,
+        transcription_status: "failed",
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      // canonical does NOT exist, but tempUri DOES exist and is valid
+      MockFile.existingFiles = new Set([tempUri]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation(() => [tempUri]);
+
+      const count =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(count).toBe(1);
+
+      const updated = await entriesDao.getEntryById(entryId);
+      expect(updated).not.toBeNull();
+      expect(updated!.is_audio_cached).toBe(1);
+      expect(updated!.local_audio_path).toBe(canonical);
+      expect(updated!.transcription_status).toBe("queued"); // retry reset
+    });
+
+    it("AudioRecoveryService falls back to recoverAudioFromCache when fileUri is invalid for existing entry", async () => {
+      const entryId = "66666666-6666-4666-8666-666666666666";
+      const t0 = 1758290000000;
+      const canonical = getEntryAudioPath(entryId, t0);
+      const invalidTempUri = `file:///mock/cache/recording_${entryId}.m4a`;
+      const cacheDir = Paths.cache?.uri
+        ? Paths.cache.uri.replace(/\/+$/, "")
+        : "file:///mock/cache";
+      const fallbackCacheUri = `${cacheDir}/${entryId}.m4a`;
+
+      const entry: JournalEntry = {
+        id: entryId,
+        title: "Existing Entry Fallback",
+        summary: "Summary",
+        transcript: "",
+        tags: ["voice"],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: canonical,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 0,
+        created_at: t0,
+        updated_at: t0,
+        last_accessed_at: t0,
+        transcription_status: "queued",
+      };
+      await entriesDao.insertEntry(entry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([invalidTempUri, fallbackCacheUri]);
+      MockFile.fileSizes = new Map([
+        [invalidTempUri, 0], // 0-byte invalid fileUri
+        [fallbackCacheUri, 2048], // valid fallback in cache
+      ]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation(() => [invalidTempUri]);
+
+      const count =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(count).toBe(1);
+
+      const updated = await entriesDao.getEntryById(entryId);
+      expect(updated).not.toBeNull();
+      expect(updated!.is_audio_cached).toBe(1);
     });
   });
 });
