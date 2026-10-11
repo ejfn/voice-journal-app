@@ -245,25 +245,26 @@ const MainScreen: React.FC = () => {
   // Startup lifecycle: run strictly once on app mount
   useEffect(() => {
     initDatabase()
-      .then(() => {
+      .then(async () => {
         isDbReadyRef.current = true;
-        loadData();
+
+        // 1. Run recovery scan before starting queues so recovered entries are indexed in SQLite
+        // and immediately picked up for transcription and backup without dropped triggers
+        try {
+          await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+        } catch (err) {
+          console.warn("Startup audio recovery error:", err);
+        }
+
+        // 2. Load timeline entries and kick off queues
+        await loadData();
         transcriptionQueueService.processQueue().catch((err) => {
           console.warn("Transcription queue startup error:", err);
         });
+        uploadQueueService.processQueue().catch((err) => {
+          console.warn("Upload queue startup error:", err);
+        });
         smartSyncService.startAutoSync();
-
-        // Background scan to recover any interrupted recordings stranded across all audio subfolders or OS cache
-        audioRecoveryService
-          .scanAndRecoverOrphanedAudioFiles()
-          .then((count) => {
-            if (count > 0) {
-              loadData();
-            }
-          })
-          .catch((err) => {
-            console.warn("Startup audio recovery error:", err);
-          });
 
         // Check for APK updates strictly on app start (Android only)
         if (Platform.OS === "android") {

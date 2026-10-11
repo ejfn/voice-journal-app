@@ -83,20 +83,26 @@ export async function persistAudioFile(
   }
 
   const sourceFile = new File(sourceUri);
+  const targetFile = new File(destinationUri);
+
+  // If source file is missing or 0 bytes, check if a concurrent recovery already moved it to destination
   if (!isAudioFileValid(sourceUri)) {
+    if (isAudioFileValid(destinationUri)) {
+      return { uri: destinationUri, method: "in-place" };
+    }
     throw new Error(
       "Recorded audio file is missing or empty. Please check available device storage.",
     );
   }
 
   await ensureAudioDirectoryExists(destinationUri);
-  const targetFile = new File(destinationUri);
   let persisted = false;
   let method: PersistResult["method"] = "copied";
 
   // 2. Try atomic move first (instantaneous rename in the same directory, 0 extra disk bytes)
   try {
-    if (targetFile.exists) {
+    // If target exists but is invalid (e.g. 0-byte corrupt file from previous crash), remove it
+    if (targetFile.exists && !isAudioFileValid(destinationUri)) {
       try {
         targetFile.delete();
       } catch {
@@ -109,37 +115,68 @@ export async function persistAudioFile(
       method = "moved";
     }
   } catch (moveErr) {
-    console.warn(
-      "Direct audio move failed, attempting copy fallback:",
-      moveErr,
-    );
+    // If move failed because destination was populated concurrently by another recovery task:
+    if (isAudioFileValid(destinationUri)) {
+      persisted = true;
+      method = "in-place";
+      try {
+        if (sourceFile.exists) sourceFile.delete();
+      } catch {
+        // Non-fatal
+      }
+    } else {
+      console.warn(
+        "Direct audio move failed, attempting copy fallback:",
+        moveErr,
+      );
+    }
   }
 
   // 3. Fallback to copy with overwrite (e.g. cross-partition EXDEV)
   if (!persisted) {
-    try {
-      if (targetFile.exists) {
-        try {
-          targetFile.delete();
-        } catch {
-          // Non-fatal
-        }
+    if (isAudioFileValid(destinationUri)) {
+      persisted = true;
+      method = "in-place";
+      try {
+        if (sourceFile.exists) sourceFile.delete();
+      } catch {
+        // Non-fatal
       }
-      await sourceFile.copy(targetFile);
-      if (isAudioFileValid(destinationUri)) {
-        persisted = true;
-        method = "copied";
-        // Clean up source file
-        try {
-          if (sourceFile.exists) {
-            sourceFile.delete();
+    } else {
+      try {
+        if (targetFile.exists && !isAudioFileValid(destinationUri)) {
+          try {
+            targetFile.delete();
+          } catch {
+            // Non-fatal
           }
-        } catch {
-          // Non-fatal
+        }
+        await sourceFile.copy(targetFile);
+        if (isAudioFileValid(destinationUri)) {
+          persisted = true;
+          method = "copied";
+          // Clean up source file
+          try {
+            if (sourceFile.exists) {
+              sourceFile.delete();
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+      } catch (copyErr) {
+        if (isAudioFileValid(destinationUri)) {
+          persisted = true;
+          method = "in-place";
+          try {
+            if (sourceFile.exists) sourceFile.delete();
+          } catch {
+            // Non-fatal
+          }
+        } else {
+          console.warn("Audio copy fallback failed:", copyErr);
         }
       }
-    } catch (copyErr) {
-      console.warn("Audio copy fallback failed:", copyErr);
     }
   }
 

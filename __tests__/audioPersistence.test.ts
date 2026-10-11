@@ -125,12 +125,30 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(MockFile.mockMove).toHaveBeenCalled();
     });
 
-    it("deletes existing destination file before move to ensure clean overwrite", async () => {
+    it("preserves valid destination file and does not delete it when concurrent recovery already created it", async () => {
+      const src = "file:///tmp/recording.m4a";
+      const dest = "file:///dest/entry.m4a";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      // Simulate concurrent recovery: another worker already moved source to destination
+      MockFile.existingFiles = new Set([dest]);
+      MockFile.fileSizes = new Map([[dest, 1024]]);
+
+      const result = await persistAudioFile(src, dest);
+      expect(result).toEqual({ uri: dest, method: "in-place" });
+      expect(MockFile.mockDelete).not.toHaveBeenCalledWith(dest);
+    });
+
+    it("deletes existing corrupt 0-byte destination file before move", async () => {
       const src = "file:///tmp/recording.m4a";
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
       MockFile.existingFiles = new Set([src, dest]);
+      MockFile.fileSizes = new Map([
+        [src, 1024],
+        [dest, 0],
+      ]);
 
       const result = await persistAudioFile(src, dest);
       expect(result).toEqual({ uri: dest, method: "moved" });
@@ -142,6 +160,7 @@ describe("Audio Persistence & Storage Resilience", () => {
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
+      MockFile.existingFiles = new Set([src]);
 
       MockFile.mockMove.mockImplementationOnce(() => {
         throw new Error("EXDEV: cross-device link");
@@ -158,6 +177,7 @@ describe("Audio Persistence & Storage Resilience", () => {
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
+      MockFile.existingFiles = new Set([src]);
 
       MockFile.mockCopy.mockImplementationOnce(() => {
         throw new Error("Disk full");
@@ -175,6 +195,7 @@ describe("Audio Persistence & Storage Resilience", () => {
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
+      MockFile.existingFiles = new Set([src]);
 
       MockFile.mockCopy.mockImplementationOnce(() => {
         throw new Error("Disk full");
@@ -545,9 +566,9 @@ describe("Audio Persistence & Storage Resilience", () => {
     });
 
     it("recovers orphaned recordings across older month subdirectories and cache", async () => {
-      const orphanJan = "orphan-jan-entry";
-      const orphanNov = "orphan-nov-entry";
-      const orphanCache = "orphan-cache-entry";
+      const orphanJan = "11111111-1111-4111-8111-111111111111";
+      const orphanNov = "22222222-2222-4222-8222-222222222222";
+      const orphanCache = "33333333-3333-4333-8333-333333333333";
 
       const janFile = `file:///mock/document/audio/2026/01/recording_${orphanJan}.m4a`;
       const novFile = `file:///mock/document/audio/2025/11/recording_${orphanNov}.m4a`;
@@ -606,6 +627,35 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(cacheEntry?.tags).toContain("recovered");
     });
 
+    it("ignores non-UUID cache audio files such as picker imports (Finding 1)", async () => {
+      const cacheDir = Paths.cache?.uri
+        ? Paths.cache.uri.replace(/\/+$/, "")
+        : "file:///mock/cache";
+      const voiceFile = `${cacheDir}/voice.m4a`;
+      const pickerFile = `${cacheDir}/picker_asset_123.m4a`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([voiceFile, pickerFile]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/cache") {
+          return [new File(voiceFile), new File(pickerFile)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(0);
+
+      const voiceEntry = await entriesDao.getEntryById("voice");
+      expect(voiceEntry).toBeNull();
+    });
+
     it("excludes transcription chunk scratch directories and chunk files during recovery (Finding 1)", async () => {
       const chunkDir = "file:///mock/cache/chunks_entry-123";
       const chunkFile = "file:///mock/cache/chunks_entry-123/chunk_0_12345.m4a";
@@ -639,7 +689,7 @@ describe("Audio Persistence & Storage Resilience", () => {
     });
 
     it("skips tombstoned recordings in deleted_entries table and cleans up abandoned file (Finding 2)", async () => {
-      const tombstonedId = "tombstoned-entry-id";
+      const tombstonedId = "44444444-4444-4444-8444-444444444444";
       const fileUri = `file:///mock/document/audio/2026/01/recording_${tombstonedId}.m4a`;
 
       // Record tombstone deletion in DB
@@ -670,6 +720,120 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(entry).toBeNull();
       // Should delete the abandoned file
       expect(MockFile.mockDelete).toHaveBeenCalledWith(fileUri);
+    });
+
+    it("infers historical timestamp from year/month directory path for stranded recordings", async () => {
+      const historicalId = "55555555-5555-5555-8555-555555555555";
+      const fileUri = `file:///mock/document/audio/2025/11/recording_${historicalId}.m4a`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([fileUri]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [new Directory("file:///mock/document/audio/2025/11/")];
+        }
+        if (normalized === "file:///mock/document/audio/2025/11") {
+          return [new File(fileUri)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(1);
+
+      const entry = await entriesDao.getEntryById(historicalId);
+      expect(entry).not.toBeNull();
+      const recDate = new Date(entry!.created_at);
+      expect(recDate.getFullYear()).toBe(2025);
+      expect(recDate.getMonth()).toBe(10); // 10 is 0-indexed November
+      expect(entry!.local_audio_path).toContain("/audio/2025/11/");
+    });
+
+    it("cleans up 0-byte corrupt abandoned orphaned files with no DB record", async () => {
+      const corruptId = "66666666-6666-6666-8666-666666666666";
+      const fileUri = `file:///mock/document/audio/2026/01/recording_${corruptId}.m4a`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([fileUri]);
+      MockFile.fileSizes = new Map([[fileUri, 0]]); // 0 bytes
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [new Directory("file:///mock/document/audio/2026/01/")];
+        }
+        if (normalized === "file:///mock/document/audio/2026/01") {
+          return [new File(fileUri)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(0);
+
+      const entry = await entriesDao.getEntryById(corruptId);
+      expect(entry).toBeNull();
+      expect(MockFile.mockDelete).toHaveBeenCalledWith(fileUri);
+    });
+
+    it("promotes existing entry fallback temp path to canonical path", async () => {
+      const entryId = "77777777-7777-7777-8777-777777777777";
+      const now = new Date(2026, 0, 15).getTime();
+      const tempPath = `file:///mock/document/audio/2026/01/recording_${entryId}.m4a`;
+      const canonicalPath = `file:///mock/document/audio/2026/01/${entryId}.m4a`;
+
+      const existingEntry: JournalEntry = {
+        id: entryId,
+        title: "Test Entry",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: ["voice"],
+        duration_sec: 15,
+        source_type: "recorded",
+        local_audio_path: tempPath,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now,
+        updated_at: now,
+        last_accessed_at: now,
+        transcription_status: "completed",
+      };
+      await entriesDao.insertEntry(existingEntry);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([tempPath]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [new Directory("file:///mock/document/audio/2026/01/")];
+        }
+        if (normalized === "file:///mock/document/audio/2026/01") {
+          return [new File(tempPath)];
+        }
+        return [];
+      });
+
+      await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+
+      const updated = await entriesDao.getEntryById(entryId);
+      expect(updated).not.toBeNull();
+      expect(updated?.local_audio_path).toBe(canonicalPath);
+      expect(MockFile.existingFiles.has(canonicalPath)).toBe(true);
     });
   });
 

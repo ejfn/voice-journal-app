@@ -90,18 +90,33 @@ class MockFile {
   }
   async copy(destination) {
     MockFile.mockCopy(this, destination);
+    const destUri = normalizeMockUri(destination);
     if (MockFile.existingFiles instanceof Set) {
-      const destUri = normalizeMockUri(destination);
       MockFile.existingFiles.add(destUri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      const srcSize =
+        MockFile.fileSizes.get(this.uri) !== undefined
+          ? MockFile.fileSizes.get(this.uri)
+          : MockFile.defaultSize;
+      MockFile.fileSizes.set(destUri, srcSize);
     }
     return Promise.resolve();
   }
   async move(destination) {
     MockFile.mockMove(this, destination);
+    const destUri = normalizeMockUri(destination);
     if (MockFile.existingFiles instanceof Set) {
-      const destUri = normalizeMockUri(destination);
       MockFile.existingFiles.add(destUri);
       MockFile.existingFiles.delete(this.uri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      const srcSize =
+        MockFile.fileSizes.get(this.uri) !== undefined
+          ? MockFile.fileSizes.get(this.uri)
+          : MockFile.defaultSize;
+      MockFile.fileSizes.set(destUri, srcSize);
+      MockFile.fileSizes.delete(this.uri);
     }
     return Promise.resolve();
   }
@@ -109,6 +124,9 @@ class MockFile {
     MockFile.mockDelete(this.uri);
     if (MockFile.existingFiles instanceof Set) {
       MockFile.existingFiles.delete(this.uri);
+    }
+    if (MockFile.fileSizes instanceof Map) {
+      MockFile.fileSizes.delete(this.uri);
     }
   }
   async upload(url, options) {

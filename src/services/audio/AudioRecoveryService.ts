@@ -10,6 +10,7 @@ import {
   persistAudioFile,
   recoverAudioFromCache,
 } from "../../utils/audioPersistence";
+import { isValidUUID } from "../../utils/uuid";
 
 /**
  * Recursively collects all audio files (.m4a, .tmp) within a given directory URI.
@@ -22,24 +23,31 @@ async function collectAudioFilesRecursively(dirUri: string): Promise<string[]> {
     if (!dir.exists || typeof dir.list !== "function") return collected;
     const items = dir.list();
     for (const item of items) {
-      if (!item || !item.uri) continue;
+      if (!item) continue;
+      const itemUri = typeof item === "string" ? item : (item.uri ?? "");
+      if (!itemUri) continue;
       // Exclude transcription chunk scratch directories and chunk files
-      if (item.uri.includes("/chunks_") || item.uri.includes("/chunk_")) {
+      if (itemUri.includes("/chunks_") || itemUri.includes("/chunk_")) {
         continue;
       }
       const isDir =
         item instanceof Directory ||
-        item.uri.endsWith("/") ||
-        ("list" in item &&
+        itemUri.endsWith("/") ||
+        ("list" in (item as object) &&
           typeof (item as unknown as { list: unknown }).list === "function");
 
       if (isDir) {
-        const subFiles = await collectAudioFilesRecursively(item.uri);
+        const subFiles = await collectAudioFilesRecursively(itemUri);
         collected.push(...subFiles);
-      } else if (item.uri.endsWith(".m4a") || item.uri.endsWith(".tmp")) {
-        const filename = item.uri.substring(item.uri.lastIndexOf("/") + 1);
-        if (!filename.startsWith("chunk_")) {
-          collected.push(item.uri);
+      } else if (
+        itemUri.endsWith(".m4a") ||
+        itemUri.endsWith(".tmp") ||
+        itemUri.endsWith(".tmp.m4a") ||
+        itemUri.endsWith(".m4a.tmp")
+      ) {
+        const filename = itemUri.substring(itemUri.lastIndexOf("/") + 1);
+        if (!filename.startsWith("chunk_") && !filename.includes("_chunk_")) {
+          collected.push(itemUri);
         }
       }
     }
@@ -95,13 +103,28 @@ export class AudioRecoveryService {
         continue;
       }
 
-      // Match recording_<uuid>.m4a, <uuid>.m4a, or .tmp variations
-      const match = filename.match(
-        /^(?:recording_)?([a-zA-Z0-9_-]+?)(?:\.tmp)?\.m4a$/,
+      // Filename must match recording_<uuid>.m4a or <uuid>.m4a (and optional .tmp variations)
+      let entryId: string | null = null;
+      const recMatch = filename.match(
+        /^recording_([a-zA-Z0-9_-]+?)(?:\.tmp\.m4a|\.m4a\.tmp|\.m4a|\.tmp)$/,
       );
-      if (!match) continue;
+      if (recMatch) {
+        entryId = recMatch[1];
+      } else {
+        const directMatch = filename.match(
+          /^([a-zA-Z0-9_-]+?)(?:\.tmp\.m4a|\.m4a\.tmp|\.m4a|\.tmp)$/,
+        );
+        if (directMatch) {
+          entryId = directMatch[1];
+        }
+      }
 
-      const entryId = match[1];
+      // Restrict recovery strictly to valid journal entry UUIDs.
+      // This prevents unrelated cache files (e.g. from AudioImportService or third-party pickers)
+      // from being imported as phantom JournalEntry records.
+      if (!entryId || !isValidUUID(entryId)) {
+        continue;
+      }
 
       // Check if entry was tombstoned by user deletion
       const isTombstoned = await deletedEntriesDao.isDeleted(entryId);
@@ -124,8 +147,19 @@ export class AudioRecoveryService {
         // Stranded audio file with NO SQLite row (process died before saveRecordedEntry or legacy orphan)
         if (isAudioFileValid(fileUri)) {
           try {
-            const now = Date.now();
-            const canonical = getEntryAudioPath(entryId, now);
+            // Infer recording timestamp from historical directory structure if present (/audio/YYYY/MM/),
+            // preventing recordings from past months from being relocated to the current month.
+            let createdAt = Date.now();
+            const dirMatch = fileUri.match(/\/audio\/(\d{4})\/(\d{2})\//);
+            if (dirMatch) {
+              const y = parseInt(dirMatch[1], 10);
+              const m = parseInt(dirMatch[2], 10);
+              if (!isNaN(y) && !isNaN(m) && m >= 1 && m <= 12) {
+                createdAt = new Date(y, m - 1, 1, 12, 0, 0).getTime();
+              }
+            }
+
+            const canonical = getEntryAudioPath(entryId, createdAt);
             const persistResult = await persistAudioFile(fileUri, canonical);
             if (isAudioFileValid(persistResult.uri)) {
               const recoveredEntry: JournalEntry = {
@@ -140,9 +174,9 @@ export class AudioRecoveryService {
                 drive_audio_file_id: null,
                 drive_sidecar_file_id: null,
                 is_audio_cached: 1,
-                created_at: now,
-                updated_at: now,
-                last_accessed_at: now,
+                created_at: createdAt,
+                updated_at: createdAt,
+                last_accessed_at: createdAt,
                 transcription_status: "queued",
               };
               await entriesDao.insertEntry(recoveredEntry);
@@ -153,13 +187,20 @@ export class AudioRecoveryService {
           } catch (err) {
             console.warn("Failed to recover orphaned recording:", fileUri, err);
           }
+        } else {
+          // Clean up corrupted or 0-byte abandoned temp file with no DB record
+          try {
+            const badFile = new File(fileUri);
+            if (badFile.exists) {
+              badFile.delete();
+            }
+          } catch {
+            // Non-fatal
+          }
         }
       } else {
-        // Existing entry: heal if local audio is missing and not in Drive
-        if (
-          !existing.drive_audio_file_id &&
-          !isAudioFileValid(existing.local_audio_path)
-        ) {
+        // Existing entry: heal if local audio is missing
+        if (!isAudioFileValid(existing.local_audio_path)) {
           try {
             const recovered = await recoverAudioFromCache(
               existing.id,
@@ -167,10 +208,12 @@ export class AudioRecoveryService {
             );
             if (recovered) {
               await entriesDao.setAudioCached(existing.id, true, recovered);
-              uploadQueueService.enqueueUpload(
-                existing.id,
-                "ANALYZE_AND_UPLOAD",
-              );
+              if (!existing.drive_audio_file_id) {
+                uploadQueueService.enqueueUpload(
+                  existing.id,
+                  "ANALYZE_AND_UPLOAD",
+                );
+              }
               if (existing.transcription_status === "failed") {
                 await entriesDao.resetTranscriptionRetry(existing.id);
                 transcriptionQueueService.processQueue().catch(() => {});
@@ -179,6 +222,28 @@ export class AudioRecoveryService {
             }
           } catch {
             // Non-fatal
+          }
+        } else if (
+          existing.local_audio_path &&
+          existing.local_audio_path.includes("recording_")
+        ) {
+          // If existing entry was using a fallback temp path, try promoting it to canonical
+          try {
+            const canonical = getEntryAudioPath(
+              existing.id,
+              existing.created_at,
+            );
+            if (canonical !== existing.local_audio_path) {
+              const res = await persistAudioFile(
+                existing.local_audio_path,
+                canonical,
+              );
+              if (isAudioFileValid(res.uri) && res.uri === canonical) {
+                await entriesDao.setAudioCached(existing.id, true, canonical);
+              }
+            }
+          } catch {
+            // Non-fatal promotion attempt
           }
         }
       }
