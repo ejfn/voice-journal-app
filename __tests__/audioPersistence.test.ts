@@ -5,8 +5,9 @@ import {
   ensureAudioDirectoryExists,
 } from "../src/utils/audioPersistence";
 import { getEntryAudioPath, getEntryAudioTempPath } from "../src/utils/paths";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { audioRecordingService } from "../src/services/audio/AudioRecordingService";
+import { audioRecoveryService } from "../src/services/audio/AudioRecoveryService";
 import { GoogleDriveService } from "../src/services/drive/GoogleDriveService";
 import { createTestDb } from "./helpers/testDb";
 import { setDatabaseConnection, initDatabase } from "../src/db/database";
@@ -139,8 +140,8 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(MockFile.mockDelete).toHaveBeenCalledWith(src);
     });
 
-    it("retains source URI as fallback-temp if both copy and move fail but source has data", async () => {
-      const src = "file:///tmp/recording.m4a";
+    it("retains source URI as fallback-temp if both copy and move fail but source is in permanent sandbox", async () => {
+      const src = `${Paths.document.uri}temp_recording.m4a`;
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
@@ -156,8 +157,26 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect(result).toEqual({ uri: src, method: "fallback-temp" });
     });
 
+    it("throws error and refuses fallback-temp if source is in volatile cache (Finding 2)", async () => {
+      const src = `${Paths.cache.uri}recording.m4a`;
+      const dest = "file:///dest/entry.m4a";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+
+      MockFile.mockCopy.mockImplementationOnce(() => {
+        throw new Error("Disk full");
+      });
+      MockFile.mockMove.mockImplementationOnce(() => {
+        throw new Error("Disk full");
+      });
+
+      await expect(persistAudioFile(src, dest)).rejects.toThrow(
+        "device may be out of disk space",
+      );
+    });
+
     it("throws loud out-of-disk-space error if copy/move fail and destination is not valid", async () => {
-      const src = "file:///tmp/recording.m4a";
+      const src = `${Paths.document.uri}temp_recording.m4a`;
       const dest = "file:///dest/entry.m4a";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const MockFile = File as any;
@@ -230,6 +249,27 @@ describe("Audio Persistence & Storage Resilience", () => {
 
       const recovered = await recoverAudioFromCache(entryId, createdAt);
       expect(recovered).toBeNull();
+    });
+
+    it("returns canonical path if a concurrent task populated it during recovery candidate scan (Finding 3)", async () => {
+      const entryId = "entry-concurrent-recovery";
+      const createdAt = 1758290000000;
+      const canonical = getEntryAudioPath(entryId, createdAt);
+      const sandboxTemp = getEntryAudioTempPath(entryId, createdAt);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([sandboxTemp]);
+
+      // When persistAudioFile attempts to move the candidate, simulate another process having moved it to canonical
+      MockFile.mockMove.mockImplementationOnce(() => {
+        MockFile.existingFiles.add(canonical);
+        MockFile.existingFiles.delete(sandboxTemp);
+        throw new Error("File moved by concurrent worker");
+      });
+
+      const recovered = await recoverAudioFromCache(entryId, createdAt);
+      expect(recovered).toBe(canonical);
     });
   });
 
@@ -480,6 +520,77 @@ describe("Audio Persistence & Storage Resilience", () => {
       expect((audioRecordingService as any).activeRecorder).toBeNull();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((audioRecordingService as any).currentEntryId).toBeNull();
+    });
+  });
+
+  describe("AudioRecoveryService recursive multi-month & cache scanning (Finding 1)", () => {
+    beforeEach(async () => {
+      const db = createTestDb();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setDatabaseConnection(db as any);
+      await initDatabase();
+    });
+
+    it("recovers orphaned recordings across older month subdirectories and cache", async () => {
+      const orphanJan = "orphan-jan-entry";
+      const orphanNov = "orphan-nov-entry";
+      const orphanCache = "orphan-cache-entry";
+
+      const janFile = `file:///mock/document/audio/2026/01/recording_${orphanJan}.m4a`;
+      const novFile = `file:///mock/document/audio/2025/11/recording_${orphanNov}.m4a`;
+      const cacheDir = Paths.cache?.uri
+        ? Paths.cache.uri.replace(/\/+$/, "")
+        : "file:///mock/cache";
+      const cacheFile = `${cacheDir}/recording_${orphanCache}.m4a`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockFile = File as any;
+      MockFile.existingFiles = new Set([janFile, novFile, cacheFile]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const MockDirectory = Directory as any;
+      MockDirectory.mockList.mockImplementation((uri: string) => {
+        const normalized = uri.replace(/\/+$/, "");
+        if (normalized === "file:///mock/document/audio") {
+          return [
+            new Directory("file:///mock/document/audio/2025/"),
+            new Directory("file:///mock/document/audio/2026/"),
+          ];
+        }
+        if (normalized === "file:///mock/document/audio/2025") {
+          return [new Directory("file:///mock/document/audio/2025/11/")];
+        }
+        if (normalized === "file:///mock/document/audio/2025/11") {
+          return [new File(novFile)];
+        }
+        if (normalized === "file:///mock/document/audio/2026") {
+          return [new Directory("file:///mock/document/audio/2026/01/")];
+        }
+        if (normalized === "file:///mock/document/audio/2026/01") {
+          return [new File(janFile)];
+        }
+        if (normalized === "file:///mock/cache") {
+          return [new File(cacheFile)];
+        }
+        return [];
+      });
+
+      const recoveredCount =
+        await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
+      expect(recoveredCount).toBe(3);
+
+      const janEntry = await entriesDao.getEntryById(orphanJan);
+      expect(janEntry).not.toBeNull();
+      expect(janEntry?.tags).toContain("recovered");
+      expect(janEntry?.transcription_status).toBe("queued");
+
+      const novEntry = await entriesDao.getEntryById(orphanNov);
+      expect(novEntry).not.toBeNull();
+      expect(novEntry?.tags).toContain("recovered");
+
+      const cacheEntry = await entriesDao.getEntryById(orphanCache);
+      expect(cacheEntry).not.toBeNull();
+      expect(cacheEntry?.tags).toContain("recovered");
     });
   });
 });

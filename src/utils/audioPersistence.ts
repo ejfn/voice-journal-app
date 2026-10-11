@@ -129,10 +129,16 @@ export async function persistAudioFile(
     }
   }
 
-  // 4. Critical resilience: if target cannot be written, but source has valid data, preserve source
-  if (!persisted && isAudioFileValid(sourceUri)) {
+  // 4. Critical resilience: if target cannot be written, but source has valid data,
+  // ONLY preserve source if it is already located in the permanent document sandbox.
+  // Never report fallback-temp for volatile cache URIs (e.g. from DocumentPicker or cache recovery),
+  // which would cause callers to store volatile paths in SQLite that the OS later purges.
+  const isSourceInPermanentSandbox =
+    Boolean(Paths.document?.uri) && sourceUri.startsWith(Paths.document.uri);
+
+  if (!persisted && isSourceInPermanentSandbox && isAudioFileValid(sourceUri)) {
     console.warn(
-      "Could not write to sandbox destination; preserving temporary audio file to avoid data loss:",
+      "Could not write to sandbox destination; preserving permanent sandbox temporary audio file to avoid data loss:",
       sourceUri,
     );
     return { uri: sourceUri, method: "fallback-temp" };
@@ -185,6 +191,11 @@ export async function recoverAudioFromCache(
   }
 
   for (const candidateUri of candidateUris) {
+    // If another concurrent recovery task already finalized canonicalPath, return it immediately
+    if (isAudioFileValid(canonicalPath)) {
+      return canonicalPath;
+    }
+
     if (isAudioFileValid(candidateUri)) {
       try {
         const result = await persistAudioFile(candidateUri, canonicalPath);
@@ -199,6 +210,11 @@ export async function recoverAudioFromCache(
         );
       }
     }
+  }
+
+  // Final check: if a concurrent recovery won the race while iterating candidates, return canonicalPath
+  if (isAudioFileValid(canonicalPath)) {
+    return canonicalPath;
   }
 
   return null;
