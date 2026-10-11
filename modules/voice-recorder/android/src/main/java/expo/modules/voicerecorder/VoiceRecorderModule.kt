@@ -92,10 +92,11 @@ class VoiceRecorderModule : Module(), VoiceRecordingServiceListener {
 
     Function("getStatus") {
       val service = recordingService
-      val isRecording = service?.isRecording ?: false
+      val staticPath = VoiceRecordingService.activeRecordingFilePath
+      val isRecording = service?.isRecording ?: (staticPath != null)
       val isPaused = service?.isPaused ?: false
       val durationMillis = service?.getCurrentDurationMillis() ?: 0L
-      val currentFilePath = service?.getCurrentFilePath() ?: ""
+      val currentFilePath = service?.getCurrentFilePath() ?: staticPath ?: ""
 
       mapOf(
         "isRecording" to isRecording,

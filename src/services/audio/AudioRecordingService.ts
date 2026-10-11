@@ -374,7 +374,7 @@ class AudioRecordingService {
             durationSec: finalDurationSec,
           });
         }
-        return;
+        return { entryId, localUri: "", durationSec: finalDurationSec };
       }
 
       let finalUri = "";
@@ -398,26 +398,29 @@ class AudioRecordingService {
           ? resampleWaveform(samples, WAVEFORM_BAR_COUNT)
           : undefined;
 
+      const result = {
+        entryId,
+        localUri: finalUri,
+        durationSec: finalDurationSec,
+        waveformData,
+      };
+
       if (externalCallback) {
-        await externalCallback({
-          entryId,
-          localUri: finalUri,
-          durationSec: finalDurationSec,
-          waveformData,
-        });
+        await externalCallback(result);
       }
+      return result;
     };
 
     const promise = (async () => {
       try {
-        await stopWork();
+        return await stopWork();
       } finally {
         this.stopPromise = null;
       }
     })();
 
     this.stopPromise = promise;
-    return await promise;
+    await promise;
   }
 
   private setupAppStateListener() {

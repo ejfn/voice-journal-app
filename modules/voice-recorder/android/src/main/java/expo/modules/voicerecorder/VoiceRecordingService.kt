@@ -234,6 +234,7 @@ class VoiceRecordingService : Service() {
 
         mediaRecorder = recorder
         currentFilePath = "file://" + file.absolutePath
+        activeRecordingFilePath = currentFilePath
         isRecording = true
         isPaused = false
         baseTime = SystemClock.elapsedRealtime()
@@ -376,6 +377,7 @@ class VoiceRecordingService : Service() {
     isRecording = false
     isPaused = false
     currentFilePath = null
+    activeRecordingFilePath = null
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
       stopForeground(STOP_FOREGROUND_REMOVE)
@@ -392,6 +394,9 @@ class VoiceRecordingService : Service() {
   }
 
   companion object {
+    @Volatile
+    var activeRecordingFilePath: String? = null
+
     private const val TAG = "VoiceRecordingService"
     private const val CHANNEL_ID = "voice_journal_recording_v4"
     private const val NOTIFICATION_ID = 4001

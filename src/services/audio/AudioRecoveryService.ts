@@ -234,8 +234,12 @@ export class AudioRecoveryService {
               );
               const persistResult = await persistAudioFile(fileUri, canonical);
               if (isAudioFileValid(persistResult.uri)) {
-                await entriesDao.setAudioCached(existing.id, true, canonical);
-                healedPath = canonical;
+                await entriesDao.setAudioCached(
+                  existing.id,
+                  true,
+                  persistResult.uri,
+                );
+                healedPath = persistResult.uri;
               }
             } else {
               const recovered = await recoverAudioFromCache(

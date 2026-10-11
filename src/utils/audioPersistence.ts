@@ -213,6 +213,7 @@ export async function persistAudioFile(
 export async function recoverAudioFromCache(
   entryId: string,
   createdAt: number,
+  extraCandidateUris: string[] = [],
 ): Promise<string | null> {
   const canonicalPath = getEntryAudioPath(entryId, createdAt);
   if (isAudioFileValid(canonicalPath)) {
@@ -223,6 +224,7 @@ export async function recoverAudioFromCache(
   const cacheDir = Paths.cache?.uri ? Paths.cache.uri.replace(/\/+$/, "") : "";
 
   const candidateUris: string[] = [
+    ...extraCandidateUris,
     sandboxTempPath,
     sandboxTempPath.replace(`.m4a`, `.tmp.m4a`),
     sandboxTempPath.replace(`recording_${entryId}.m4a`, `${entryId}.tmp.m4a`),
@@ -231,6 +233,19 @@ export async function recoverAudioFromCache(
       `recording_${entryId}.tmp.m4a`,
     ),
   ];
+
+  // A recording crossing a month boundary is written under its start month,
+  // while createdAt is assigned at stop time. Also search the previous month.
+  const prevMonthTempPath = getEntryAudioTempPath(
+    entryId,
+    new Date(createdAt).setMonth(new Date(createdAt).getMonth() - 1, 1),
+  );
+  if (prevMonthTempPath !== sandboxTempPath) {
+    candidateUris.push(
+      prevMonthTempPath,
+      prevMonthTempPath.replace(`.m4a`, `.tmp.m4a`),
+    );
+  }
 
   if (cacheDir) {
     candidateUris.push(

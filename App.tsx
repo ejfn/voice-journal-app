@@ -476,6 +476,14 @@ const MainScreen: React.FC = () => {
       }
 
       const entryId = givenEntryId || currentRecordingId || generateUUID();
+
+      // An in-flight external (notification) stop may already have saved this entry
+      if (await entriesDao.getEntryById(entryId)) {
+        setIsRecordingVisible(false);
+        setCurrentRecordingId(null);
+        setIsProcessingAI(false);
+        return;
+      }
       const now = Date.now();
       const hasKey = await geminiService.hasKeyConfigured();
 
