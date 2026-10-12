@@ -533,7 +533,7 @@ export const entriesDao = {
     );
   },
 
-  async getUnsyncedEntries(): Promise<JournalEntry[]> {
+  async getUnsyncedEntries(limit?: number): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
@@ -546,7 +546,9 @@ export const entriesDao = {
          drive_synced_at IS NULL
          OR (updated_at IS NOT NULL AND updated_at > drive_synced_at)
        ))
-       ORDER BY created_at ASC`,
+       ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
+       ${limit == null ? "" : "LIMIT ?"}`,
+      limit == null ? [] : [Math.max(0, Math.floor(limit))],
     );
     return rows.map(rowToEntry);
   },
@@ -693,7 +695,9 @@ export const entriesDao = {
     const updatedAt =
       cloudEntry.updated_at ?? existing.updated_at ?? cloudEntry.created_at;
     const deletedAt =
-      cloudEntry.deleted_at !== undefined ? cloudEntry.deleted_at : null;
+      cloudEntry.deleted_at !== undefined
+        ? cloudEntry.deleted_at
+        : existing.deleted_at;
     const transcriptionStatus =
       cloudEntry.transcription_status ||
       existing.transcription_status ||

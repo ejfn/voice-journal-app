@@ -655,26 +655,27 @@ export class GoogleDriveService {
           }
 
           // Also patch appProperties metadata
-          try {
-            await fetch(
-              `https://www.googleapis.com/drive/v3/files/${sidecarFileId}`,
-              {
-                method: "PATCH",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  appProperties: {
-                    entryId: entry.id,
-                    updatedAt: String(snapshotUpdatedAt),
-                    deletedAt: String(freshEntry.deleted_at ?? ""),
-                  },
-                }),
+          const appPropertiesRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${sidecarFileId}`,
+            {
+              method: "PATCH",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
               },
+              body: JSON.stringify({
+                appProperties: {
+                  entryId: entry.id,
+                  updatedAt: String(snapshotUpdatedAt),
+                  deletedAt: String(freshEntry.deleted_at ?? ""),
+                },
+              }),
+            },
+          );
+          if (!appPropertiesRes.ok) {
+            throw new Error(
+              `Failed to update Drive sidecar metadata for entry ${entry.id}: ${await appPropertiesRes.text()}`,
             );
-          } catch {
-            // Non-critical if appProperties patch fails
           }
         }
       }
@@ -978,7 +979,7 @@ export class GoogleDriveService {
 
     // 1. UPLOAD PHASE: "always upload if local is newer (updated)"
     try {
-      const unsyncedEntries = await entriesDao.getUnsyncedEntries();
+      const unsyncedEntries = await entriesDao.getUnsyncedEntries(maxEntries);
       for (const entry of unsyncedEntries) {
         try {
           // Skip if already actively uploading in the background queue

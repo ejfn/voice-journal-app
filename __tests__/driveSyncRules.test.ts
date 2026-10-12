@@ -1881,6 +1881,193 @@ describe("GoogleDriveService Two-Way Sync Rules", () => {
       expect(localEntry?.updated_at).toBe(newerTime);
     });
 
+    it("preserves a local tombstone when the cloud sidecar omits deleted_at", async () => {
+      const t0 = 1759000000000;
+      const deletedAt = t0 + 100;
+      await entriesDao.insertEntry({
+        id: "entry-legacy-sidecar",
+        title: "Binned Note",
+        summary: "Summary",
+        transcript: "Transcript",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: "sc-legacy-sidecar",
+        is_audio_cached: 0,
+        created_at: t0,
+        updated_at: t0,
+        drive_synced_at: t0,
+        last_accessed_at: t0,
+        deleted_at: deletedAt,
+      });
+
+      const newerTime = t0 + 50000;
+      global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+        const urlStr = url.toString();
+        if (urlStr.includes("files?q=")) {
+          return new Response(
+            JSON.stringify({
+              files: [
+                {
+                  id: "sc-legacy-sidecar",
+                  name: "entry-legacy-sidecar.json",
+                  modifiedTime: new Date(newerTime).toISOString(),
+                  appProperties: { updatedAt: String(newerTime) },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (urlStr.includes("alt=media")) {
+          return new Response(
+            JSON.stringify({
+              id: "entry-legacy-sidecar",
+              title: "Updated Binned Note",
+              summary: "Updated Summary",
+              transcript: "Updated Transcript",
+              tags: [],
+              duration_sec: 10,
+              source_type: "recorded",
+              drive_sidecar_file_id: "sc-legacy-sidecar",
+              created_at: t0,
+              updated_at: newerTime,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200 });
+      });
+
+      const result = await driveService.syncTwoWay();
+      expect(result.downloadedCount).toBe(1);
+      expect(
+        (await entriesDao.getEntryById("entry-legacy-sidecar"))?.deleted_at,
+      ).toBe(deletedAt);
+    });
+
+    it("caps upload candidates in normal sync and leaves full sync uncapped", async () => {
+      const t0 = 1759000000000;
+      for (let i = 1; i <= 5; i++) {
+        await entriesDao.insertEntry({
+          id: `entry-upload-cap-${i}`,
+          title: `Deleted Entry ${i}`,
+          summary: "",
+          transcript: "",
+          tags: [],
+          duration_sec: 10,
+          source_type: "recorded",
+          local_audio_path: null,
+          drive_audio_file_id: null,
+          drive_sidecar_file_id: `sidecar-upload-cap-${i}`,
+          is_audio_cached: 0,
+          created_at: t0 + i * 100,
+          updated_at: t0 + i * 100,
+          drive_synced_at: t0,
+          last_accessed_at: t0,
+          deleted_at: t0 + i * 100,
+        });
+      }
+
+      const uploadedSidecars: string[] = [];
+      global.fetch = jest.fn(
+        async (url: RequestInfo | URL, init?: RequestInit) => {
+          const urlStr = url.toString();
+          const decodedUrl = decodeURIComponent(urlStr);
+          if (
+            decodedUrl.includes(
+              "mimeType = 'application/vnd.google-apps.folder'",
+            )
+          ) {
+            return new Response(JSON.stringify({ files: [{ id: "folder" }] }), {
+              status: 200,
+            });
+          }
+          if (urlStr.includes("files?q=")) {
+            return new Response(JSON.stringify({ files: [] }), {
+              status: 200,
+            });
+          }
+          if (
+            urlStr.includes("/upload/drive/v3/files/") &&
+            urlStr.includes("uploadType=media")
+          ) {
+            const match = urlStr.match(/files\/(sidecar-upload-cap-\d+)/);
+            if (match) uploadedSidecars.push(match[1]);
+            return new Response("{}", { status: 200 });
+          }
+          if (init?.method === "PATCH") {
+            return new Response("{}", { status: 200 });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      );
+
+      const cappedResult = await driveService.syncTwoWay({ maxEntries: 2 });
+      expect(cappedResult.uploadedCount).toBe(2);
+      expect(uploadedSidecars).toEqual([
+        "sidecar-upload-cap-5",
+        "sidecar-upload-cap-4",
+      ]);
+
+      const fullSyncResult = await driveService.syncTwoWay({ fullSync: true });
+      expect(fullSyncResult.uploadedCount).toBe(3);
+      expect(uploadedSidecars).toHaveLength(5);
+    });
+
+    it("does not mark an upload synced when the appProperties patch fails", async () => {
+      const t0 = 1759000000000;
+      await entriesDao.insertEntry({
+        id: "entry-app-properties-failure",
+        title: "Deleted Entry",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: "sidecar-app-properties-failure",
+        is_audio_cached: 0,
+        created_at: t0,
+        updated_at: t0 + 100,
+        drive_synced_at: t0,
+        last_accessed_at: t0,
+        deleted_at: t0 + 100,
+      });
+
+      global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+        const urlStr = url.toString();
+        const decodedUrl = decodeURIComponent(urlStr);
+        if (
+          decodedUrl.includes("mimeType = 'application/vnd.google-apps.folder'")
+        ) {
+          return new Response(JSON.stringify({ files: [{ id: "folder" }] }), {
+            status: 200,
+          });
+        }
+        if (urlStr.includes("uploadType=media")) {
+          return new Response("{}", { status: 200 });
+        }
+        if (urlStr.endsWith("/sidecar-app-properties-failure")) {
+          return new Response("Drive unavailable", { status: 500 });
+        }
+        return new Response("{}", { status: 200 });
+      });
+
+      await expect(
+        driveService.uploadEntry(
+          (await entriesDao.getEntryById("entry-app-properties-failure"))!,
+        ),
+      ).rejects.toThrow("Failed to update Drive sidecar metadata");
+      expect(
+        (await entriesDao.getEntryById("entry-app-properties-failure"))
+          ?.drive_synced_at,
+      ).toBe(t0);
+    });
+
     it("soft-deletes local entry when cloud sidecar is newer and has deleted_at set", async () => {
       const t0 = 1759000000000;
       await entriesDao.insertEntry({
