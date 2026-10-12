@@ -38,6 +38,8 @@ import {
   isAudioFileValid,
   recoverAudioFromCache,
 } from "../utils/audioPersistence";
+import { AudioShareService } from "../services/share/AudioShareService";
+import { ShareOptionsModal } from "./ShareOptionsModal";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -74,6 +76,16 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     durationSec: 0,
     entryId: null,
   });
+  const [isShareModalVisible, setIsShareModalVisible] = useState(false);
+  /**
+   * Audio availability for the share sheet, computed once when the sheet is
+   * opened (async, off the render path). Calling isAudioFileValid during
+   * render would run synchronous disk I/O on every keystroke.
+   */
+  const [isShareAudioAvailable, setIsShareAudioAvailable] = useState(false);
+  /** Honest hint when local audio is missing: cloud copy or nothing. */
+  const [shareAudioUnavailableHint, setShareAudioUnavailableHint] =
+    useState("");
 
   const scrollViewRef = useRef<ScrollView>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -91,6 +103,32 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     tags: [] as string[],
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Copies non-dirty fields from a refreshed entry into the local form
+   * state. Called on background refreshes (upload listener) so that a
+   * transcript which completed while the modal was open is reflected in
+   * the form without clobbering the user's in-progress edits.
+   */
+  const syncNonDirtyFields = (fresh: JournalEntry) => {
+    if (!dirtyFieldsRef.current.title) {
+      setTitle(fresh.title);
+      latestValuesRef.current.title = fresh.title;
+    }
+    if (!dirtyFieldsRef.current.summary) {
+      setSummary(fresh.summary);
+      latestValuesRef.current.summary = fresh.summary;
+    }
+    if (!dirtyFieldsRef.current.transcript) {
+      setTranscript(fresh.transcript);
+      latestValuesRef.current.transcript = fresh.transcript;
+    }
+    if (!dirtyFieldsRef.current.tags) {
+      const freshTags = fresh.tags || [];
+      setTags(freshTags);
+      latestValuesRef.current.tags = freshTags;
+    }
+  };
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -230,6 +268,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           const refreshed = await entriesDao.getEntryById(entry.id);
           if (refreshed) {
             setCurrentEntry(refreshed);
+            // Also sync the local form fields: a transcript that completed
+            // while this modal was open arrives via this refresh, and the
+            // [entry] prop effect never re-runs for it.
+            syncNonDirtyFields(refreshed);
           }
         } catch {
           // Ignore refresh error
@@ -237,6 +279,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       }
     });
     return unsubscribe;
+    // syncNonDirtyFields reads refs only; stable identity not required
   }, [entry]);
 
   const handleSyncPress = async () => {
@@ -356,7 +399,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         localPath = recovered;
         isLocal = true;
         await entriesDao.setAudioCached(active.id, true, recovered);
-        uploadQueueService.enqueueUpload(active.id, "ANALYZE_AND_UPLOAD");
+        uploadQueueService
+          .enqueueUpload(active.id, "ANALYZE_AND_UPLOAD")
+          .catch((err) => {
+            console.warn("Failed to enqueue upload:", err);
+          });
         setCurrentEntry((prev) =>
           prev
             ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }
@@ -549,7 +596,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     };
     const active = currentEntry || entry;
     if (!active) return;
-    audioPlaybackService.stop();
+    audioPlaybackService.stop().catch((err) => {
+      console.warn("Failed to stop playback:", err);
+    });
     onDelete(active.id);
   };
 
@@ -563,6 +612,111 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       tags: false,
     };
     onClose();
+  };
+
+  const handleOpenShareModal = async () => {
+    let active = currentEntry || entry;
+    if (!active) return;
+
+    // Refresh from DB so a transcript that completed while this modal was
+    // open (or any other background change) is reflected before sharing.
+    try {
+      const fresh = await entriesDao.getEntryById(active.id);
+      if (fresh) {
+        setCurrentEntry(fresh);
+        syncNonDirtyFields(fresh);
+        active = fresh;
+      }
+    } catch {
+      // Fall back to the in-memory entry
+    }
+
+    let audioPath = active.local_audio_path;
+    if (!isAudioFileValid(audioPath)) {
+      const recovered = await recoverAudioFromCache(
+        active.id,
+        active.created_at,
+      );
+      if (recovered) {
+        await entriesDao.setAudioCached(active.id, true, recovered);
+        uploadQueueService
+          .enqueueUpload(active.id, "ANALYZE_AND_UPLOAD")
+          .catch((err) => {
+            console.warn("Failed to enqueue upload:", err);
+          });
+        setCurrentEntry((prev) =>
+          prev
+            ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }
+            : null,
+        );
+        audioPath = recovered;
+      }
+    }
+
+    // Compute availability once, off the render path (isAudioFileValid
+    // does synchronous disk I/O).
+    const isAvailable = isAudioFileValid(audioPath);
+    setIsShareAudioAvailable(isAvailable);
+    setShareAudioUnavailableHint(
+      isAvailable
+        ? ""
+        : active.drive_audio_file_id
+          ? "Download from Drive to share"
+          : "Audio recording unavailable",
+    );
+
+    setIsShareModalVisible(true);
+  };
+
+  const handleShareAudio = async () => {
+    setIsShareModalVisible(false);
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    await performSave();
+
+    const result = await AudioShareService.shareAudioFile(
+      active.local_audio_path ?? "",
+    );
+    if (!result.success && !result.cancelled && result.error) {
+      showToast({
+        message: result.error,
+        icon: "error-outline",
+        type: "error",
+      });
+    }
+  };
+
+  const handleShareTranscript = async () => {
+    setIsShareModalVisible(false);
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    await performSave();
+
+    const currentTitle = title.trim();
+    const currentTranscript = transcript.trim();
+
+    if (!currentTranscript) {
+      showToast({
+        message: "No transcript available to share.",
+        icon: "info-outline",
+        type: "info",
+      });
+      return;
+    }
+
+    const result = await AudioShareService.shareTranscript(
+      currentTitle,
+      currentTranscript,
+    );
+    if (!result.success && !result.cancelled && result.error) {
+      showToast({
+        message: result.error,
+        icon: "error-outline",
+        type: "error",
+      });
+    }
   };
 
   const activeEntry = currentEntry || entry;
@@ -610,7 +764,15 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           >
             {`${formatDate(activeEntry.created_at)} • ${formatTime(activeEntry.created_at)}`}
           </Text>
-          <View style={styles.headerRightPlaceholder} />
+          <TouchableOpacity
+            onPress={handleOpenShareModal}
+            style={styles.shareButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Share entry"
+            accessibilityRole="button"
+          >
+            <MaterialIcons name="share" size={22} color={colors.text} />
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -934,6 +1096,18 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <ShareOptionsModal
+        visible={isShareModalVisible}
+        isAudioAvailable={isShareAudioAvailable}
+        audioUnavailableHint={shareAudioUnavailableHint}
+        isTranscriptAvailable={Boolean(
+          transcript && transcript.trim().length > 0,
+        )}
+        onShareAudio={handleShareAudio}
+        onShareTranscript={handleShareTranscript}
+        onClose={() => setIsShareModalVisible(false)}
+      />
     </Modal>
   );
 };
@@ -959,9 +1133,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
   },
-  headerRightPlaceholder: {
+  shareButton: {
     width: 32,
     height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
   scrollContent: {
     padding: 18,

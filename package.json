@@ -13,6 +13,7 @@
     "expo-dev-client": "~57.0.19",
     "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
+    "expo-sharing": "~57.0.22",
     "expo-splash-screen": "~57.0.9",
     "expo-sqlite": "~57.0.3",
     "expo-status-bar": "~57.0.1",
@@ -53,8 +54,9 @@
     "test": "jest",
     "test:silent": "jest --silent",
     "typecheck": "tsc --noEmit",
+    "config:check": "expo config --type prebuild > /dev/null && echo \"Expo config OK\"",
     "generate:assets": "node scripts/generate-assets.js",
-    "qualitycheck": "npm-run-all typecheck lint test:silent"
+    "qualitycheck": "npm-run-all config:check typecheck lint test:silent"
   },
   "private": true
 }

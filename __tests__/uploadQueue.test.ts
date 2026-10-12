@@ -222,6 +222,60 @@ describe("UploadQueueService", () => {
     );
   });
 
+  it("coalesces a processQueue call arriving during an active pass and reruns afterwards", async () => {
+    // Regression test for the missed-item race: a processQueue() call that
+    // arrives while a pass is active (after that pass fetched its pending
+    // items) must schedule a rerun, not be silently dropped.
+    jest.useFakeTimers();
+
+    // Gate the first upload so the first pass stays active while we call again
+    let releaseFirstUpload: (() => void) | null = null;
+    const firstUploadGate = new Promise<void>((resolve) => {
+      releaseFirstUpload = resolve;
+    });
+
+    (syncQueueDao.getPendingItems as jest.Mock)
+      .mockResolvedValueOnce([mockQueueItem]) // first pass
+      .mockResolvedValueOnce([]); // coalesced rerun
+    (entriesDao.getEntryById as jest.Mock).mockResolvedValue(mockEntry);
+    (googleDriveService.uploadEntry as jest.Mock).mockImplementationOnce(
+      () => firstUploadGate,
+    );
+
+    // Start the first pass; isProcessing becomes true synchronously
+    const firstPass = service.processQueue();
+    expect(service.getIsProcessing()).toBe(true);
+
+    // Let the first pass reach the in-flight (gated) upload
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(googleDriveService.uploadEntry).toHaveBeenCalledTimes(1);
+
+    // A second processQueue arrives while the first pass is active: it must
+    // return immediately (coalesced) instead of starting a second pass
+    await service.processQueue();
+    expect(googleDriveService.uploadEntry).toHaveBeenCalledTimes(1);
+    expect(syncQueueDao.getPendingItems).toHaveBeenCalledTimes(1);
+
+    // Finish the first pass; the finally block schedules the coalesced rerun
+    releaseFirstUpload!();
+    await firstPass;
+    expect(service.getIsProcessing()).toBe(false);
+
+    // The rerun is scheduled via setTimeout(100): advance and flush
+    jest.advanceTimersByTime(150);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+
+    // The coalesced rerun must have fetched pending items a second time —
+    // this is exactly what rescues an item enqueued mid-pass
+    expect(syncQueueDao.getPendingItems).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
+  });
+
   it("skips and drops queue item if entry is soft-deleted (deleted_at is set)", async () => {
     const softDeletedEntry: JournalEntry = {
       ...mockEntry,

@@ -9,8 +9,9 @@ This file provides guidance and constraints for coding agents working in this re
 - **Expo HAS CHANGED**: Read the exact versioned documentation at https://docs.expo.dev/versions/v57.0.0/ before writing any code. Never use deprecated APIs (e.g. `expo-av`, `@expo/vector-icons`).
 - **No Monitoring Pull Requests**: Do not watch, wait for, or poll GitHub pull request checks (`gh pr checks`, `gh pr checks --watch`, etc.) after creating a PR or pushing commits. Once created/pushed, provide the PR link and stop immediately without waiting for CI to finish.
 - **Git Safety**: Never commit directly to the `main` branch.
-- **Quality Checks**: Verify changes with `npm run qualitycheck` (or `npm run typecheck`, `npm run lint`, and `npm test`) before concluding tasks.
+- **Quality Checks**: Verify changes with `npm run qualitycheck` (or `npm run config:check`, `npm run typecheck`, `npm run lint`, and `npm test`) before concluding tasks.
 - **No Shallow UI Component Tests**: Do NOT add shallow UI component unit tests that merely test mocks over mocks (e.g. `react-test-renderer` asserting props or mock buttons on mocked components). Tests must focus on real business logic, state machines, DAOs, services, and algorithms.
+- **Pre-Push Code Review**: Before pushing a feature branch or creating a PR, run the local `code-review` skill (`.agents/skills/code-review/`) on the full diff against the base branch (e.g. `git diff main...HEAD`). Every [MUST FIX] finding must be resolved or explicitly refuted with evidence before pushing; [SHOULD FIX] and below are advisory. The skill's findings are subject to the same verification discipline as any AI reviewer (see "Verifying AI Code Review Claims" below). (`.github/skills/code-review/` is a separate skill that calibrates GitHub Copilot's reviews on GitHub — not for local use.)
 
 ## Project Overview
 
@@ -36,7 +37,7 @@ npm run start:dev     # Starts with --dev-client
 npm run android       # Launch on Android
 
 # Quality checks
-npm run qualitycheck  # Runs typecheck, lint, and test:silent in sequence
+npm run qualitycheck  # Runs config:check, typecheck, lint, and test:silent in sequence
 npm run typecheck     # tsc --noEmit
 npm run lint          # expo lint src/ __tests__/ App.tsx index.ts
 npm test              # jest
@@ -109,6 +110,20 @@ src/
 - Strict TypeScript: No `any` where avoidable. Use explicit interfaces and types.
 - Always check that changes pass `npm run qualitycheck` before finishing.
 
+### 6. Promise Hygiene (lint-enforced)
+
+- **No fire-and-forget promises**: Any promise-returning call must be `await`ed, end with `.catch(...)`, or be explicitly marked with the `void` operator. This is enforced by the type-aware `@typescript-eslint/no-floating-promises` ESLint rule (error severity).
+- **`.catch` for side-effect calls**: Calls like `uploadQueueService.enqueueUpload(...)` that can reject (SQLite failures) must attach a `.catch` that logs (`console.warn`).
+- **`void` only for never-rejecting loaders**: `void loadData()` is acceptable only when the function has an internal try/catch and cannot reject.
+- **Fix at the origin when possible**: If callers cannot meaningfully handle a helper's rejection (e.g. `handleRecordingStatusUpdate` catches `handleExternalStop` failures internally so its native-listener call sites stay simple), handle the rejection inside the helper.
+
+### 7. Verifying AI Code Review Claims
+
+- **Never accept an AI reviewer claim (e.g. GitHub Copilot) at face value** — especially severity labels, which are frequently inflated or based on outdated SDK knowledge.
+- **Config/plugin claims**: Disprove or confirm with `npm run config:check` (runs `expo config --type prebuild`). If it passes, the config and all plugins resolve; claims of "invalid plugin / prebuild failure" are false.
+- **"Missing test" claims**: Verify with `grep` against `__tests__/` before writing a duplicate test; verify "pattern X exists" claims against `main` before treating new code as introducing a novel pattern.
+- **Dependency/API claims**: Check the installed version in `node_modules/<pkg>` and the versioned docs at https://docs.expo.dev/versions/v57.0.0/ — AI reviewers often have stale knowledge of older SDK versions.
+
 ## Git & PR Workflow
 
 ```bash
@@ -118,7 +133,8 @@ git checkout -b ejfn/feature-name
 # 2. Commit changes (when user requests)
 git add . && git commit -m "feat(scope): descriptive message"
 
-# 3. Push and create PR
+# 3. Self-review with the local code-review skill (resolve or refute all MUST FIX)
+# 4. Push and create PR
 git push origin ejfn/feature-name -u
 GITHUB_TOKEN= gh pr create --title "feat(scope): descriptive title" --body "Summary of changes"
 ```

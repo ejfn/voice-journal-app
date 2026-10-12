@@ -38,6 +38,8 @@ export function getUploadBackoffDelayMs(retryCount: number): number {
 
 export class UploadQueueService {
   private isProcessing = false;
+  /** A processQueue() call arrived while a pass was active; rerun when done. */
+  private pendingRerun = false;
   private listeners: Set<UploadListener> = new Set();
   private retryTimeout: ReturnType<typeof setTimeout> | null = null;
   private activeUploadingEntryIds: Set<string> = new Set();
@@ -173,6 +175,10 @@ export class UploadQueueService {
    */
   async processQueue(): Promise<void> {
     if (this.isProcessing) {
+      // Coalesce: a queue pass is active. If it already fetched its
+      // pending items, our newly enqueued item would be missed — request
+      // a rerun when the active pass finishes instead of dropping it.
+      this.pendingRerun = true;
       return;
     }
 
@@ -292,6 +298,14 @@ export class UploadQueueService {
       }
     } finally {
       this.isProcessing = false;
+      if (this.pendingRerun) {
+        this.pendingRerun = false;
+        setTimeout(() => {
+          this.processQueue().catch((err) => {
+            console.warn("Upload queue coalesced rerun error:", err);
+          });
+        }, 100);
+      }
     }
   }
 

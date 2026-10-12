@@ -60,7 +60,7 @@ export const BinModal: React.FC<BinModalProps> = ({
 
   useEffect(() => {
     if (visible) {
-      loadBinnedEntries();
+      void loadBinnedEntries();
     }
   }, [visible, loadBinnedEntries]);
 
@@ -71,7 +71,11 @@ export const BinModal: React.FC<BinModalProps> = ({
         restored?.drive_sidecar_file_id &&
         googleDriveService.getCurrentUser()
       ) {
-        uploadQueueService.enqueueUpload(entry.id, "METADATA_ONLY");
+        uploadQueueService
+          .enqueueUpload(entry.id, "METADATA_ONLY")
+          .catch((err) => {
+            console.warn("Failed to enqueue upload:", err);
+          });
       }
       showToast({
         message: "Entry restored",

@@ -223,7 +223,7 @@ class AudioRecordingService {
               error?: string | null;
               url?: string | null;
             }) => {
-              this.handleRecordingStatusUpdate(status);
+              void this.handleRecordingStatusUpdate(status);
             },
           );
         }
@@ -253,7 +253,7 @@ class AudioRecordingService {
                 error?: string | null;
                 url?: string | null;
               }) => {
-                this.handleRecordingStatusUpdate(status);
+                void this.handleRecordingStatusUpdate(status);
               },
             );
           }
@@ -284,13 +284,13 @@ class AudioRecordingService {
     this.startStatusTimer();
   }
 
-  private handleRecordingStatusUpdate(status: {
+  private async handleRecordingStatusUpdate(status: {
     isFinished?: boolean;
     isPaused?: boolean;
     durationMillis?: number;
     error?: string | null;
     url?: string | null;
-  }) {
+  }): Promise<void> {
     if (status.isPaused !== undefined) {
       if (status.isPaused && !this.isPaused) {
         this.isPaused = true;
@@ -302,8 +302,16 @@ class AudioRecordingService {
     }
 
     if (status.isFinished && !this.isStoppingInternally) {
-      // Stopped externally from Android notification
-      return this.handleExternalStop(status.url || null, status.durationMillis);
+      // Stopped externally from Android notification. This is the critical
+      // save path — a rejection here must never be silent.
+      try {
+        await this.handleExternalStop(
+          status.url || null,
+          status.durationMillis,
+        );
+      } catch (err) {
+        console.warn("Failed to handle external recording stop:", err);
+      }
     }
   }
 
@@ -468,7 +476,7 @@ class AudioRecordingService {
                   this.isPaused = true;
                   this.emitStatus();
                 } else if (st.isRecording === true && this.isPaused) {
-                  this.activeRecorder.pause?.();
+                  void this.activeRecorder.pause?.();
                 }
               }
             } catch {
@@ -517,7 +525,7 @@ class AudioRecordingService {
           try {
             const st = this.activeRecorder.getStatus?.();
             if (st?.isRecording) {
-              this.activeRecorder.pause?.();
+              void this.activeRecorder.pause?.();
             }
           } catch {
             // Ignore
