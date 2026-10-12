@@ -95,7 +95,7 @@ describe("UploadQueueService", () => {
     await service.enqueueAllUnsynced();
 
     expect(entriesDao.getUnsyncedEntries).toHaveBeenCalled();
-    expect(syncQueueDao.enqueue).toHaveBeenCalledWith(
+    expect(syncQueueDao.enqueueIfAbsent).toHaveBeenCalledWith(
       expect.objectContaining({
         entry_id: "entry-u1",
         action: "ANALYZE_AND_UPLOAD",
@@ -118,7 +118,13 @@ describe("UploadQueueService", () => {
 
     await service.processQueue();
 
-    expect(syncQueueDao.updateStatus).toHaveBeenCalledWith(
+    // Retry state must be persisted so no queue trigger can retry before the backoff window
+    expect(syncQueueDao.markRetry).toHaveBeenCalledWith(
+      "queue-1",
+      1,
+      expect.any(Number),
+    );
+    expect(syncQueueDao.updateStatus).not.toHaveBeenCalledWith(
       "queue-1",
       "PENDING",
       1,
@@ -132,8 +138,10 @@ describe("UploadQueueService", () => {
   });
 
   it("marks as failed after exceeding max upload retries", async () => {
+    // retry_count 4 is the final attempt: the real getPendingItems filters
+    // retry_count < MAX, so 5 never surfaces here (covered by db.test.ts).
     (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
-      { ...mockQueueItem, retry_count: 5 },
+      { ...mockQueueItem, retry_count: 4 },
     ]);
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue(mockEntry);
     (googleDriveService.uploadEntry as jest.Mock).mockRejectedValue(
@@ -150,6 +158,7 @@ describe("UploadQueueService", () => {
       "FAILED",
       5,
     );
+    expect(syncQueueDao.markRetry).not.toHaveBeenCalled();
     expect(listenerEvents).toContainEqual({
       entryId: "entry-u1",
       status: "failed",
@@ -176,15 +185,10 @@ describe("UploadQueueService", () => {
 
     // Must NOT delete the item from the queue!
     expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
-    // Must update action to METADATA_ONLY and reset status to PENDING
-    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+    // Must update action to METADATA_ONLY and reset status to PENDING (clearing any backoff)
+    expect(syncQueueDao.setActionPending).toHaveBeenCalledWith(
       "queue-1",
       "METADATA_ONLY",
-    );
-    expect(syncQueueDao.updateStatus).toHaveBeenCalledWith(
-      "queue-1",
-      "PENDING",
-      0,
     );
     // Must NOT emit 'synced' event because metadata is still unsynced
     expect(listenerEvents).not.toContainEqual(
@@ -212,14 +216,9 @@ describe("UploadQueueService", () => {
 
     // Must NOT delete the item from queue
     expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
-    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+    expect(syncQueueDao.setActionPending).toHaveBeenCalledWith(
       "queue-1",
       "METADATA_ONLY",
-    );
-    expect(syncQueueDao.updateStatus).toHaveBeenCalledWith(
-      "queue-1",
-      "PENDING",
-      0,
     );
   });
 

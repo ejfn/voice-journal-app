@@ -65,6 +65,8 @@ export interface SyncQueueItem {
   status: "PENDING" | "FAILED" | "PROCESSING" | "COMPLETED";
   retry_count: number;
   created_at: number;
+  /** Epoch ms before which this item must not be retried. Null = immediately. */
+  next_retry_at?: number | null;
 }
 
 export const SCHEMA_SQL = `
@@ -107,7 +109,8 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   action TEXT NOT NULL,
   status TEXT NOT NULL,
   retry_count INTEGER DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  next_retry_at INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (

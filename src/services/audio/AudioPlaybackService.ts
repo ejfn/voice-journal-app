@@ -45,6 +45,7 @@ interface AudioPlayerInstance {
 
 class AudioPlaybackService {
   private activePlayer: AudioPlayerInstance | null = null;
+  private playOperation: Promise<void> | null = null;
   private currentEntryId: string | null = null;
   private currentTimeSec: number = 0;
   private durationSec: number = 0;
@@ -92,6 +93,32 @@ class AudioPlaybackService {
   }
 
   async play(
+    entryId: string,
+    audioUri: string,
+    initialDurationSec?: number,
+  ): Promise<void> {
+    // Serialize play calls. Without this, two rapid async callers both
+    // await the same stop(), then each construct a player — the second
+    // overwrites activePlayer/subscriptions without releasing the first,
+    // leaving two clips playing simultaneously, leaked native listeners,
+    // and the orphaned player persisting waveforms against the wrong entry.
+    while (this.playOperation) {
+      await this.playOperation.catch(() => {
+        // Wait for the in-flight play regardless of its outcome
+      });
+    }
+    const operation = this.startPlayback(entryId, audioUri, initialDurationSec);
+    this.playOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.playOperation === operation) {
+        this.playOperation = null;
+      }
+    }
+  }
+
+  private async startPlayback(
     entryId: string,
     audioUri: string,
     initialDurationSec?: number,

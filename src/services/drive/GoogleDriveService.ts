@@ -1020,18 +1020,10 @@ export class GoogleDriveService {
             };
             const uploadResult = await this.uploadEntry(entryToUpload);
             if (uploadResult.raceDetected) {
-              // Local metadata changed while uploading; ensure queued for metadata sync pass
-              const existing = await syncQueueDao.getItemByEntryId(entry.id);
-              if (existing) {
-                await syncQueueDao.updateAction(existing.id, "METADATA_ONLY");
-                await syncQueueDao.updateStatus(existing.id, "PENDING", 0);
-              } else {
-                await syncQueueDao.enqueue({
-                  entry_id: entry.id,
-                  action: "METADATA_ONLY",
-                  status: "PENDING",
-                });
-              }
+              // Local metadata changed while uploading; ensure queued for
+              // metadata sync pass — atomically (this producer races
+              // UploadQueueService, so check-then-enqueue would duplicate).
+              await syncQueueDao.upsertAsPending(entry.id, "METADATA_ONLY");
             } else {
               uploadedCount++;
               await syncQueueDao.deleteByEntryId(entry.id);
@@ -1425,11 +1417,17 @@ export class GoogleDriveService {
               file.delete();
             }
           }
+          // Flip the DB only after the file is gone. If delete() threw we
+          // skip this and the row keeps is_audio_cached=1, so a future
+          // eviction pass can still find and retry the orphaned file.
+          // (A crash between delete and this update leaves DB cached=1
+          // with a missing file — playback's validity check falls back to
+          // a Drive download, so that direction stays conservative.)
           await entriesDao.setAudioCached(item.entry.id, false, null);
           freedBytes += item.size;
           evictedCount++;
         } catch {
-          // Ignore deletion error
+          // File delete failed: keep the row evictable, don't count bytes
         }
       }
     }
