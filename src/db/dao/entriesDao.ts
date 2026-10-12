@@ -8,6 +8,7 @@ import {
 } from "../schema";
 import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
 import { isAudioFileValid } from "../../utils/audioPersistence";
+import { BIN_RETENTION_MS } from "../../utils/binUtils";
 import { deletedEntriesDao } from "./deletedEntriesDao";
 
 export interface EntrySyncInfo {
@@ -417,27 +418,61 @@ export const entriesDao = {
     return this.softDeleteEntry(id);
   },
 
+  /**
+   * Permanently purges binned entries past the retention window.
+   * Resilient: one failing entry does not abort the rest.
+   * Returns only the entries that were successfully purged.
+   */
   async purgeExpiredBinnedEntries(
-    thresholdMs: number = Date.now() - 30 * 24 * 60 * 60 * 1000,
+    thresholdMs: number = Date.now() - BIN_RETENTION_MS,
   ): Promise<JournalEntry[]> {
     const db = getDatabase();
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries WHERE deleted_at IS NOT NULL AND deleted_at <= ?`,
       [thresholdMs],
     );
-    const expiredEntries = rows.map(rowToEntry);
-    for (const entry of expiredEntries) {
-      await this.permanentlyDeleteEntry(entry.id);
+    const purged: JournalEntry[] = [];
+    for (const row of rows) {
+      const entry = rowToEntry(row);
+      try {
+        await this.permanentlyDeleteEntry(entry.id);
+        purged.push(entry);
+      } catch (err) {
+        console.warn(`Failed to purge expired binned entry ${entry.id}:`, err);
+      }
     }
-    return expiredEntries;
+    return purged;
   },
 
+  /**
+   * Permanently deletes every binned entry.
+   * Resilient: one failing entry does not abort the rest.
+   * Returns only the entries that were successfully purged.
+   */
   async emptyBin(): Promise<JournalEntry[]> {
     const binned = await this.getBinnedEntries();
+    const purged: JournalEntry[] = [];
     for (const entry of binned) {
-      await this.permanentlyDeleteEntry(entry.id);
+      try {
+        await this.permanentlyDeleteEntry(entry.id);
+        purged.push(entry);
+      } catch (err) {
+        console.warn(
+          `Failed to permanently delete binned entry ${entry.id}:`,
+          err,
+        );
+      }
     }
-    return binned;
+    return purged;
+  },
+
+  /** Lightweight count of binned entries (avoids loading full rows/transcripts). */
+  async getBinnedEntryCount(): Promise<number> {
+    const db = getDatabase();
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM entries WHERE deleted_at IS NOT NULL`,
+    );
+    return row?.count ?? 0;
   },
 
   async getEntryById(id: string): Promise<JournalEntry | null> {

@@ -81,6 +81,17 @@ describe("Recycle Bin and Soft-Delete Features", () => {
       expect(formatBinCountdown(now - (BIN_RETENTION_MS + 1000), now)).toBe(
         "Expires today",
       );
+
+      // Defensive: missing deleted_at is treated as expired
+      expect(formatBinCountdown(null, now)).toBe("Expires today");
+      expect(formatBinCountdown(undefined, now)).toBe("Expires today");
+    });
+
+    it("clamps future deleted_at timestamps (cross-device clock skew)", () => {
+      const twoDaysAhead = now + 2 * 24 * 60 * 60 * 1000;
+      // A device clock 2 days ahead must not extend the countdown past 30 days
+      expect(getBinRemainingDays(twoDaysAhead, now)).toBe(30);
+      expect(formatBinCountdown(twoDaysAhead, now)).toBe("30 days remaining");
     });
   });
 
@@ -174,6 +185,183 @@ describe("Recycle Bin and Soft-Delete Features", () => {
       const activeList = await entriesDao.getEntries();
       expect(activeList.length).toBe(1);
       expect(activeList[0].id).toBe("active-1");
+    });
+  });
+
+  describe("entriesDao.purgeExpiredBinnedEntries", () => {
+    it("purges only entries past the retention window and records Drive tombstones", async () => {
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+
+      // Active entry (never binned)
+      await entriesDao.insertEntry({
+        id: "purge-active",
+        title: "Active",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now,
+        last_accessed_at: now,
+        deleted_at: null,
+      });
+
+      // Binned 5 days ago (within retention)
+      await entriesDao.insertEntry({
+        id: "purge-kept",
+        title: "Kept",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now - 6 * dayMs,
+        last_accessed_at: now - 6 * dayMs,
+        deleted_at: now - 5 * dayMs,
+      });
+
+      // Binned 31 days ago (past retention, synced to Drive)
+      await entriesDao.insertEntry({
+        id: "purge-expired",
+        title: "Expired",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "drive-aud-purge",
+        drive_sidecar_file_id: "drive-sc-purge",
+        is_audio_cached: 1,
+        created_at: now - 32 * dayMs,
+        last_accessed_at: now - 32 * dayMs,
+        deleted_at: now - 31 * dayMs,
+      });
+
+      expect(await entriesDao.getBinnedEntryCount()).toBe(2);
+
+      const purged = await entriesDao.purgeExpiredBinnedEntries();
+
+      // Only the expired entry is purged
+      expect(purged.map((e) => e.id)).toEqual(["purge-expired"]);
+      expect(await entriesDao.getEntryById("purge-expired")).toBeNull();
+
+      // Tombstone recorded with Drive file IDs so sync deletes cloud copies
+      const tombstones = await deletedEntriesDao.getPendingDeletions();
+      const tomb = tombstones.find((d) => d.id === "purge-expired");
+      expect(tomb).toBeDefined();
+      expect(tomb?.drive_sidecar_file_id).toBe("drive-sc-purge");
+      expect(tomb?.drive_audio_file_id).toBe("drive-aud-purge");
+
+      // Non-expired binned and active entries are untouched
+      const kept = await entriesDao.getEntryById("purge-kept");
+      expect(kept).not.toBeNull();
+      expect(kept?.deleted_at).toBe(now - 5 * dayMs);
+      expect(await entriesDao.getEntryById("purge-active")).not.toBeNull();
+      expect(await deletedEntriesDao.isDeleted("purge-active")).toBe(false);
+
+      expect(await entriesDao.getBinnedEntryCount()).toBe(1);
+      expect((await entriesDao.getBinnedEntries()).map((e) => e.id)).toEqual([
+        "purge-kept",
+      ]);
+    });
+
+    it("records no tombstone for never-uploaded entries", async () => {
+      const now = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+
+      await entriesDao.insertEntry({
+        id: "purge-local-only",
+        title: "Local Only",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: null,
+        drive_sidecar_file_id: null,
+        is_audio_cached: 1,
+        created_at: now - 32 * dayMs,
+        last_accessed_at: now - 32 * dayMs,
+        deleted_at: now - 31 * dayMs,
+      });
+
+      const purged = await entriesDao.purgeExpiredBinnedEntries();
+      expect(purged.map((e) => e.id)).toEqual(["purge-local-only"]);
+
+      const tomb = (await deletedEntriesDao.getPendingDeletions()).find(
+        (d) => d.id === "purge-local-only",
+      );
+      // Tombstone row exists (permanent deletion marker) but has no Drive IDs
+      expect(tomb).toBeDefined();
+      expect(tomb?.drive_sidecar_file_id).toBeNull();
+      expect(tomb?.drive_audio_file_id).toBeNull();
+    });
+  });
+
+  describe("entriesDao.restoreEntry", () => {
+    it("restores a binned entry and marks it for cloud re-upload via the unsynced scan", async () => {
+      const t0 = 1789700000000;
+      const syncedAt = t0 + 5000;
+
+      // Fully synced entry: local is not newer than cloud
+      await entriesDao.insertEntry({
+        id: "restore-1",
+        title: "Restorable",
+        summary: "",
+        transcript: "",
+        tags: [],
+        duration_sec: 10,
+        source_type: "recorded",
+        local_audio_path: null,
+        drive_audio_file_id: "drive-aud-restore",
+        drive_sidecar_file_id: "drive-sc-restore",
+        is_audio_cached: 1,
+        created_at: t0,
+        updated_at: syncedAt,
+        drive_synced_at: syncedAt,
+        last_accessed_at: t0,
+        deleted_at: null,
+      });
+
+      const hasUnsynced = async (id: string) =>
+        (await entriesDao.getUnsyncedEntries()).some((e) => e.id === id);
+
+      // Baseline: fully synced, nothing pending
+      expect(await hasUnsynced("restore-1")).toBe(false);
+
+      // Soft delete bumps updated_at -> pending cloud propagation
+      await entriesDao.softDeleteEntry("restore-1");
+      expect(await hasUnsynced("restore-1")).toBe(true);
+
+      // Restore clears the bin flag and bumps updated_at -> picked up again
+      const restored = await entriesDao.restoreEntry("restore-1");
+      expect(restored?.deleted_at).toBeNull();
+
+      const unsynced = await entriesDao.getUnsyncedEntries();
+      const restoredUnsynced = unsynced.find((e) => e.id === "restore-1");
+      expect(restoredUnsynced).toBeDefined();
+      expect(restoredUnsynced?.deleted_at).toBeNull();
+      expect(restoredUnsynced?.updated_at ?? 0).toBeGreaterThan(syncedAt);
+
+      // Back in the active timeline, out of the bin
+      expect((await entriesDao.getEntries()).map((e) => e.id)).toContain(
+        "restore-1",
+      );
+      expect(
+        (await entriesDao.getBinnedEntries()).map((e) => e.id),
+      ).not.toContain("restore-1");
+      expect(await entriesDao.getBinnedEntryCount()).toBe(0);
     });
   });
 

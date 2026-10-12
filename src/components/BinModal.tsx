@@ -45,6 +45,9 @@ export const BinModal: React.FC<BinModalProps> = ({
   const loadBinnedEntries = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Auto-purge entries that crossed the retention window while the app
+      // stayed in memory (startup and sync purges may not have run recently)
+      await entriesDao.purgeExpiredBinnedEntries();
       const items = await entriesDao.getBinnedEntries();
       setBinnedEntries(items);
     } catch (err) {
@@ -111,11 +114,21 @@ export const BinModal: React.FC<BinModalProps> = ({
     setConfirmEmptyBin(false);
     try {
       await entriesDao.emptyBin();
-      showToast({
-        message: "Recycle Bin emptied",
-        icon: "delete-forever",
-        type: "info",
-      });
+      // emptyBin skips individual failures; report an accurate result
+      const remainingCount = await entriesDao.getBinnedEntryCount();
+      if (remainingCount > 0) {
+        showToast({
+          message: `Failed to delete ${remainingCount} item${remainingCount === 1 ? "" : "s"}`,
+          icon: "error-outline",
+          type: "error",
+        });
+      } else {
+        showToast({
+          message: "Recycle Bin emptied",
+          icon: "delete-forever",
+          type: "info",
+        });
+      }
       await loadBinnedEntries();
       onBinEmptied?.();
     } catch (err) {
@@ -246,9 +259,7 @@ export const BinModal: React.FC<BinModalProps> = ({
             showsVerticalScrollIndicator={false}
           >
             {binnedEntries.map((entry) => {
-              const countdownText = entry.deleted_at
-                ? formatBinCountdown(entry.deleted_at)
-                : "30 days remaining";
+              const countdownText = formatBinCountdown(entry.deleted_at);
               const recordedDateStr = formatDayLabel(
                 new Date(entry.created_at),
               );

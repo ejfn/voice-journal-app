@@ -83,8 +83,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const stats = await googleDriveService.getStorageStats();
       setStorageStats(stats);
 
-      const binned = await entriesDao.getBinnedEntries();
-      setBinnedCount(binned.length);
+      const binnedCount = await entriesDao.getBinnedEntryCount();
+      setBinnedCount(binnedCount);
 
       const userKey = await settingsDao.getUserGeminiApiKey();
       setSavedUserKey(userKey);
