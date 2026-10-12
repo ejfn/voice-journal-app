@@ -11,7 +11,7 @@ This file provides guidance and constraints for coding agents working in this re
 - **Git Safety**: Never commit directly to the `main` branch.
 - **Quality Checks**: Verify changes with `npm run qualitycheck` (or `npm run config:check`, `npm run typecheck`, `npm run lint`, and `npm test`) before concluding tasks.
 - **No Shallow UI Component Tests**: Do NOT add shallow UI component unit tests that merely test mocks over mocks (e.g. `react-test-renderer` asserting props or mock buttons on mocked components). Tests must focus on real business logic, state machines, DAOs, services, and algorithms.
-- **Pre-Push Code Review**: Before pushing a feature branch or creating a PR, run the `code-review` skill on the full diff (`git diff main...HEAD`). Every [MUST FIX] finding must be resolved or explicitly refuted with evidence before pushing; [SHOULD FIX] and below are advisory. The skill's findings are subject to the same verification discipline as any AI reviewer (see "Verifying AI Code Review Claims" below).
+- **Pre-Push Code Review**: Before pushing a feature branch or creating a PR, run the local `code-review` skill (`.agents/skills/code-review/`) on the full diff against the base branch (e.g. `git diff main...HEAD`). Every [MUST FIX] finding must be resolved or explicitly refuted with evidence before pushing; [SHOULD FIX] and below are advisory. The skill's findings are subject to the same verification discipline as any AI reviewer (see "Verifying AI Code Review Claims" below). (`.github/skills/code-review/` is a separate skill that calibrates GitHub Copilot's reviews on GitHub — not for local use.)
 
 ## Project Overview
 
@@ -115,7 +115,7 @@ src/
 - **No fire-and-forget promises**: Any promise-returning call must be `await`ed, end with `.catch(...)`, or be explicitly marked with the `void` operator. This is enforced by the type-aware `@typescript-eslint/no-floating-promises` ESLint rule (error severity).
 - **`.catch` for side-effect calls**: Calls like `uploadQueueService.enqueueUpload(...)` that can reject (SQLite failures) must attach a `.catch` that logs (`console.warn`).
 - **`void` only for never-rejecting loaders**: `void loadData()` is acceptable only when the function has an internal try/catch and cannot reject.
-- **Fix at the origin when possible**: If a helper conditionally returns a promise (e.g. `handleRecordingStatusUpdate` returning `handleExternalStop(...)`), handle the rejection inside the helper so call sites stay simple.
+- **Fix at the origin when possible**: If callers cannot meaningfully handle a helper's rejection (e.g. `handleRecordingStatusUpdate` catches `handleExternalStop` failures internally so its native-listener call sites stay simple), handle the rejection inside the helper.
 
 ### 7. Verifying AI Code Review Claims
 
@@ -133,7 +133,7 @@ git checkout -b ejfn/feature-name
 # 2. Commit changes (when user requests)
 git add . && git commit -m "feat(scope): descriptive message"
 
-# 3. Self-review with the code-review skill (resolve or refute all MUST FIX)
+# 3. Self-review with the local code-review skill (resolve or refute all MUST FIX)
 # 4. Push and create PR
 git push origin ejfn/feature-name -u
 GITHUB_TOKEN= gh pr create --title "feat(scope): descriptive title" --body "Summary of changes"
