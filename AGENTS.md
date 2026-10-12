@@ -11,6 +11,7 @@ This file provides guidance and constraints for coding agents working in this re
 - **Git Safety**: Never commit directly to the `main` branch.
 - **Quality Checks**: Verify changes with `npm run qualitycheck` (or `npm run config:check`, `npm run typecheck`, `npm run lint`, and `npm test`) before concluding tasks.
 - **No Shallow UI Component Tests**: Do NOT add shallow UI component unit tests that merely test mocks over mocks (e.g. `react-test-renderer` asserting props or mock buttons on mocked components). Tests must focus on real business logic, state machines, DAOs, services, and algorithms.
+- **Pre-Push Code Review**: Before pushing a feature branch or creating a PR, run the `code-review` skill on the full diff (`git diff main...HEAD`). Every [MUST FIX] finding must be resolved or explicitly refuted with evidence before pushing; [SHOULD FIX] and below are advisory. The skill's findings are subject to the same verification discipline as any AI reviewer (see "Verifying AI Code Review Claims" below).
 
 ## Project Overview
 
@@ -132,7 +133,8 @@ git checkout -b ejfn/feature-name
 # 2. Commit changes (when user requests)
 git add . && git commit -m "feat(scope): descriptive message"
 
-# 3. Push and create PR
+# 3. Self-review with the code-review skill (resolve or refute all MUST FIX)
+# 4. Push and create PR
 git push origin ejfn/feature-name -u
 GITHUB_TOKEN= gh pr create --title "feat(scope): descriptive title" --body "Summary of changes"
 ```
