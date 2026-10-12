@@ -12,6 +12,7 @@ import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast } from "./common/Toast";
 import { ConfirmDialog } from "./common/ConfirmDialog";
+import { modalStyles } from "./common/modalStyles";
 import { entriesDao } from "../db/dao/entriesDao";
 import { uploadQueueService } from "../services/drive/UploadQueueService";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
@@ -146,7 +147,7 @@ export const BinModal: React.FC<BinModalProps> = ({
         {/* Header */}
         <View
           style={[
-            styles.header,
+            modalStyles.modalHeader,
             {
               backgroundColor: colors.surface,
               borderBottomColor: colors.border,
@@ -423,15 +424,6 @@ export const BinModal: React.FC<BinModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerLeft: {
     flexDirection: "row",
