@@ -145,6 +145,37 @@ export const initDatabase = async (
         }
       }
 
+      // Safe migration for existing databases missing sync_queue.next_retry_at
+      // (persisted upload backoff; without it any queue trigger retries a
+      // failed upload immediately, bypassing the graduated backoff)
+      try {
+        const columns = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(sync_queue);`,
+        );
+        const hasNextRetryCol = columns.some(
+          (col) => col.name === "next_retry_at",
+        );
+        if (!hasNextRetryCol) {
+          await db.execAsync(
+            `ALTER TABLE sync_queue ADD COLUMN next_retry_at INTEGER DEFAULT NULL;`,
+          );
+        }
+      } catch (migrationError) {
+        try {
+          const columns = await db.getAllAsync<{ name: string }>(
+            `PRAGMA table_info(sync_queue);`,
+          );
+          const hasNextRetryCol = columns.some(
+            (col) => col.name === "next_retry_at",
+          );
+          if (!hasNextRetryCol) {
+            throw migrationError;
+          }
+        } catch {
+          throw migrationError;
+        }
+      }
+
       return db;
     })().catch((err) => {
       initPromise = null;

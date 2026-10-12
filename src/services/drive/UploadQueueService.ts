@@ -99,9 +99,12 @@ export class UploadQueueService {
     const existing = await syncQueueDao.getItemByEntryId(entryId);
     if (existing) {
       await syncQueueDao.updateAction(existing.id, action);
-      await syncQueueDao.updateStatus(existing.id, "PENDING", 0);
+      await syncQueueDao.resetToPending(existing.id);
     } else {
-      await syncQueueDao.enqueue({
+      // Atomic guard: a concurrent producer may insert the same entry
+      // between our check and insert; enqueueIfAbsent makes the loser a
+      // no-op instead of a duplicate queue row (double Drive upload).
+      await syncQueueDao.enqueueIfAbsent({
         entry_id: entryId,
         action,
         status: "PENDING",
@@ -145,10 +148,10 @@ export class UploadQueueService {
             existing.status !== "PENDING" &&
             existing.status !== "PROCESSING"
           ) {
-            await syncQueueDao.updateStatus(existing.id, "PENDING", 0);
+            await syncQueueDao.resetToPending(existing.id);
           }
         } else {
-          await syncQueueDao.enqueue({
+          await syncQueueDao.enqueueIfAbsent({
             entry_id: entry.id,
             action,
             status: "PENDING",
@@ -188,7 +191,7 @@ export class UploadQueueService {
           const action: SyncQueueItem["action"] = entry.drive_audio_file_id
             ? "METADATA_ONLY"
             : "ANALYZE_AND_UPLOAD";
-          await syncQueueDao.enqueue({
+          await syncQueueDao.enqueueIfAbsent({
             entry_id: entry.id,
             action,
             status: "PENDING",
@@ -236,7 +239,7 @@ export class UploadQueueService {
           if (raceDetected || wasReEnqueued) {
             // Local metadata changed while upload was in flight! Re-mark PENDING with METADATA_ONLY
             await syncQueueDao.updateAction(item.id, "METADATA_ONLY");
-            await syncQueueDao.updateStatus(item.id, "PENDING", 0);
+            await syncQueueDao.resetToPending(item.id);
             this.activeUploadingEntryIds.delete(entry.id);
             setTimeout(() => {
               this.processQueue().catch((err) => {
@@ -256,11 +259,14 @@ export class UploadQueueService {
 
           if (hasMoreRetries) {
             const nextRetries = currentRetries + 1;
-            await syncQueueDao.updateStatus(item.id, "PENDING", nextRetries);
-            this.notifyListeners({ entryId: entry.id, status: "uploading" });
-
             const backoffMs = getUploadBackoffDelayMs(currentRetries);
             const nextRetryAt = Date.now() + backoffMs;
+            // Persist the backoff window: any other queue trigger
+            // (transcription completion, sync, refresh) calling
+            // processQueue must not retry this item before nextRetryAt.
+            await syncQueueDao.markRetry(item.id, nextRetries, nextRetryAt);
+            this.notifyListeners({ entryId: entry.id, status: "uploading" });
+
             this.scheduleNextRetry(nextRetryAt);
           } else {
             // Exceeded max retries; mark failed

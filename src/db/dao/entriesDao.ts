@@ -10,6 +10,7 @@ import { formatDayLabel, getEntryAudioPath } from "../../utils/paths";
 import { isAudioFileValid } from "../../utils/audioPersistence";
 import { BIN_RETENTION_MS } from "../../utils/binUtils";
 import { deletedEntriesDao } from "./deletedEntriesDao";
+import { syncQueueDao } from "./syncQueueDao";
 
 export interface EntrySyncInfo {
   id: string;
@@ -370,6 +371,10 @@ export const entriesDao = {
       `UPDATE entries SET deleted_at = NULL, updated_at = ? WHERE id = ?`,
       [now, id],
     );
+    // Defensive: clear any stale tombstone (e.g. left by an interrupted
+    // purge) so the next sync does not delete the restored entry's
+    // Drive backup.
+    await deletedEntriesDao.removeDeletion(id);
     return this.getEntryById(id);
   },
 
@@ -385,14 +390,32 @@ export const entriesDao = {
     const db = getDatabase();
     const entry = await this.getEntryById(id);
     if (entry) {
-      // Record tombstone for cloud sync
-      await deletedEntriesDao.recordDeletion(
-        entry.id,
-        entry.drive_sidecar_file_id,
-        entry.drive_audio_file_id,
-      );
+      // Cancel any queued/in-flight uploads for this entry first, so a
+      // pending upload cannot recreate Drive files after the tombstone
+      // sync deletes them (the schema's ON DELETE CASCADE is inert
+      // because PRAGMA foreign_keys is not enabled).
+      await syncQueueDao.deleteByEntryId(entry.id);
 
-      // Clean up local audio file on device (both local_audio_path and canonical path if different)
+      // Tombstone + row delete must be atomic. If the process dies (or a
+      // sync fires) between the two, a still-restorable binned entry would
+      // carry a live tombstone, and the next sync would delete its Drive
+      // backup while the UI still offers Restore.
+      await db.execAsync("BEGIN IMMEDIATE");
+      try {
+        await deletedEntriesDao.recordDeletion(
+          entry.id,
+          entry.drive_sidecar_file_id,
+          entry.drive_audio_file_id,
+        );
+        await db.runAsync(`DELETE FROM entries WHERE id = ?`, [id]);
+        await db.execAsync("COMMIT");
+      } catch (err) {
+        await db.execAsync("ROLLBACK");
+        throw err;
+      }
+
+      // Clean up local audio files only after the row is gone (entry is
+      // unrestorable), so an interrupted purge stays retryable.
       const canonicalPath = getEntryAudioPath(entry.id, entry.created_at);
       const pathsToDelete = new Set<string>();
       if (entry.local_audio_path) pathsToDelete.add(entry.local_audio_path);
@@ -408,9 +431,9 @@ export const entriesDao = {
           // Ignore
         }
       }
+    } else {
+      await db.runAsync(`DELETE FROM entries WHERE id = ?`, [id]);
     }
-
-    await db.runAsync(`DELETE FROM entries WHERE id = ?`, [id]);
     return entry;
   },
 

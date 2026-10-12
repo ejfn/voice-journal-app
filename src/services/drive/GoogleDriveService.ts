@@ -1419,13 +1419,16 @@ export class GoogleDriveService {
         }
 
         try {
+          // Flip the DB state first: if we crash after deleting the file
+          // but before the update, the row would claim cached audio that
+          // no longer exists. The reverse order keeps the DB conservative.
+          await entriesDao.setAudioCached(item.entry.id, false, null);
           if (item.entry.local_audio_path) {
             const file = new File(item.entry.local_audio_path);
             if (file.exists) {
               file.delete();
             }
           }
-          await entriesDao.setAudioCached(item.entry.id, false, null);
           freedBytes += item.size;
           evictedCount++;
         } catch {
