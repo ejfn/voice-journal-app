@@ -13,6 +13,8 @@ import { useTheme } from "../theme/ThemeContext";
 export interface ShareOptionsModalProps {
   visible: boolean;
   isAudioAvailable: boolean;
+  /** Shown under the audio option when unavailable (why it is not shareable). */
+  audioUnavailableHint?: string;
   isTranscriptAvailable: boolean;
   onShareAudio: () => void;
   onShareTranscript: () => void;
@@ -22,6 +24,7 @@ export interface ShareOptionsModalProps {
 export const ShareOptionsModal: React.FC<ShareOptionsModalProps> = ({
   visible,
   isAudioAvailable,
+  audioUnavailableHint,
   isTranscriptAvailable,
   onShareAudio,
   onShareTranscript,
@@ -140,7 +143,7 @@ export const ShareOptionsModal: React.FC<ShareOptionsModalProps> = ({
                     >
                       {isAudioAvailable
                         ? ".m4a audio file"
-                        : "Download from Drive to share"}
+                        : audioUnavailableHint || "Audio recording unavailable"}
                     </Text>
                   </View>
                   <MaterialIcons
