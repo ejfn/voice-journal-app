@@ -38,6 +38,8 @@ import {
   isAudioFileValid,
   recoverAudioFromCache,
 } from "../utils/audioPersistence";
+import { AudioShareService } from "../services/share/AudioShareService";
+import { ShareOptionsModal } from "./ShareOptionsModal";
 
 interface ReviewModalProps {
   visible: boolean;
@@ -74,6 +76,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     durationSec: 0,
     entryId: null,
   });
+  const [isShareModalVisible, setIsShareModalVisible] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -565,6 +568,80 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     onClose();
   };
 
+  const handleOpenShareModal = async () => {
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    if (!isAudioFileValid(active.local_audio_path)) {
+      const recovered = await recoverAudioFromCache(
+        active.id,
+        active.created_at,
+      );
+      if (recovered) {
+        await entriesDao.setAudioCached(active.id, true, recovered);
+        uploadQueueService.enqueueUpload(active.id, "ANALYZE_AND_UPLOAD");
+        setCurrentEntry((prev) =>
+          prev
+            ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }
+            : null,
+        );
+      }
+    }
+
+    setIsShareModalVisible(true);
+  };
+
+  const handleShareAudio = async () => {
+    setIsShareModalVisible(false);
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    await performSave();
+
+    const result = await AudioShareService.shareAudioFile(
+      active.local_audio_path ?? "",
+    );
+    if (!result.success && !result.cancelled && result.error) {
+      showToast({
+        message: result.error,
+        icon: "error-outline",
+        type: "error",
+      });
+    }
+  };
+
+  const handleShareTranscript = async () => {
+    setIsShareModalVisible(false);
+    const active = currentEntry || entry;
+    if (!active) return;
+
+    await performSave();
+
+    const currentTitle = title.trim();
+    const currentTranscript = transcript.trim();
+
+    if (!currentTranscript) {
+      showToast({
+        message: "No transcript available to share.",
+        icon: "info-outline",
+        type: "info",
+      });
+      return;
+    }
+
+    const result = await AudioShareService.shareTranscript(
+      currentTitle,
+      currentTranscript,
+    );
+    if (!result.success && !result.cancelled && result.error) {
+      showToast({
+        message: result.error,
+        icon: "error-outline",
+        type: "error",
+      });
+    }
+  };
+
   const activeEntry = currentEntry || entry;
   if (!activeEntry) return null;
 
@@ -610,7 +687,15 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           >
             {`${formatDate(activeEntry.created_at)} • ${formatTime(activeEntry.created_at)}`}
           </Text>
-          <View style={styles.headerRightPlaceholder} />
+          <TouchableOpacity
+            onPress={handleOpenShareModal}
+            style={styles.shareButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Share entry"
+            accessibilityRole="button"
+          >
+            <MaterialIcons name="share" size={22} color={colors.text} />
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -934,6 +1019,20 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <ShareOptionsModal
+        visible={isShareModalVisible}
+        isAudioAvailable={Boolean(
+          activeEntry.local_audio_path &&
+          isAudioFileValid(activeEntry.local_audio_path),
+        )}
+        isTranscriptAvailable={Boolean(
+          transcript && transcript.trim().length > 0,
+        )}
+        onShareAudio={handleShareAudio}
+        onShareTranscript={handleShareTranscript}
+        onClose={() => setIsShareModalVisible(false)}
+      />
     </Modal>
   );
 };
@@ -959,9 +1058,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
   },
-  headerRightPlaceholder: {
+  shareButton: {
     width: 32,
     height: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
   scrollContent: {
     padding: 18,

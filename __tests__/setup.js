@@ -59,10 +59,18 @@ jest.mock("expo-audio", () => ({
   setAudioModeAsync: jest.fn(async () => {}),
 }));
 
+jest.mock("expo-sharing", () => ({
+  isAvailableAsync: jest.fn(async () => true),
+  shareAsync: jest.fn(async () => {}),
+}));
+
 function normalizeMockUri(raw) {
   if (!raw) return "";
   const str = typeof raw === "object" && raw.uri ? raw.uri : String(raw);
-  const withoutScheme = str.replace(/^file:\/*/, "").replace(/\/+/g, "/");
+  const withoutScheme = str
+    .replace(/^file:\/*/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/");
   return `file:///${withoutScheme}`;
 }
 

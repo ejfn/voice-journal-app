@@ -65,7 +65,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#0B0F19"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "version": "v0.1.0",
