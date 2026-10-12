@@ -316,7 +316,7 @@ const MainScreen: React.FC = () => {
     });
     const unsubscribeTranscription = transcriptionQueueService.addListener(
       () => {
-        loadData();
+        void loadData();
       },
     );
     const unsubscribeDriveTransfer = googleDriveService.addTransferListener(
@@ -342,7 +342,7 @@ const MainScreen: React.FC = () => {
           });
         }
 
-        loadData();
+        void loadData();
       },
     );
     // SmartSync "syncing" is a top-level reconciliation/scan status and must
@@ -352,7 +352,7 @@ const MainScreen: React.FC = () => {
         event.status === "synced" ||
         (event.status === "syncing" && (event.downloadedCount ?? 0) > 0)
       ) {
-        loadData();
+        void loadData();
       }
     });
 
@@ -523,7 +523,11 @@ const MainScreen: React.FC = () => {
       await entriesDao.insertEntry(newEntry);
 
       // Enqueue for background Google Drive upload
-      uploadQueueService.enqueueUpload(newEntry.id, "ANALYZE_AND_UPLOAD");
+      uploadQueueService
+        .enqueueUpload(newEntry.id, "ANALYZE_AND_UPLOAD")
+        .catch((err) => {
+          console.warn("Failed to enqueue upload:", err);
+        });
 
       // Dismiss recording modal immediately so user can continue using the app
       setIsRecordingVisible(false);
@@ -625,7 +629,11 @@ const MainScreen: React.FC = () => {
           localPath = recovered;
           isCached = true;
           await entriesDao.setAudioCached(entry.id, true, recovered);
-          uploadQueueService.enqueueUpload(entry.id, "ANALYZE_AND_UPLOAD");
+          uploadQueueService
+            .enqueueUpload(entry.id, "ANALYZE_AND_UPLOAD")
+            .catch((err) => {
+              console.warn("Failed to enqueue upload:", err);
+            });
         }
       }
 
@@ -697,7 +705,11 @@ const MainScreen: React.FC = () => {
     await loadData();
 
     // Trigger background upload if signed in to Google Drive
-    uploadQueueService.enqueueUpload(entryToSave.id, "METADATA_ONLY");
+    uploadQueueService
+      .enqueueUpload(entryToSave.id, "METADATA_ONLY")
+      .catch((err) => {
+        console.warn("Failed to enqueue upload:", err);
+      });
   };
 
   const handleDeleteEntry = (id: string) => {
@@ -719,7 +731,9 @@ const MainScreen: React.FC = () => {
     });
 
     if (deleted?.drive_sidecar_file_id && googleDriveService.getCurrentUser()) {
-      uploadQueueService.enqueueUpload(id, "METADATA_ONLY");
+      uploadQueueService.enqueueUpload(id, "METADATA_ONLY").catch((err) => {
+        console.warn("Failed to enqueue upload:", err);
+      });
     }
   };
 

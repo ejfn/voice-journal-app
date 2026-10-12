@@ -399,7 +399,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         localPath = recovered;
         isLocal = true;
         await entriesDao.setAudioCached(active.id, true, recovered);
-        uploadQueueService.enqueueUpload(active.id, "ANALYZE_AND_UPLOAD");
+        uploadQueueService
+          .enqueueUpload(active.id, "ANALYZE_AND_UPLOAD")
+          .catch((err) => {
+            console.warn("Failed to enqueue upload:", err);
+          });
         setCurrentEntry((prev) =>
           prev
             ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }
@@ -592,7 +596,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     };
     const active = currentEntry || entry;
     if (!active) return;
-    audioPlaybackService.stop();
+    audioPlaybackService.stop().catch((err) => {
+      console.warn("Failed to stop playback:", err);
+    });
     onDelete(active.id);
   };
 
@@ -633,7 +639,11 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       );
       if (recovered) {
         await entriesDao.setAudioCached(active.id, true, recovered);
-        uploadQueueService.enqueueUpload(active.id, "ANALYZE_AND_UPLOAD");
+        uploadQueueService
+          .enqueueUpload(active.id, "ANALYZE_AND_UPLOAD")
+          .catch((err) => {
+            console.warn("Failed to enqueue upload:", err);
+          });
         setCurrentEntry((prev) =>
           prev
             ? { ...prev, local_audio_path: recovered, is_audio_cached: 1 }

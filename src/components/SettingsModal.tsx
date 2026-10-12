@@ -100,7 +100,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (!visible) return;
 
-    refreshStatus();
+    void refreshStatus();
     setIsSyncing(smartSyncService.getIsSyncing());
 
     const unsubscribe = smartSyncService.addListener((event) => {

@@ -54,8 +54,9 @@
     "test": "jest",
     "test:silent": "jest --silent",
     "typecheck": "tsc --noEmit",
+    "config:check": "expo config --type prebuild > /dev/null && echo \"Expo config OK\"",
     "generate:assets": "node scripts/generate-assets.js",
-    "qualitycheck": "npm-run-all typecheck lint test:silent"
+    "qualitycheck": "npm-run-all config:check typecheck lint test:silent"
   },
   "private": true
 }
