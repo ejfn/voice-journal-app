@@ -186,11 +186,10 @@ describe("UploadQueueService", () => {
     // Must NOT delete the item from the queue!
     expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
     // Must update action to METADATA_ONLY and reset status to PENDING (clearing any backoff)
-    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+    expect(syncQueueDao.setActionPending).toHaveBeenCalledWith(
       "queue-1",
       "METADATA_ONLY",
     );
-    expect(syncQueueDao.resetToPending).toHaveBeenCalledWith("queue-1");
     // Must NOT emit 'synced' event because metadata is still unsynced
     expect(listenerEvents).not.toContainEqual(
       expect.objectContaining({ status: "synced" }),
@@ -217,11 +216,10 @@ describe("UploadQueueService", () => {
 
     // Must NOT delete the item from queue
     expect(syncQueueDao.deleteItem).not.toHaveBeenCalled();
-    expect(syncQueueDao.updateAction).toHaveBeenCalledWith(
+    expect(syncQueueDao.setActionPending).toHaveBeenCalledWith(
       "queue-1",
       "METADATA_ONLY",
     );
-    expect(syncQueueDao.resetToPending).toHaveBeenCalledWith("queue-1");
   });
 
   it("skips and drops queue item if entry is soft-deleted (deleted_at is set)", async () => {

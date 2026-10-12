@@ -157,6 +157,47 @@ export const syncQueueDao = {
     );
   },
 
+  /**
+   * Atomically sets an existing item's action AND resets it to PENDING
+   * (retry state + backoff cleared) in a single statement. Two separate
+   * awaited writes would let a concurrent queue pass read the item in
+   * between (e.g. action updated but still PROCESSING) and drop it.
+   */
+  async setActionPending(
+    id: string,
+    action: SyncQueueItem["action"],
+  ): Promise<void> {
+    const db = getDatabase();
+    await db.runAsync(
+      `UPDATE sync_queue
+       SET action = ?, status = 'PENDING', retry_count = 0, next_retry_at = NULL
+       WHERE id = ?`,
+      [action, id],
+    );
+  },
+
+  /**
+   * Atomically upserts a queue row as PENDING for the entry: updates the
+   * existing row in one statement, or inserts via enqueueIfAbsent. This is
+   * the only safe re-enqueue path for producers that may race
+   * UploadQueueService (e.g. syncTwoWay's race-detected branch).
+   */
+  async upsertAsPending(
+    entryId: string,
+    action: SyncQueueItem["action"],
+  ): Promise<void> {
+    const db = getDatabase();
+    const result = await db.runAsync(
+      `UPDATE sync_queue
+       SET action = ?, status = 'PENDING', retry_count = 0, next_retry_at = NULL
+       WHERE entry_id = ?`,
+      [action, entryId],
+    );
+    if (result.changes === 0) {
+      await this.enqueueIfAbsent({ entry_id: entryId, action });
+    }
+  },
+
   async deleteByEntryId(entryId: string): Promise<void> {
     const db = getDatabase();
     await db.runAsync(`DELETE FROM sync_queue WHERE entry_id = ?`, [entryId]);

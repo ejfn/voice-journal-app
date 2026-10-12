@@ -98,8 +98,9 @@ export class UploadQueueService {
   ): Promise<void> {
     const existing = await syncQueueDao.getItemByEntryId(entryId);
     if (existing) {
-      await syncQueueDao.updateAction(existing.id, action);
-      await syncQueueDao.resetToPending(existing.id);
+      // Single atomic write: separate action/pending updates would let a
+      // concurrent queue pass observe the in-between state.
+      await syncQueueDao.setActionPending(existing.id, action);
     } else {
       // Atomic guard: a concurrent producer may insert the same entry
       // between our check and insert; enqueueIfAbsent makes the loser a
@@ -238,8 +239,8 @@ export class UploadQueueService {
 
           if (raceDetected || wasReEnqueued) {
             // Local metadata changed while upload was in flight! Re-mark PENDING with METADATA_ONLY
-            await syncQueueDao.updateAction(item.id, "METADATA_ONLY");
-            await syncQueueDao.resetToPending(item.id);
+            // (single atomic write — see addToQueue)
+            await syncQueueDao.setActionPending(item.id, "METADATA_ONLY");
             this.activeUploadingEntryIds.delete(entry.id);
             setTimeout(() => {
               this.processQueue().catch((err) => {

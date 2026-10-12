@@ -396,6 +396,29 @@ describe("Database & FTS5 DAO", () => {
     expect(pending.map((i) => i.id)).toContain(queueId);
     expect(pending.find((i) => i.id === queueId)?.retry_count).toBe(1);
 
+    // resetToPending clears the window and retry count in one statement
+    await syncQueueDao.markRetry(queueId, 3, Date.now() + 60_000);
+    expect(
+      (await syncQueueDao.getPendingItems()).map((i) => i.id),
+    ).not.toContain(queueId);
+    await syncQueueDao.resetToPending(queueId);
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).toContain(queueId);
+    expect(pending.find((i) => i.id === queueId)?.retry_count).toBe(0);
+
+    // setActionPending updates action atomically with the same reset
+    await syncQueueDao.setActionPending(queueId, "METADATA_ONLY");
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.find((i) => i.id === queueId)?.action).toBe("METADATA_ONLY");
+
+    // upsertAsPending updates an existing row rather than duplicating it
+    await syncQueueDao.upsertAsPending("entry-backoff", "METADATA_ONLY");
+    expect(
+      (await syncQueueDao.getPendingItems()).filter(
+        (r) => r.entry_id === "entry-backoff",
+      ).length,
+    ).toBe(1);
+
     // At the cap (retry_count = MAX) the item must NOT be re-enqueued by
     // getPendingItems — the service must mark it FAILED instead, or it
     // would be orphaned as PENDING forever.
