@@ -367,14 +367,23 @@ export const entriesDao = {
   async restoreEntry(id: string): Promise<JournalEntry | null> {
     const db = getDatabase();
     const now = Date.now();
-    await db.runAsync(
-      `UPDATE entries SET deleted_at = NULL, updated_at = ? WHERE id = ?`,
-      [now, id],
-    );
-    // Defensive: clear any stale tombstone (e.g. left by an interrupted
-    // purge) so the next sync does not delete the restored entry's
-    // Drive backup.
-    await deletedEntriesDao.removeDeletion(id);
+    // Atomic: cloud sync must never observe a restored entry whose stale
+    // tombstone is still present (it would delete the Drive backup).
+    await db.execAsync("BEGIN IMMEDIATE");
+    try {
+      await db.runAsync(
+        `UPDATE entries SET deleted_at = NULL, updated_at = ? WHERE id = ?`,
+        [now, id],
+      );
+      // Defensive: clear any stale tombstone (e.g. left by an interrupted
+      // purge) so the next sync does not delete the restored entry's
+      // Drive backup.
+      await deletedEntriesDao.removeDeletion(id);
+      await db.execAsync("COMMIT");
+    } catch (err) {
+      await db.execAsync("ROLLBACK");
+      throw err;
+    }
     return this.getEntryById(id);
   },
 
@@ -390,18 +399,12 @@ export const entriesDao = {
     const db = getDatabase();
     const entry = await this.getEntryById(id);
     if (entry) {
-      // Cancel any queued/in-flight uploads for this entry first, so a
-      // pending upload cannot recreate Drive files after the tombstone
-      // sync deletes them (the schema's ON DELETE CASCADE is inert
-      // because PRAGMA foreign_keys is not enabled).
-      await syncQueueDao.deleteByEntryId(entry.id);
-
-      // Tombstone + row delete must be atomic. If the process dies (or a
-      // sync fires) between the two, a still-restorable binned entry would
-      // carry a live tombstone, and the next sync would delete its Drive
-      // backup while the UI still offers Restore.
+      // Tombstone + row delete must be atomic. Queue cancellation joins the
+      // same transaction: if anything rolls back, the entry must keep its
+      // pending upload rather than be deleted here and restored without it.
       await db.execAsync("BEGIN IMMEDIATE");
       try {
+        await syncQueueDao.deleteByEntryId(entry.id);
         await deletedEntriesDao.recordDeletion(
           entry.id,
           entry.drive_sidecar_file_id,

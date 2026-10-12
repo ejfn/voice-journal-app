@@ -255,10 +255,9 @@ export class UploadQueueService {
         } catch (error) {
           this.activeUploadingEntryIds.delete(entry.id);
           const currentRetries = item.retry_count ?? 0;
-          const hasMoreRetries = currentRetries < MAX_UPLOAD_RETRIES;
+          const nextRetries = currentRetries + 1;
 
-          if (hasMoreRetries) {
-            const nextRetries = currentRetries + 1;
+          if (nextRetries < MAX_UPLOAD_RETRIES) {
             const backoffMs = getUploadBackoffDelayMs(currentRetries);
             const nextRetryAt = Date.now() + backoffMs;
             // Persist the backoff window: any other queue trigger
@@ -269,8 +268,10 @@ export class UploadQueueService {
 
             this.scheduleNextRetry(nextRetryAt);
           } else {
-            // Exceeded max retries; mark failed
-            await syncQueueDao.updateStatus(item.id, "FAILED", currentRetries);
+            // Exceeded max retries; mark failed. Must happen here:
+            // getPendingItems filters retry_count < MAX, so an item left
+            // PENDING at the cap would be retried never and fail never.
+            await syncQueueDao.updateStatus(item.id, "FAILED", nextRetries);
             this.notifyListeners({ entryId: entry.id, status: "failed" });
           }
 

@@ -138,8 +138,10 @@ describe("UploadQueueService", () => {
   });
 
   it("marks as failed after exceeding max upload retries", async () => {
+    // retry_count 4 is the final attempt: the real getPendingItems filters
+    // retry_count < MAX, so 5 never surfaces here (covered by db.test.ts).
     (syncQueueDao.getPendingItems as jest.Mock).mockResolvedValue([
-      { ...mockQueueItem, retry_count: 5 },
+      { ...mockQueueItem, retry_count: 4 },
     ]);
     (entriesDao.getEntryById as jest.Mock).mockResolvedValue(mockEntry);
     (googleDriveService.uploadEntry as jest.Mock).mockRejectedValue(
@@ -156,6 +158,7 @@ describe("UploadQueueService", () => {
       "FAILED",
       5,
     );
+    expect(syncQueueDao.markRetry).not.toHaveBeenCalled();
     expect(listenerEvents).toContainEqual({
       entryId: "entry-u1",
       status: "failed",

@@ -359,6 +359,91 @@ describe("Database & FTS5 DAO", () => {
     expect(pending.length).toBe(0);
   });
 
+  it("respects persisted backoff windows and retry cap in getPendingItems (un-mocked)", async () => {
+    await entriesDao.insertEntry({
+      id: "entry-backoff",
+      title: "Backoff Entry",
+      summary: "Test summary",
+      transcript: "Test transcript",
+      tags: ["test"],
+      duration_sec: 30,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: Date.now(),
+      last_accessed_at: Date.now(),
+    });
+
+    const queueId = await syncQueueDao.enqueue({
+      entry_id: "entry-backoff",
+      action: "ANALYZE_AND_UPLOAD",
+    });
+
+    // A pending item with no backoff window is immediately eligible
+    let pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).toContain(queueId);
+
+    // Fail attempt 1: backoff window until t+5000 must hide the item
+    await syncQueueDao.markRetry(queueId, 1, Date.now() + 5000);
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).not.toContain(queueId);
+
+    // Window expired: item is eligible again, and its retry_count is visible
+    await syncQueueDao.markRetry(queueId, 1, Date.now() - 1);
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).toContain(queueId);
+    expect(pending.find((i) => i.id === queueId)?.retry_count).toBe(1);
+
+    // At the cap (retry_count = MAX) the item must NOT be re-enqueued by
+    // getPendingItems — the service must mark it FAILED instead, or it
+    // would be orphaned as PENDING forever.
+    await syncQueueDao.markRetry(queueId, 5, Date.now() - 1);
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).not.toContain(queueId);
+
+    // FAILED items are not retried either
+    await syncQueueDao.updateStatus(queueId, "FAILED", 5);
+    pending = await syncQueueDao.getPendingItems();
+    expect(pending.map((i) => i.id)).not.toContain(queueId);
+  });
+
+  it("enqueueIfAbsent inserts once and reports skipped inserts (un-mocked)", async () => {
+    await entriesDao.insertEntry({
+      id: "entry-if-absent",
+      title: "Race Entry",
+      summary: "Test summary",
+      transcript: "Test transcript",
+      tags: ["test"],
+      duration_sec: 10,
+      source_type: "recorded",
+      local_audio_path: null,
+      drive_audio_file_id: null,
+      drive_sidecar_file_id: null,
+      is_audio_cached: 1,
+      created_at: Date.now(),
+      last_accessed_at: Date.now(),
+    });
+
+    const first = await syncQueueDao.enqueueIfAbsent({
+      entry_id: "entry-if-absent",
+      action: "ANALYZE_AND_UPLOAD",
+    });
+    expect(first).not.toBeNull();
+
+    // Second concurrent producer loses the race: no duplicate row, null result
+    const second = await syncQueueDao.enqueueIfAbsent({
+      entry_id: "entry-if-absent",
+      action: "ANALYZE_AND_UPLOAD",
+    });
+    expect(second).toBeNull();
+
+    const rows = await syncQueueDao.getPendingItems();
+    const forEntry = rows.filter((r) => r.entry_id === "entry-if-absent");
+    expect(forEntry.length).toBe(1);
+  });
+
   it("identifies unsynced entries when sidecar is missing or when local is updated", async () => {
     const t0 = 100000;
     // Entry 1: Never synced to Drive (drive_sidecar_file_id is null)

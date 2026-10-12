@@ -32,6 +32,9 @@ export const syncQueueDao = {
    * Guards against the check-then-insert race where two concurrent
    * producers both pass the existence check and insert duplicate rows
    * (which would upload the same entry to Drive twice).
+   *
+   * @returns the inserted row's id, or null if a row already existed and
+   *          the insert was skipped.
    */
   async enqueueIfAbsent(item: {
     id?: string;
@@ -40,14 +43,14 @@ export const syncQueueDao = {
     status?: SyncQueueItem["status"];
     retry_count?: number;
     created_at?: number;
-  }): Promise<string> {
+  }): Promise<string | null> {
     const db = getDatabase();
     const id = item.id || generateUUID();
     const status = item.status || "PENDING";
     const retryCount = item.retry_count || 0;
     const createdAt = item.created_at || Date.now();
 
-    await db.runAsync(
+    const result = await db.runAsync(
       `INSERT INTO sync_queue (id, entry_id, action, status, retry_count, created_at)
        SELECT ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE entry_id = ?)`,
@@ -62,7 +65,7 @@ export const syncQueueDao = {
       ],
     );
 
-    return id;
+    return result.changes > 0 ? id : null;
   },
 
   async getPendingItems(): Promise<SyncQueueItem[]> {
