@@ -7,8 +7,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   TextInput,
   Linking,
 } from "react-native";
@@ -22,6 +20,7 @@ import { useTheme } from "../theme/ThemeContext";
 import MaterialIcons from "@react-native-vector-icons/material-icons";
 import { useToast } from "./common/Toast";
 import { ConfirmDialog } from "./common/ConfirmDialog";
+import { modalStyles } from "./common/modalStyles";
 import { getAppVersion } from "../utils/versioning";
 
 interface SettingsModalProps {
@@ -372,7 +371,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Header */}
         <View
           style={[
-            styles.header,
+            modalStyles.modalHeader,
             {
               backgroundColor: colors.surface,
               borderBottomColor: colors.border,
@@ -1161,16 +1160,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop:
-      Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 54,
-    paddingBottom: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
     fontSize: 18,

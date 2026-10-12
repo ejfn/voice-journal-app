@@ -9,7 +9,6 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  StatusBar,
   ActivityIndicator,
   Keyboard,
 } from "react-native";
@@ -33,6 +32,7 @@ import {
 } from "../utils/storageStatus";
 import { WAVEFORM_BAR_COUNT } from "../utils/waveform";
 import { useToast } from "./common/Toast";
+import { modalStyles } from "./common/modalStyles";
 import { formatDate, formatTime } from "../utils/paths";
 import {
   isAudioFileValid,
@@ -588,7 +588,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       >
         <View
           style={[
-            styles.header,
+            modalStyles.modalHeader,
             {
               backgroundColor: colors.surface,
               borderBottomColor: colors.border,
@@ -941,16 +941,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 18,
-    paddingTop:
-      Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 52,
-    paddingBottom: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerTitle: {
     fontSize: 16,
