@@ -920,7 +920,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             ]}
             onPress={handleDelete}
             activeOpacity={0.7}
-            accessibilityLabel="Delete entry"
+            accessibilityLabel="Move to Bin"
           >
             <MaterialIcons
               name="delete-outline"
@@ -929,7 +929,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               style={{ marginRight: 6 }}
             />
             <Text style={[styles.deleteText, { color: colors.danger }]}>
-              Delete Entry
+              Move to Bin
             </Text>
           </TouchableOpacity>
         </ScrollView>

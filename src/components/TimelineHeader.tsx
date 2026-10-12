@@ -13,12 +13,14 @@ interface TimelineHeaderProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onSettingsPress?: () => void;
+  onBinPress?: () => void;
 }
 
 export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   searchQuery,
   onSearchChange,
   onSettingsPress,
+  onBinPress,
 }) => {
   const { colors } = useTheme();
 
@@ -36,23 +38,47 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           </Text>
         </View>
 
-        {onSettingsPress && (
-          <TouchableOpacity
-            style={[
-              styles.settingsButton,
-              {
-                backgroundColor: colors.surfaceAlt,
-                borderColor: colors.border,
-              },
-            ]}
-            onPress={onSettingsPress}
-            activeOpacity={0.7}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Settings"
-          >
-            <MaterialIcons name="settings" size={20} color={colors.text} />
-          </TouchableOpacity>
-        )}
+        <View style={styles.headerActions}>
+          {onBinPress && (
+            <TouchableOpacity
+              style={[
+                styles.iconButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              onPress={onBinPress}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Recycle Bin"
+            >
+              <MaterialIcons
+                name="delete-outline"
+                size={20}
+                color={colors.text}
+              />
+            </TouchableOpacity>
+          )}
+
+          {onSettingsPress && (
+            <TouchableOpacity
+              style={[
+                styles.iconButton,
+                {
+                  backgroundColor: colors.surfaceAlt,
+                  borderColor: colors.border,
+                },
+              ]}
+              onPress={onSettingsPress}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Settings"
+            >
+              <MaterialIcons name="settings" size={20} color={colors.text} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <View
@@ -116,7 +142,12 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 2,
   },
-  settingsButton: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,

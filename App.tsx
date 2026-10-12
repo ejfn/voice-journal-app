@@ -17,6 +17,7 @@ import { EntryCard } from "./src/components/EntryCard";
 import { MonthSectionHeader } from "./src/components/MonthSectionHeader";
 import { RecordingModal } from "./src/components/RecordingModal";
 import { RecordGestureFab } from "./src/components/RecordGestureFab";
+import { BinModal } from "./src/components/BinModal";
 import { ReviewModal } from "./src/components/ReviewModal";
 import { SettingsModal } from "./src/components/SettingsModal";
 import { TagFilterChips } from "./src/components/TagFilterChips";
@@ -98,6 +99,9 @@ const MainScreen: React.FC = () => {
 
   // Settings Modal State
   const [isSettingsVisible, setIsSettingsVisible] = useState<boolean>(false);
+
+  // Recycle Bin Modal State
+  const [isBinVisible, setIsBinVisible] = useState<boolean>(false);
 
   // Update Popout Modal State
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -248,7 +252,14 @@ const MainScreen: React.FC = () => {
       .then(async () => {
         isDbReadyRef.current = true;
 
-        // 1. Run recovery scan before starting queues so recovered entries are indexed in SQLite
+        // 1. Purge expired binned entries (30-day retention policy)
+        try {
+          await entriesDao.purgeExpiredBinnedEntries();
+        } catch (err) {
+          console.warn("Startup bin auto-purge error:", err);
+        }
+
+        // 2. Run recovery scan before starting queues so recovered entries are indexed in SQLite
         // and immediately picked up for transcription and backup without dropped triggers
         try {
           await audioRecoveryService.scanAndRecoverOrphanedAudioFiles();
@@ -702,7 +713,7 @@ const MainScreen: React.FC = () => {
     setReviewEntry(null);
     await loadData();
     showToast({
-      message: "Entry deleted",
+      message: "Moved to Bin",
       icon: "delete-outline",
       type: "info",
     });
@@ -757,6 +768,7 @@ const MainScreen: React.FC = () => {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           onSettingsPress={() => setIsSettingsVisible(true)}
+          onBinPress={() => setIsBinVisible(true)}
         />
 
         <TagFilterChips
@@ -884,14 +896,30 @@ const MainScreen: React.FC = () => {
             await loadData();
           }}
           onSyncCompleted={loadData}
+          onOpenBin={() => setIsBinVisible(true)}
+        />
+
+        {/* Recycle Bin Modal */}
+        <BinModal
+          visible={isBinVisible}
+          onClose={() => setIsBinVisible(false)}
+          onEntryRestored={async () => {
+            await loadData();
+          }}
+          onEntryPermanentlyDeleted={async () => {
+            await loadData();
+          }}
+          onBinEmptied={async () => {
+            await loadData();
+          }}
         />
 
         {/* Delete Confirmation Dialog */}
         <ConfirmDialog
           visible={deleteTargetId !== null}
-          title="Delete Entry"
-          message="Are you sure you want to delete this voice journal entry?"
-          confirmLabel="Delete"
+          title="Move to Bin"
+          message="Are you sure you want to move this voice journal entry to the Bin? Items in the Bin are permanently deleted after 30 days."
+          confirmLabel="Move to Bin"
           cancelLabel="Cancel"
           isDestructive
           onConfirm={handleConfirmDelete}

@@ -135,8 +135,7 @@ export class SmartSyncService {
 
     try {
       // Auto-purge expired binned entries (30-day policy) before sync phases
-      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      await entriesDao.purgeExpiredBinnedEntries(thirtyDaysAgo);
+      await entriesDao.purgeExpiredBinnedEntries();
 
       // Run two-way sync (deletions, download missing, upload unsynced)
       const result = await googleDriveService.syncTwoWay({
