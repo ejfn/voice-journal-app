@@ -13,6 +13,7 @@ import {
   Linking,
 } from "react-native";
 import { settingsDao } from "../db/dao/settingsDao";
+import { entriesDao } from "../db/dao/entriesDao";
 import { googleDriveService } from "../services/drive/GoogleDriveService";
 import { smartSyncService } from "../services/drive/SmartSyncService";
 import { geminiService } from "../services/ai/GeminiService";
@@ -27,12 +28,14 @@ interface SettingsModalProps {
   visible: boolean;
   onClose: () => void;
   onSyncCompleted?: () => void;
+  onOpenBin?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   visible,
   onClose,
   onSyncCompleted,
+  onOpenBin,
 }) => {
   const { colors, mode, setMode } = useTheme();
   const { showToast } = useToast();
@@ -60,6 +63,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     maxMb: 250,
   });
   const [isCleaningCache, setIsCleaningCache] = useState<boolean>(false);
+  const [binnedCount, setBinnedCount] = useState<number>(0);
 
   // Gemini BYOK state
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
@@ -78,6 +82,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       const stats = await googleDriveService.getStorageStats();
       setStorageStats(stats);
+
+      const binned = await entriesDao.getBinnedEntries();
+      setBinnedCount(binned.length);
 
       const userKey = await settingsDao.getUserGeminiApiKey();
       setSavedUserKey(userKey);
@@ -1039,6 +1046,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </Text>
                 </View>
               )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Section: Recycle Bin */}
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.cardHeader}>
+              <View style={styles.cardTitleContainer}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Recycle Bin
+                </Text>
+                <Text
+                  style={[styles.cardSubtitle, { color: colors.textMuted }]}
+                >
+                  Items are kept for 30 days before being permanently deleted
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={[styles.infoRow, { borderBottomColor: colors.border }]}
+            >
+              <Text style={[styles.infoLabel, { color: colors.textMuted }]}>
+                Items in Bin
+              </Text>
+              <Text style={[styles.infoValue, { color: colors.text }]}>
+                {binnedCount} {binnedCount === 1 ? "item" : "items"}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.outlineButton,
+                { borderColor: colors.border, marginTop: 16 },
+              ]}
+              onPress={() => {
+                onClose();
+                onOpenBin?.();
+              }}
+              activeOpacity={0.7}
+              accessibilityLabel="Open Recycle Bin"
+            >
+              <View style={styles.buttonContent}>
+                <MaterialIcons
+                  name="delete-outline"
+                  size={18}
+                  color={colors.text}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[styles.outlineButtonText, { color: colors.text }]}
+                >
+                  View Recycle Bin
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
 

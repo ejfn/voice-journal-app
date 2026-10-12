@@ -268,13 +268,16 @@ export class AudioRecoveryService {
             }
 
             if (healedPath) {
-              if (!existing.drive_audio_file_id) {
+              if (!existing.drive_audio_file_id && !existing.deleted_at) {
                 await uploadQueueService.addToQueue(
                   existing.id,
                   "ANALYZE_AND_UPLOAD",
                 );
               }
-              if (existing.transcription_status === "failed") {
+              if (
+                existing.transcription_status === "failed" &&
+                !existing.deleted_at
+              ) {
                 await entriesDao.resetTranscriptionRetry(existing.id);
               }
               recoveredCount++;

@@ -432,6 +432,14 @@ export const entriesDao = {
     return expiredEntries;
   },
 
+  async emptyBin(): Promise<JournalEntry[]> {
+    const binned = await this.getBinnedEntries();
+    for (const entry of binned) {
+      await this.permanentlyDeleteEntry(entry.id);
+    }
+    return binned;
+  },
+
   async getEntryById(id: string): Promise<JournalEntry | null> {
     const db = getDatabase();
     const row = await db.getFirstAsync<JournalEntryRow>(
@@ -569,6 +577,7 @@ export const entriesDao = {
     const rows = await db.getAllAsync<JournalEntryRow>(
       `SELECT * FROM entries
        WHERE is_audio_cached = 1
+         AND deleted_at IS NULL
          AND local_audio_path IS NOT NULL
          AND drive_audio_file_id IS NOT NULL
          AND length(drive_audio_file_id) > 0
