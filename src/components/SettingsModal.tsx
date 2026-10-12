@@ -278,19 +278,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleManualSync = async () => {
+  const handleManualSync = async (fullSync = false) => {
     setIsSyncing(true);
     try {
       const result = await smartSyncService.sync({
         force: true,
-        reason: "manual",
+        fullSync,
+        reason: fullSync ? "manual_full" : "manual",
       });
       await refreshStatus();
       if (onSyncCompleted) {
         onSyncCompleted();
       }
       showToast({
-        message: `Sync complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
+        message: `${fullSync ? "Full sync" : "Sync"} complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
         icon: "cloud-done",
         type: "success",
       });
@@ -530,7 +531,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         backgroundColor: colors.primary,
                       },
                     ]}
-                    onPress={handleManualSync}
+                    onPress={() => handleManualSync(false)}
                     disabled={isSyncing}
                   >
                     {isSyncing ? (
@@ -567,6 +568,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </Text>
                       </View>
                     )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    key="full-sync-button"
+                    style={[
+                      styles.outlineButton,
+                      {
+                        borderColor: colors.border,
+                        paddingHorizontal: 12,
+                      },
+                    ]}
+                    onPress={() => handleManualSync(true)}
+                    disabled={isSyncing}
+                  >
+                    <View style={styles.buttonContent}>
+                      <MaterialIcons
+                        name="cloud-sync"
+                        size={16}
+                        color={colors.textMuted}
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text
+                        style={[
+                          styles.outlineButtonText,
+                          { color: colors.textMuted },
+                        ]}
+                      >
+                        Full Sync
+                      </Text>
+                    </View>
                   </TouchableOpacity>
 
                   <TouchableOpacity
