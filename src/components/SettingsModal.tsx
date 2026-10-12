@@ -232,10 +232,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         icon: "cloud-done",
         type: "success",
       });
-      // Automatically trigger smart sync upon connecting Google Drive
+      // Automatically trigger smart sync upon connecting Google Drive.
+      // Full sync: a freshly connected account must reconcile the entire
+      // journal, not just the newest 100 sidecars.
       setIsSyncing(true);
       smartSyncService
-        .sync({ force: true, reason: "sign_in" })
+        .sync({ force: true, fullSync: true, reason: "sign_in" })
         .then((result) => {
           if (
             (result.downloadedCount ?? 0) > 0 ||
@@ -284,20 +286,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleManualSync = async (fullSync = false) => {
+  const handleManualSync = async () => {
     setIsSyncing(true);
     try {
+      // Manual sync reconciles the entire journal against Drive (uncapped).
+      // Incremental (100-newest) syncs remain for automatic paths:
+      // foreground / periodic / startup.
       const result = await smartSyncService.sync({
         force: true,
-        fullSync,
-        reason: fullSync ? "manual_full" : "manual",
+        fullSync: true,
+        reason: "manual_full",
       });
       await refreshStatus();
       if (onSyncCompleted) {
         onSyncCompleted();
       }
       showToast({
-        message: `${fullSync ? "Full sync" : "Sync"} complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
+        message: `Sync complete • ${result.uploadedCount} uploaded, ${result.downloadedCount} downloaded`,
         icon: "cloud-done",
         type: "success",
       });
@@ -530,14 +535,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {googleUser ? (
                 <>
                   <TouchableOpacity
-                    key="sync-now-button"
+                    key="full-sync-button"
                     style={[
                       styles.secondaryButton,
                       {
                         backgroundColor: colors.primary,
                       },
                     ]}
-                    onPress={() => handleManualSync(false)}
+                    onPress={() => handleManualSync()}
                     disabled={isSyncing}
                   >
                     {isSyncing ? (
@@ -570,40 +575,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             { color: "#FFF" },
                           ]}
                         >
-                          Sync Now
+                          Full Sync
                         </Text>
                       </View>
                     )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    key="full-sync-button"
-                    style={[
-                      styles.outlineButton,
-                      {
-                        borderColor: colors.border,
-                        paddingHorizontal: 12,
-                      },
-                    ]}
-                    onPress={() => handleManualSync(true)}
-                    disabled={isSyncing}
-                  >
-                    <View style={styles.buttonContent}>
-                      <MaterialIcons
-                        name="cloud-sync"
-                        size={16}
-                        color={colors.textMuted}
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text
-                        style={[
-                          styles.outlineButtonText,
-                          { color: colors.textMuted },
-                        ]}
-                      >
-                        Full Sync
-                      </Text>
-                    </View>
                   </TouchableOpacity>
 
                   <TouchableOpacity
