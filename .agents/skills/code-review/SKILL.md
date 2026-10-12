@@ -63,6 +63,15 @@ Rules of engagement:
    - `@react-native-vector-icons/material-icons`, never emoji or `@expo/vector-icons`.
    - No raw `Alert.alert`; use `ConfirmDialog` / `Toast`; theme via `useTheme()`.
    - All DB access via `src/db/dao/*`; no raw SQL in UI or services.
+   - **OTA release policy (context, not a blocker):** main builds beta;
+     native changes ship via new binaries. An OTA bundle delivered to an
+     existing binary that lacks a new native module would fail at load —
+     but **do not flag new native modules / config changes as MUST FIX for
+     OTA**. Noting "this requires a new build before it reaches existing
+     installs" is a [SUGGESTION]-level remark at most, and only when the
+     change could realistically reach users via OTA before a build exists
+     (e.g. a tagged patch release). Routine native changes on main are
+     expected and fine.
 3. **Data safety** — offline-first invariants (immediate local writes), FTS5 sync triggers,
    Drive upload/LRU eviction correctness, BYOK key handling (never log the Gemini API key).
 4. **Security** — injection, path traversal on file names, secrets in code or logs,
